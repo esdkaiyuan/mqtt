@@ -183,7 +183,7 @@ import asyncio, json, websockets
 async def main():
     async with websockets.connect("ws://localhost:8000/ws/motion/test") as ws:
         await ws.send(json.dumps([
-            {"timestamp": 12345, "ax": 0.12, "ay": 0.05, "az": 9.81,
+            {"timestamp": 12345, "ax": 0.12, "ay": 0.05, "az": 1.00,
              "gx": 1.23, "gy": -0.45, "gz": 0.67}
         ]))
         print(await ws.recv())   # {"status":"ok","count":1,...}

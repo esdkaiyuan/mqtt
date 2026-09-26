@@ -21,7 +21,7 @@ class MotionData(Base):
     device_id = Column(String(50), nullable=False, index=True)
     timestamp = Column(DateTime, nullable=False, index=True)
 
-    # Accelerometer data (m/s^2 or g units)
+    # Accelerometer data (g units; az ≈ 1.0 at rest)
     ax = Column(Float, nullable=False)  # X-axis acceleration
     ay = Column(Float, nullable=False)  # Y-axis acceleration
     az = Column(Float, nullable=False)  # Z-axis acceleration

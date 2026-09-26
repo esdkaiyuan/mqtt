@@ -287,10 +287,14 @@ curl -X POST http://localhost:8000/api/annotations \
 
 ```json
 [
-  { "timestamp": 123456, "ax": 0.12, "ay": 0.05, "az": 9.81, "gx": 1.23, "gy": -0.45, "gz": 0.67 },
-  { "timestamp": 123466, "ax": 0.11, "ay": 0.06, "az": 9.79, "gx": 1.20, "gy": -0.44, "gz": 0.65 }
+  { "timestamp": 123456, "ax": 0.12, "ay": 0.05, "az": 1.00, "gx": 1.23, "gy": -0.45, "gz": 0.67 },
+  { "timestamp": 123466, "ax": 0.11, "ay": 0.06, "az": 0.99, "gx": 1.20, "gy": -0.44, "gz": 0.65 }
 ]
 ```
+
+**单位**：加速度 `ax/ay/az` 为 **g**（水平静止时 `az ≈ 1.0`），角速度 `gx/gy/gz` 为 **°/s**。
+固件在 `mpu6500.cpp` 中按量程灵敏度换算（如 ±16g → 2048 LSB/g），与后端
+`FALL_ACCEL_THRESHOLD`（2.5g）、`FALL_GYRO_THRESHOLD`（300°/s）保持一致。
 
 **响应帧**：每处理完一帧回一个确认。
 
@@ -337,7 +341,7 @@ JSON 解析失败或载荷无法识别时回 `{"status": "error", "message": "..
 {
   "type": "sensor_data",
   "device_id": "ESP32_001",
-  "data": [ { "id": 51230, "timestamp": "2026-07-21T09:45:12.345678", "ax": 0.12, "ay": 0.05, "az": 9.81, "gx": 1.23, "gy": -0.45, "gz": 0.67, "is_fall": false, "fall_type": null, "confidence": 0.0 } ]
+  "data": [ { "id": 51230, "timestamp": "2026-07-21T09:45:12.345678", "ax": 0.12, "ay": 0.05, "az": 1.00, "gx": 1.23, "gy": -0.45, "gz": 0.67, "is_fall": false, "fall_type": null, "confidence": 0.0 } ]
 }
 ```
 

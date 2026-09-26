@@ -1,0 +1,28 @@
+# ============================================================
+# Docker 构建上下文过滤（context: ./frontend）
+# ============================================================
+
+# 依赖与构建产物（容器内重新安装/构建）
+node_modules/
+dist/
+legacy/
+
+# 环境变量与密钥（Vite 变量在构建期注入，无需打包本地 .env）
+.env
+.env.*
+!.env.example
+
+# 开发脚本、文档与日志
+*.log
+README.md
+start.sh
+start.bat
+
+# 版本控制与编辑器
+.git/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+.claude/
+.DS_Store

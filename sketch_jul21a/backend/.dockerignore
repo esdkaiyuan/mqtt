@@ -1,0 +1,37 @@
+# ============================================================
+# Docker 构建上下文过滤（context: ./backend）
+# ============================================================
+
+# 虚拟环境与依赖（容器内重新安装）
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 环境变量与密钥（严禁进入镜像，运行时由 compose 注入）
+.env
+.env.*
+!.env.example
+
+# 本地数据库与运行数据
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# 开发脚本、文档与日志
+*.log
+README.md
+start_backend.sh
+start_backend.bat
+
+# 版本控制与编辑器
+.git/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+.claude/
+.DS_Store

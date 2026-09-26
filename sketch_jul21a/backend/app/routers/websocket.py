@@ -167,9 +167,10 @@ async def websocket_motion_data(websocket: WebSocket, device_id: str):
     """
     Ingest endpoint for the ESP32 device.
 
-    Accepts either a single sample object or a JSON array of samples::
+    Accepts either a single sample object or a JSON array of samples.
+    Acceleration is in g (az ≈ 1.0 at rest) and angular velocity in °/s::
 
-        [{"timestamp": 12345, "ax": 0.12, "ay": 0.05, "az": 9.81,
+        [{"timestamp": 12345, "ax": 0.12, "ay": 0.05, "az": 1.00,
           "gx": 1.23, "gy": -0.45, "gz": 0.67}, ...]
     """
     await websocket.accept()
