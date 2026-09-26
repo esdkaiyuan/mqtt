@@ -252,7 +252,6 @@ import { useMotionStore } from '../stores/motion'
 import { annotationApi } from '../services/api'
 import { wsService, DEFAULT_DEVICE_ID } from '../services/websocket'
 import DataTable from '../components/DataTable.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 Chart.register(...registerables)
 

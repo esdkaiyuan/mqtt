@@ -140,7 +140,6 @@ import { ref, onMounted } from 'vue'
 import { useMotionStore } from '../stores/motion'
 import { dataApi } from '../services/api'
 import { wsService, DEFAULT_DEVICE_ID } from '../services/websocket'
-import { ElMessage } from 'element-plus'
 
 const store = useMotionStore()
 

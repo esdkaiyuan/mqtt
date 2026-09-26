@@ -1,7 +1,5 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
 import {
   Aim, Camera, Check, Clock, Close, Compass, Connection, Coordinate, Cpu,
   DataBoard, DataLine, Delete, Document, Download, Edit, InfoFilled, List,
@@ -13,7 +11,8 @@ import router from './router'
 
 const app = createApp(App)
 
-// 按需注册：仅打包模板中实际使用的图标（包内共导出 293 个）。
+// Element Plus 组件/指令/函数式 API 由 unplugin 按需引入（见 vite.config.js），
+// 此处仅注册图标：图标来自 @element-plus/icons-vue，需全局注册后模板才能直接使用。
 // 图标均在模板中静态引用，新增用法时需同步补充此列表。
 const icons = {
   Aim, Camera, Check, Clock, Close, Compass, Connection, Coordinate, Cpu,
@@ -28,6 +27,5 @@ for (const [name, component] of Object.entries(icons)) {
 
 app.use(createPinia())
 app.use(router)
-app.use(ElementPlus)
 
 app.mount('#app')

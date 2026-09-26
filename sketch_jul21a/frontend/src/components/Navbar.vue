@@ -48,7 +48,6 @@ import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMotionStore } from '../stores/motion'
 import { wsService, DEFAULT_DEVICE_ID } from '../services/websocket'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
 const store = useMotionStore()

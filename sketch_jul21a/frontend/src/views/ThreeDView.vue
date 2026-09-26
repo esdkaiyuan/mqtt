@@ -167,7 +167,6 @@
 import { ref } from 'vue'
 import { useMotionStore } from '../stores/motion'
 import ThreeScene from '../components/ThreeScene.vue'
-import { ElMessage } from 'element-plus'
 
 const store = useMotionStore()
 

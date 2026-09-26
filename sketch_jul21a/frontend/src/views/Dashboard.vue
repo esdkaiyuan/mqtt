@@ -85,7 +85,6 @@ import { wsService, DEFAULT_DEVICE_ID } from '../services/websocket'
 import StatsCards from '../components/StatsCards.vue'
 import RealTimeChart from '../components/RealTimeChart.vue'
 import DataTable from '../components/DataTable.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
 const store = useMotionStore()

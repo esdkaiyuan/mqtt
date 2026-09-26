@@ -135,7 +135,6 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Chart, registerables } from 'chart.js'
 import { useMotionStore } from '../stores/motion'
-import { ElMessage } from 'element-plus'
 
 Chart.register(...registerables)
 

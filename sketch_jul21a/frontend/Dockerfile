@@ -1,13 +1,13 @@
 # 构建阶段
-FROM node:20-alpine as build-stage
+FROM node:20-alpine AS build-stage
 
 WORKDIR /app
 
-# 复制依赖文件
+# 复制依赖清单（含 lockfile），按锁定版本精确安装
 COPY package*.json ./
 
-# 安装依赖
-RUN npm install
+# 使用 npm ci 保证构建可复现（严格按 package-lock.json 安装）
+RUN npm ci
 
 # 复制源代码
 COPY . .
