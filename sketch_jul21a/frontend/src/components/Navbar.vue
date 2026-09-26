@@ -4,6 +4,15 @@
       <h2 class="page-title">{{ currentTitle }}</h2>
     </div>
     <div class="navbar-right">
+      <div class="device-info" v-if="store.deviceInfo.deviceId">
+        <el-tag type="info" effect="plain" size="small">
+          <el-icon><Monitor /></el-icon>
+          {{ store.deviceInfo.deviceId }}
+        </el-tag>
+        <el-tag type="info" effect="plain" size="small">
+          累计 {{ store.deviceInfo.totalRecords ?? 0 }} 条
+        </el-tag>
+      </div>
       <el-tag :type="connectionStatusType" effect="dark" class="connection-tag">
         <el-icon class="connection-icon"><Connection /></el-icon>
         {{ connectionStatusText }}
@@ -25,7 +34,7 @@
             </el-dropdown-item>
             <el-dropdown-item divided @click="handleClearData">
               <el-icon><Delete /></el-icon>
-              清除数据
+              清除实时数据
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -35,10 +44,10 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useMotionStore } from '../stores/motion'
-import { wsService } from '../services/websocket'
+import { wsService, DEFAULT_DEVICE_ID } from '../services/websocket'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const route = useRoute()
@@ -57,14 +66,16 @@ const connectionStatusText = computed(() => {
 })
 
 const handleConnect = () => {
-  ElMessageBox.prompt('请输入WebSocket地址', '连接设备', {
+  ElMessageBox.prompt('请输入设备ID', '连接设备', {
     confirmButtonText: '连接',
     cancelButtonText: '取消',
-    inputPattern: /^ws:\/\/.+/,
-    inputErrorMessage: '请输入有效的WebSocket地址 (ws://...)',
-    inputValue: 'ws://localhost:8080/ws'
+    inputPattern: /^\S+$/,
+    inputErrorMessage: '请输入有效的设备ID',
+    inputValue: wsService.deviceId || DEFAULT_DEVICE_ID
   }).then(({ value }) => {
     wsService.connect(value)
+    store.setDeviceInfo({ deviceId: value })
+    store.loadDeviceInfo(value)
     ElMessage.success('正在连接...')
   }).catch(() => {})
 }
@@ -75,16 +86,21 @@ const handleDisconnect = () => {
 }
 
 const handleClearData = () => {
-  ElMessageBox.confirm('确定要清除所有实时数据吗？', '确认', {
+  ElMessageBox.confirm('确定要清除本地缓存的实时数据吗？已入库的数据不会被删除。', '确认', {
     confirmButtonText: '确定',
     cancelButtonText: '取消',
     type: 'warning'
-  }).then(() => {
+  }).then(async () => {
     store.clearRealtimeData()
-    store.resetStats()
-    ElMessage.success('数据已清除')
+    // Counters come from the database, so re-read them instead of zeroing.
+    await store.loadSummary()
+    ElMessage.success('实时缓存已清除')
   }).catch(() => {})
 }
+
+onMounted(() => {
+  store.loadDeviceInfo(wsService.deviceId || DEFAULT_DEVICE_ID)
+})
 </script>
 
 <style scoped>
@@ -111,6 +127,18 @@ const handleClearData = () => {
   display: flex;
   align-items: center;
   gap: 16px;
+}
+
+.device-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.device-info .el-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .connection-tag {

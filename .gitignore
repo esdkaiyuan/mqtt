@@ -48,6 +48,7 @@ pwfile
 *.log
 logs/
 *.tmp
+.tmp*
 *.bak
 *.bak[0-9]
 *.backup

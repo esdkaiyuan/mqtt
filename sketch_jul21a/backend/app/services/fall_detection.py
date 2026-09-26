@@ -56,6 +56,17 @@ class FallDetectionService:
         self.accel_buffers[device_id].append(accel_magnitude)
         self.gyro_buffers[device_id].append(gyro_magnitude)
 
+        state = self.fall_states[device_id]
+
+        # An ongoing fall keeps the device latched until the whole window is
+        # quiet again, so one impact produces exactly one event instead of one
+        # event per sample while the spike is still inside the window.
+        if state["is_falling"]:
+            if max(self.accel_buffers[device_id]) < self.accel_threshold:
+                state["is_falling"] = False
+            else:
+                return False, None, None
+
         # Need at least window_size samples to detect
         if len(self.accel_buffers[device_id]) < self.window_size:
             return False, None, None
@@ -69,16 +80,9 @@ class FallDetectionService:
             accel_window, gyro_window, device_id
         )
 
-        # Update state
         if is_fall:
-            self.fall_states[device_id] = {
-                "is_falling": True,
-                "peak_acceleration": float(np.max(accel_window)),
-            }
-        elif self.fall_states.get(device_id, {}).get("is_falling"):
-            # Reset fall state after recovery
-            if accel_magnitude < self.accel_threshold * 0.5:
-                self.fall_states[device_id]["is_falling"] = False
+            state["is_falling"] = True
+            state["peak_acceleration"] = float(np.max(accel_window))
 
         return is_fall, fall_type, confidence
 
@@ -139,16 +143,12 @@ class FallDetectionService:
 
     def _classify_fall_type(self, accel_window: np.ndarray) -> str:
         """
-        Classify the type of fall based on acceleration pattern.
-        This is a simplified classification - can be enhanced with ML.
-        """
-        # For now, return generic fall type
-        # In production, analyze ax/ay/az components separately
-        peak_idx = np.argmax(accel_window)
+        Classify the fall direction from the acceleration pattern.
 
-        # Simple heuristic based on which axis has highest contribution
-        # This would need per-axis data for proper implementation
-        return "detected"  # Generic fall type
+        Only a generic label is produced today; per-axis classification needs
+        the raw ax/ay/az window rather than the magnitude series.
+        """
+        return "detected"
 
     def _calculate_confidence(
         self,

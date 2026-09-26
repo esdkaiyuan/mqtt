@@ -1,13 +1,15 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { dataApi } from '../services/api'
 
 export const useMotionStore = defineStore('motion', () => {
   // Connection state
   const isConnected = ref(false)
   const deviceInfo = ref({
     deviceId: '',
-    firmwareVersion: '',
-    batteryLevel: 100
+    online: false,
+    totalRecords: 0,
+    lastSeen: null
   })
 
   // Real-time data (latest 10 seconds at 50Hz = 500 points)
@@ -91,9 +93,8 @@ export const useMotionStore = defineStore('motion', () => {
 
   function addFallEvent(event) {
     fallEvents.value.unshift({
-      id: Date.now(),
       ...event,
-      timestamp: new Date().toISOString()
+      timestamp: event.timestamp || new Date().toISOString()
     })
 
     // Keep only last 100 events
@@ -103,7 +104,7 @@ export const useMotionStore = defineStore('motion', () => {
 
     stats.value.totalFalls++
     stats.value.todayFalls++
-    stats.value.lastFallTime = new Date().toISOString()
+    stats.value.lastFallTime = event.timestamp || new Date().toISOString()
   }
 
   function setConnectionStatus(status) {
@@ -114,23 +115,73 @@ export const useMotionStore = defineStore('motion', () => {
     deviceInfo.value = { ...deviceInfo.value, ...info }
   }
 
-  function addAnnotation(annotation) {
-    annotations.value.push({
-      id: Date.now(),
-      ...annotation,
-      createdAt: new Date().toISOString()
-    })
+  /**
+   * Replace the fall-event list from the REST API.
+   * Normalises the API payload onto the same shape the WebSocket pushes use.
+   */
+  function setFallEvents(events) {
+    fallEvents.value = (events || []).map(event => ({
+      id: event.id,
+      deviceId: event.device_id,
+      type: event.fall_type || 'unknown',
+      confidence: event.confidence ?? 0,
+      timestamp: event.detected_at || event.start_time
+    }))
   }
 
-  function updateAnnotation(id, updates) {
-    const index = annotations.value.findIndex(a => a.id === id)
-    if (index !== -1) {
-      annotations.value[index] = { ...annotations.value[index], ...updates }
+  function setAnnotations(list) {
+    annotations.value = list
+  }
+
+  /** Map the backend `/stats` payload onto the dashboard counters. */
+  function applyApiStats(apiStats) {
+    stats.value.totalSamples = apiStats.total_records ?? stats.value.totalSamples
+    stats.value.totalFalls = apiStats.total_falls ?? stats.value.totalFalls
+    stats.value.todayFalls = apiStats.recent_falls_24h ?? stats.value.todayFalls
+  }
+
+  /** Load dashboard counters and the recent fall-event list from the REST API. */
+  async function loadSummary() {
+    try {
+      const apiStats = await dataApi.getStats()
+      applyApiStats(apiStats)
+    } catch (error) {
+      console.warn('加载统计数据失败', error)
+    }
+
+    try {
+      const events = await dataApi.getEvents({ limit: 20 })
+      setFallEvents(events.data || [])
+    } catch (error) {
+      console.warn('加载摔倒事件失败', error)
     }
   }
 
-  function deleteAnnotation(id) {
-    annotations.value = annotations.value.filter(a => a.id !== id)
+  /**
+   * Load runtime metadata for a device. A 404 means the device has not reported
+   * yet, which is a normal state rather than an error.
+   */
+  async function loadDeviceInfo(deviceId) {
+    const id = deviceId || deviceInfo.value.deviceId
+    if (!id) return
+
+    try {
+      const info = await dataApi.getDeviceInfo(id)
+      deviceInfo.value = {
+        deviceId: info.device_id,
+        online: info.online,
+        totalRecords: info.total_records,
+        lastSeen: info.last_seen
+      }
+    } catch (error) {
+      deviceInfo.value = {
+        ...deviceInfo.value,
+        deviceId: id,
+        online: false,
+        totalRecords: 0,
+        lastSeen: null
+      }
+    }
   }
 
   function clearRealtimeData() {
@@ -169,9 +220,11 @@ export const useMotionStore = defineStore('motion', () => {
     addFallEvent,
     setConnectionStatus,
     setDeviceInfo,
-    addAnnotation,
-    updateAnnotation,
-    deleteAnnotation,
+    setFallEvents,
+    setAnnotations,
+    applyApiStats,
+    loadSummary,
+    loadDeviceInfo,
     clearRealtimeData,
     resetStats
   }

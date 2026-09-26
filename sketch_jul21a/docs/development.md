@@ -1,327 +1,327 @@
 # 开发指南
 
-## 快速开发环境搭建
+面向在本仓库上改代码的人：如何起开发环境、项目各部分职责、如何调试、如何扩展、
+以及需要遵守的规范。
 
-### 方式一：使用Docker（推荐）
+- [环境要求](#环境要求)
+- [本地开发启动](#本地开发启动)
+- [项目结构与职责](#项目结构与职责)
+- [数据流与请求链路](#数据流与请求链路)
+- [调试技巧](#调试技巧)
+- [常见开发任务](#常见开发任务)
+- [代码规范](#代码规范)
+- [提交与验证](#提交与验证)
 
-最简单的方式是使用Docker一键启动所有服务：
+## 环境要求
 
-```bash
-# Windows
-start.bat
+| 组件 | 版本 | 用途 |
+| --- | --- | --- |
+| Python | 3.11+ | 后端（镜像基于 `python:3.11-slim`） |
+| Node.js | 20+ | 前端（镜像基于 `node:20-alpine`） |
+| Docker | 任意近期版本 | 容器方式（含 Compose V2） |
+| PlatformIO | 可选 | 编译/烧录固件（或 Arduino IDE 2.x） |
 
-# Linux/Mac
-chmod +x start.sh
-./start.sh
-```
+本地开发**不需要** PostgreSQL：后端默认 SQLite。
 
-### 方式二：本地开发
+## 本地开发启动
 
-如果你想在本地开发和调试，可以分别启动各个服务。
-
-#### 1. 启动PostgreSQL数据库
-
-```bash
-# 使用Docker启动PostgreSQL
-docker run -d \
-  --name fall_detection_db \
-  -e POSTGRES_DB=fall_detection \
-  -e POSTGRES_USER=fall_user \
-  -e POSTGRES_PASSWORD=fall_password \
-  -p 5432:5432 \
-  -v postgres_data:/var/lib/postgresql/data \
-  postgres:15-alpine
-```
-
-#### 2. 启动后端服务
+两个终端，分别起后端与前端。
 
 ```bash
+# 终端 1 —— 后端（SQLite，:8000，热重载）
 cd backend
+./start_backend.sh            # Windows: start_backend.bat
 
-# 创建虚拟环境
-python -m venv venv
-
-# 激活虚拟环境
-# Windows
-venv\Scripts\activate
-# Linux/Mac
-source venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 运行数据库迁移
-alembic upgrade head
-
-# 启动开发服务器
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-#### 3. 启动前端服务
-
-```bash
+# 终端 2 —— 前端（Vite，:3000）
 cd frontend
-
-# 安装依赖
-npm install
-
-# 启动开发服务器
-npm run dev
+./start.sh                    # Windows: start.bat
 ```
 
-前端将在 http://localhost:5173 启动（Vite默认端口）
+前端以同源相对路径访问后端，由 Vite 代理转发：
 
-## ESP32开发
+| 前端请求 | 代理目标 |
+| --- | --- |
+| `/api/*` | `http://localhost:8000/api/*`（不 rewrite） |
+| `/ws/*` | `ws://localhost:8000/ws/*`（`ws: true`） |
 
-### 使用PlatformIO（推荐）
+代理目标由 `VITE_PROXY_TARGET` 控制（`vite.config.js` 读的是 `process.env`，
+需要在 shell 中导出，而不是写进 `.env`）：
 
 ```bash
-cd esp32_firmware
-
-# 安装PlatformIO CLI
-pip install platformio
-
-# 编译
-pio run
-
-# 烧录
-pio run -t upload
-
-# 串口监控
-pio device monitor
+VITE_PROXY_TARGET=http://192.168.1.100:8000 npm run dev
 ```
 
-### 使用Arduino IDE
+因此**不要**在 `.env` 里写死后端地址——保持 `VITE_API_BASE=/api`、`VITE_WS_BASE=` 留空即可，
+这样开发和生产（Nginx 同源代理）行为一致，也不会有跨域问题。
 
-1. 安装Arduino IDE 2.x
-2. 添加ESP32开发板支持：
-   - 文件 > 首选项 > 附加开发板管理器网址
-   - 添加：`https://dl.espressif.com/dl/package_esp32_index.json`
-3. 工具 > 开发板 > 开发板管理器
-   - 搜索并安装 "esp32"
-4. 选择开发板：ESP32S3 Dev Module
-5. 安装所需库：
-   - 工具 > 管理库
-   - 搜索并安装：
-     - WebSocketsClient
-     - ArduinoJson
-6. 打开 `esp32_firmware/src/main.cpp`
-7. 编译并上传
+首次启动后端会自动：从 `.env.example` 生成 `.env`、创建 `venv`、安装依赖。
+数据库表由 `app/main.py` 的 `lifespan` 中 `Base.metadata.create_all` 在启动时创建。
+
+## 项目结构与职责
+
+```
+sketch_jul21a/
+├── backend/app/
+│   ├── main.py                 # FastAPI 实例、lifespan 建表、CORS、挂载路由
+│   ├── config.py               # pydantic-settings，所有可调参数
+│   ├── database.py             # 异步引擎 / AsyncSessionLocal / get_db
+│   ├── models.py               # SQLAlchemy 模型（唯一权威表结构）
+│   ├── schemas.py              # Pydantic DTO（入参校验 / 出参形状）
+│   ├── routers/
+│   │   ├── api.py              # /api 数据查询、设备信息、统计、导出
+│   │   ├── annotations.py      # /api/annotations 区间标注 CRUD
+│   │   └── websocket.py        # /ws/motion/{id} 写入、/ws/view/{id} 只读
+│   └── services/
+│       ├── fall_detection.py   # 滑动窗口摔倒检测（有状态，按设备）
+│       ├── data_service.py     # 统计与事件写入
+│       └── connection_manager.py  # WebSocket 连接注册表（senders / viewers）
+├── frontend/src/
+│   ├── router/index.js         # 路由表（dashboard/waveform/3d-view/annotation/export）
+│   ├── stores/motion.js        # Pinia：实时数据、连接状态、设备信息、摔倒事件
+│   ├── services/api.js         # axios 封装（REST）
+│   ├── services/websocket.js   # 单例 WebSocketService（含重连）
+│   ├── views/                  # 5 个页面
+│   └── components/             # 波形图、3D 场景、表格、统计卡、导航
+├── esp32_firmware/
+│   ├── include/config.h        # 全部可调参数集中于此
+│   ├── include/mpu6500.h       # 传感器驱动接口
+│   ├── include/websocket_client.h  # WebSocketManager（批量上报）
+│   └── src/{main.cpp,mpu6500.cpp}
+├── database/init.sql           # PostgreSQL 预置结构（镜像 models.py）
+└── scripts/                    # backup / restore / generate_test_data
+```
+
+分层约定：
+
+- **routers** 只做 HTTP/WS 协议适配（解析、校验、返回），不写业务逻辑。
+- **services** 承载业务逻辑与状态，不依赖 FastAPI。
+- **schemas** 定义边界处的数据形状；数据库行通过 `to_dict()` 序列化。
+- **config** 是参数的唯一来源；不要在业务代码里硬编码阈值。
+
+## 数据流与请求链路
+
+```
+ESP32 ──ws /ws/motion/{id}──► routers/websocket.py
+                                 │  _parse_timestamp  归一化时间
+                                 │  _persist_sample   入库
+                                 │  FallDetectionService.detect  判定
+                                 │  DataService.create_fall_event 命中则记事件
+                                 ▼
+                        connection_manager.broadcast_to_viewers
+                                 │  {type: sensor_data} / {type: fall_detected}
+                                 ▼
+前端 ──ws /ws/view/{id}──► services/websocket.js ──► Pinia motion store ──► 图表 / 3D
+前端 ──REST /api/*──────► services/api.js ──► routers/api.py, annotations.py
+```
+
+两条 WebSocket 通道由 `ConnectionManager` 的 `_senders` / `_viewers` 两个注册表隔离：
+广播只发给 viewers，设备收不到自己产生的数据，viewers 也无法写入数据库。
+`online` 状态取自 `_senders`（当前是否有上报连接），而非“最近有数据”。
+
+**时间戳归一化**是链路里的关键点：固件上报 `millis()`（设备上电毫秒数），后端在
+`_parse_timestamp` 中按设备首次上报时刻锚定到墙钟时间，偏移量存在 `_clock_offsets`，
+设备断开时清理。改动这里要同时考虑 ISO 字符串与 Unix 秒/毫秒三种输入。
 
 ## 调试技巧
 
-### 查看后端日志
+### 后端
 
 ```bash
-# Docker模式
-docker-compose logs -f backend
-
-# 本地开发模式
-# 后端会在终端输出日志
+cd backend
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload   # 热重载 + 日志
 ```
 
-### 查看数据库数据
+- 交互式调试接口：http://localhost:8000/docs
+- 检查导入是否被破坏（改完配置/依赖后快速自检）：
+
+  ```bash
+  cd backend
+  python -c "from app.main import app; print(len(app.routes), 'routes')"
+  ```
+
+- 依赖版本问题：`pip install -r requirements.txt` 已固定版本；升级请同步更新
+  `requirements.txt` 与 `Dockerfile` 的构建依赖（`gcc`、`libpq-dev` 用于编译 asyncpg）。
+
+### 数据库
+
+本地 SQLite：
 
 ```bash
-# 使用Docker
-docker-compose exec postgres psql -U fall_user -d fall_detection
+cd backend
+python -c "import sqlite3;c=sqlite3.connect('fall_detection.db');print(c.execute('select count(*) from motion_data').fetchone())"
+```
 
-# SQL查询示例
-SELECT COUNT(*) FROM motion_data;
+容器 PostgreSQL：
+
+```bash
+docker compose exec postgres psql -U fall_user -d fall_detection
+```
+
+```sql
+\dt                                              -- 表
+\d motion_data                                   -- 表结构
+SELECT device_id, COUNT(*) FROM motion_data GROUP BY device_id;
 SELECT * FROM fall_events ORDER BY detected_at DESC LIMIT 10;
-SELECT device_id, COUNT(*) as count FROM motion_data GROUP BY device_id;
+SELECT * FROM data_stats;                        -- 汇总视图
+SELECT * FROM fall_stats;
 ```
 
-### 测试WebSocket连接
+### 模拟设备上报
 
-使用 websocat 工具测试：
+不必接硬件，直接往写入通道灌数据：
 
 ```bash
-# 安装websocat
-# Windows
-cargo install websocat
-# Linux/Mac
-brew install websocat
-
-# 测试连接
-echo '{"device_id":"test","timestamp":12345,"ax":0.1,"ay":0.2,"az":9.8,"gx":1.0,"gy":2.0,"gz":3.0}' | websocat ws://localhost:8000/ws/motion/test
+cd scripts
+python generate_test_data.py --count 1000 --falls 5 --device ESP32_001 --server localhost:8000
 ```
 
-### 测试API端点
+或手动发一帧（需先 `pip install websockets`）：
+
+```python
+import asyncio, json, websockets
+
+async def main():
+    async with websockets.connect("ws://localhost:8000/ws/motion/test") as ws:
+        await ws.send(json.dumps([
+            {"timestamp": 12345, "ax": 0.12, "ay": 0.05, "az": 9.81,
+             "gx": 1.23, "gy": -0.45, "gz": 0.67}
+        ]))
+        print(await ws.recv())   # {"status":"ok","count":1,...}
+
+asyncio.run(main())
+```
+
+### REST
 
 ```bash
-# 获取统计信息
-curl http://localhost:8000/api/stats
-
-# 获取数据列表
-curl http://localhost:8000/api/data?limit=10
-
-# 导出CSV
-curl http://localhost:8000/api/export -o data.csv
-
-# 标注数据
-curl -X POST http://localhost:8000/api/data/annotate \
-  -H "Content-Type: application/json" \
-  -d '{"start_id":1,"end_id":100,"is_fall":true,"fall_type":"forward","notes":"测试摔倒"}'
+curl http://localhost:8000/health
+curl "http://localhost:8000/api/stats"
+curl "http://localhost:8000/api/data?device_id=ESP32_001&limit=5"
+curl "http://localhost:8000/api/device/info?device_id=ESP32_001"
+curl http://localhost:8000/ws/status          # 当前连接概况
 ```
 
-## 性能优化建议
+接口参数与响应形状见 [api.md](api.md)。
 
-### 数据库优化
+### 前端
 
-1. **添加索引**（已包含在init.sql中）：
-   - device_id
-   - timestamp
-   - created_at
-   - 复合索引：(device_id, timestamp)
+- **Network → WS**：选中 `/ws/view/...`，查看每帧推送的 `type`，确认
+  `sensor_data` / `fall_detected` / `device_info` 是否按预期到达。
+- **Vue Devtools**：查看 Pinia `motion` store 的 `data`、`connectionStatus`、`deviceInfo`。
+- **代理不生效**：确认 `VITE_PROXY_TARGET` 是通过环境变量传入的（写进 `.env` 无效）。
+- **构建自检**：
 
-2. **定期清理旧数据**：
-   ```sql
-   -- 清理30天前的数据
-   SELECT cleanup_old_data();
-   ```
+  ```bash
+  cd frontend
+  npm run build
+  ```
 
-3. **使用连接池**：
-   - SQLAlchemy已配置连接池
-   - 调整 `pool_size` 和 `max_overflow` 参数
+### 固件
 
-### 实时传输优化
-
-1. **批量发送**：
-   - ESP32每10个样本打包发送（100ms间隔）
-   - 减少网络开销
-
-2. **数据压缩**：
-   - 可选gzip压缩JSON数据
-   - 减少带宽占用
-
-3. **采样率调节**：
-   - 根据网络状况动态调整
-   - 默认100Hz，可降至50Hz
-
-### 前端优化
-
-1. **数据采样**：
-   - 显示时进行下采样
-   - 避免渲染过多数据点
-
-2. **Web Workers**：
-   - 在Worker中处理数据
-   - 避免阻塞主线程
-
-3. **虚拟滚动**：
-   - 大数据量表格使用虚拟滚动
-   - 提高渲染性能
-
-## 扩展开发
-
-### 添加新的摔倒检测算法
-
-在 `backend/app/services/fall_detection.py` 中添加：
-
-```python
-def detect_with_ml_model(self, data_window):
-    """使用机器学习模型检测摔倒"""
-    # 提取特征
-    features = self.extract_features(data_window)
-
-    # 使用模型预测
-    prediction = self.model.predict(features)
-
-    return prediction
+```bash
+cd esp32_firmware
+pio run                 # 编译
+pio run -t upload       # 烧录
+pio device monitor      # 串口日志（115200）
 ```
 
-### 支持多个ESP32设备
+串口每 5 秒打印一次 WiFi/WebSocket 状态、发送成功/失败计数、缓冲区占用与实际采样率。
+配置项与故障排除见 [`../esp32_firmware/CONFIGURATION.md`](../esp32_firmware/CONFIGURATION.md)。
 
-系统已支持多设备，只需：
+## 常见开发任务
 
-1. 为每个ESP32设置不同的device_id
-2. 在config.h中修改：
-   ```cpp
-   #define DEVICE_ID "ESP32_002"
-   ```
+### 新增一个 REST 接口
 
-### 添加实时报警功能
+1. 在 `schemas.py` 定义入参/出参 DTO（用 `Field` 加约束）。
+2. 在 `routers/api.py`（或 `annotations.py`）加路由函数，用 `Depends(get_db)` 拿会话。
+3. 业务逻辑放到 `services/`，不要在路由里直接拼复杂查询。
+4. 更新 [api.md](api.md)。
 
-在 `backend/app/services/notification.py` 中添加：
+### 调整摔倒检测
 
-```python
-class NotificationService:
-    async def send_alert(self, fall_event):
-        """发送摔倒报警"""
-        # 发送邮件
-        await self.send_email(fall_event)
+参数（阈值、窗口）走 `.env`，无需改代码：
 
-        # 发送钉钉通知
-        await self.send_dingtalk(fall_event)
-
-        # 发送短信
-        await self.send_sms(fall_event)
+```env
+FALL_WINDOW_SIZE=50          # 100Hz 下约 500ms
+FALL_ACCEL_THRESHOLD=2.5     # g
+FALL_GYRO_THRESHOLD=300.0    # °/s
 ```
 
-## 常见问题
+改算法则编辑 `services/fall_detection.py`。当前实现要点：
 
-### Q: ESP32无法连接WiFi？
+- 每设备维护两个 `deque(maxlen=window_size)`，存**幅值**序列（`sqrt(ax²+ay²+az²)`、
+  `sqrt(gx²+gy²+gz²)`），而非原始分量。
+- 窗口未填满（不足 `window_size` 个样本）时不判定。
+- 判定条件：加速度峰值超阈值 **且**（角速度峰值超阈值 **或** 出现减速模式）。
+- 减速模式：峰值不在窗口末尾 5 个样本内，且峰值之后的均值 < `accel_threshold * 0.6`。
+- 置信度：加速度贡献 0–0.4、角速度贡献 0–0.4、减速模式加成 0.2，上限 1.0。
+- **状态抑制**：命中后 `is_falling` 锁定，直到整个窗口的加速度最大值回落到阈值以下才复位，
+  保证一次撞击只产生一个事件（这也是 `total_falls` 样本数大于 `total_fall_events` 事件数的原因）。
+- `_classify_fall_type` 目前固定返回 `detected`；要区分方向需把原始 `ax/ay/az` 窗口
+  传进来，而不是幅值序列。
 
-A:
-1. 检查WiFi名称和密码是否正确
-2. 确认ESP32在WiFi信号范围内
-3. 查看串口日志获取详细错误信息
-4. 尝试重启ESP32
+> 检测服务是**有状态**的（按 device_id 持有缓冲区），且只在 `routers/websocket.py` 中
+> 以模块级单例存在。多进程部署（多 worker）会让同一设备的数据分散到不同进程，
+> 导致窗口不完整——需要多 worker 时，应把状态外移到 Redis 之类的共享存储。
 
-### Q: WebSocket连接失败？
+### 新增前端页面
 
-A:
-1. 确认后端服务正在运行
-2. 检查防火墙设置
-3. 确认ESP32和电脑在同一网络
-4. 检查config.h中的服务器IP地址是否正确
+1. `src/views/` 新建组件。
+2. `src/router/index.js` 加路由（`meta.title` 用于导航显示）。
+3. `src/components/Sidebar.vue` 加菜单项。
+4. 数据获取统一走 `services/api.js` / `services/websocket.js`，不要在组件里直接 `fetch`。
 
-### Q: 数据库连接失败？
+### 新增固件配置项
 
-A:
-1. 检查PostgreSQL服务是否启动
-2. 确认数据库凭据是否正确
-3. 检查端口5432是否被占用
-4. 查看后端日志获取详细错误信息
+1. 在 `esp32_firmware/include/config.h` 定义，并加注释说明单位与取值范围。
+2. 需要同步的 Arduino IDE 版本改 `arduino_firmware/ESP32_Raw_Data/ESP32_Raw_Data.ino`
+   （两套固件配置各自独立维护）。
+3. 更新 [`../esp32_firmware/CONFIGURATION.md`](../esp32_firmware/CONFIGURATION.md)。
 
-### Q: 前端无法显示数据？
+## 代码规范
 
-A:
-1. 检查浏览器控制台是否有错误
-2. 确认WebSocket连接是否正常
-3. 清除浏览器缓存重试
-4. 检查后端API是否正常响应
+### Python
 
-### Q: 数据量太大导致性能问题？
+- 遵循 PEP 8；公开函数写类型注解与简短 docstring。
+- 模块顶部写一行模块职责说明（现有文件均如此）。
+- 边界处用 Pydantic 校验；内部函数信任调用方，不做冗余防御。
+- 数据库会话用 `Depends(get_db)` 注入；不要在函数内自行创建引擎。
+- 时区：当前统一用 naive UTC（`datetime.utcnow()`），新增代码保持一致。
 
-A:
-1. 定期清理旧数据：`SELECT cleanup_old_data();`
-2. 降低采样率（从100Hz降到50Hz）
-3. 添加更多数据库索引
-4. 使用数据分区
+### JavaScript / Vue
 
-## 贡献指南
+- Vue 3 `<script setup>` + Composition API。
+- 全局状态放 Pinia（`stores/motion.js`），组件间不通过 props 层层透传实时数据。
+- REST 走 `services/api.js`；WebSocket 走 `services/websocket.js` 单例。
+- 缩进 2 空格，无分号风格，字符串用单引号（与现有代码一致）。
 
-1. Fork项目
-2. 创建功能分支：`git checkout -b feature/your-feature`
-3. 提交更改：`git commit -m 'Add your feature'`
-4. 推送到分支：`git push origin feature/your-feature`
-5. 提交Pull Request
+### C++（固件）
 
-### 代码规范
+- 头文件放声明、`.cpp` 放实现；驱动与传输分离（`mpu6500` / `websocket_client`）。
+- 所有可调参数集中在 `config.h`，代码中不出现魔数。
+- 调试输出统一用 `DEBUG_PRINT` / `DEBUG_PRINTF` 宏，受 `DEBUG_ENABLE` 控制，
+  便于生产关闭。
+- 编译开启 `-Wall`，不留新告警。
 
-- Python: 遵循PEP 8规范
-- JavaScript/Vue: 使用ESLint + Prettier
-- C++: 遵循Google C++ Style Guide
+### 文档
 
-### 提交规范
+- 面向用户的说明放 `README.md` / `docs/`；不要新增一次性状态报告或"完成清单"类文件。
+- 接口变更必须同步 [api.md](api.md)；配置项变更必须同步
+  [deployment.md](deployment.md) 与固件 `CONFIGURATION.md`。
 
-使用语义化提交信息：
-- `feat:` 新功能
-- `fix:` 修复bug
-- `docs:` 文档更新
-- `style:` 代码格式调整
-- `refactor:` 代码重构
-- `test:` 测试相关
-- `chore:` 构建/工具链更新
+## 提交与验证
+
+提交信息用语义化前缀：`feat:` / `fix:` / `docs:` / `style:` / `refactor:` / `test:` / `chore:`。
+
+提交前自检：
+
+```bash
+# 后端：导入与路由挂载
+cd backend && python -c "from app.main import app; print(len(app.routes), 'routes')"
+
+# 前端：生产构建
+cd frontend && npm run build
+
+# 固件：编译（需装 PlatformIO）
+cd esp32_firmware && pio run
+```

@@ -33,7 +33,7 @@
 
 // WebSocket服务器配置
 #define WS_SERVER_HOST      "192.168.125.19"  // ← 修改为你的电脑IP
-#define WS_SERVER_PORT      8004
+#define WS_SERVER_PORT      8000
 #define WS_DEVICE_PATH      "/ws/motion/"
 #define DEVICE_ID           "ESP32_001"      // 设备ID
 
@@ -45,7 +45,7 @@
 
 // 引脚定义
 #define I2C_SDA_PIN         21               // I2C SDA
-#define I2C_SCL_PIN         10               // I2C SCL
+#define I2C_SCL_PIN         22               // I2C SCL
 #define LED_PIN             2                // LED引脚
 
 // 调试配置

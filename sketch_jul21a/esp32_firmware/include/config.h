@@ -1,7 +1,8 @@
 /**
  * config.h - ESP32-S3 + MPU6500 摔倒检测数据采集固件配置文件
  *
- * 集中管理所有可配置参数
+ * 集中管理所有可配置参数。
+ * 上报协议：WebSocket（JSON 批量数组），对应后端 /ws/motion/{DEVICE_ID}
  */
 
 #ifndef CONFIG_H
@@ -10,34 +11,24 @@
 // =============================================================================
 // WiFi 网络配置
 // =============================================================================
-#define WIFI_SSID               "1302"             // WiFi 名称（2.4GHz）
-#define WIFI_PASSWORD           "17305675843"      // WiFi 密码
+#define WIFI_SSID               "8202"             // WiFi 名称（仅支持 2.4GHz）
+#define WIFI_PASSWORD           "88888888"         // WiFi 密码
 #define WIFI_CONNECT_TIMEOUT_MS  15000             // WiFi 连接超时时间（毫秒）
 #define WIFI_RETRY_DELAY_MS      5000              // WiFi 重试间隔（毫秒）
 
 // =============================================================================
-// MQTT Broker 配置
+// WebSocket 服务器配置
 // =============================================================================
-#define MQTT_BROKER_HOST        "192.168.1.57"    // MQTT Broker 地址（电脑的局域网IP）
-#define MQTT_BROKER_PORT        1883               // MQTT Broker 端口
-#define MQTT_USERNAME           "admin"            // MQTT 用户名
-#define MQTT_PASSWORD           "public"           // MQTT 密码
-#define MQTT_CLIENT_ID          "ESP32_001"        // MQTT 客户端ID（需与设备标识一致）
-#define MQTT_KEEPALIVE          60                 // MQTT 心跳间隔（秒）
-#define MQTT_RECONNECT_INTERVAL 5000               // MQTT 重连间隔（毫秒）
+// WS_SERVER_HOST 填运行后端的电脑局域网 IP，不能用 localhost
+#define WS_SERVER_HOST          "192.168.1.100"
+#define WS_SERVER_PORT          8000               // 后端端口（docker-compose 映射 8000）
+#define WS_PATH_PREFIX          "/ws/motion/"      // 数据上报路径前缀，其后拼接 DEVICE_ID
+#define WS_RECONNECT_INTERVAL   5000               // 断线重连间隔（毫秒）
 
 // =============================================================================
-// 设备标识（需与平台创建设备时的 deviceKey 一致）
+// 设备标识
 // =============================================================================
-#define DEVICE_ID               "ESP32_001"       // 设备唯一标识符（需与平台一致）
-
-// =============================================================================
-// MQTT Topic 配置
-// =============================================================================
-#define MQTT_TOPIC_DATA         "device/ESP32_001/data"     // 数据上报Topic
-#define MQTT_TOPIC_HEARTBEAT    "device/ESP32_001/heartbeat" // 心跳Topic
-#define MQTT_TOPIC_LWT          "device/ESP32_001/lwt"       // 遗嘱Topic
-#define MQTT_TOPIC_CMD          "device/ESP32_001/cmd"       // 指令Topic
+#define DEVICE_ID               "ESP32_001"        // 设备唯一标识，与前端订阅的设备一致
 
 // =============================================================================
 // MPU6500 传感器配置
@@ -66,14 +57,14 @@
 // =============================================================================
 #define SAMPLE_RATE_HZ           100            // 采样频率（Hz）
 #define SAMPLE_INTERVAL_MS       (1000 / SAMPLE_RATE_HZ)  // 采样间隔（毫秒）
-#define BATCH_SIZE               10             // 每批发送的样本数（10个 = 100ms）
-#define MQTT_MAX_PACKET_SIZE     8192
+#define BATCH_SIZE               10             // 每批发送的样本数（10 个 = 100ms）
 #define SEND_INTERVAL_MS         (SAMPLE_INTERVAL_MS * BATCH_SIZE)  // 发送间隔（毫秒）
 
 // =============================================================================
 // 环形缓冲区配置
 // =============================================================================
-#define RING_BUFFER_SIZE         1000           // 环形缓冲区容量（样本数）
+// 网络断开时数据暂存在此，重连后按顺序补发；满则覆盖最旧数据
+#define RING_BUFFER_SIZE         1000           // 环形缓冲区容量（样本数，约 10 秒）
 
 // =============================================================================
 // LED 状态指示配置
@@ -85,9 +76,8 @@
 
 // LED 闪烁间隔配置（毫秒）
 #define LED_BLINK_WIFI_CONNECT   500            // WiFi 连接中：500ms 间隔闪烁
-#define LED_BLINK_MQTT_CONNECT   300            // MQTT 连接中：300ms 快闪
+#define LED_BLINK_WS_CONNECT     300            // WebSocket 连接中：300ms 快闪
 #define LED_BLINK_DATA_SEND      100            // 数据发送中：100ms 极快闪
-#define LED_SOLID_ON             0              // 连接正常：常亮
 
 // =============================================================================
 // 调试配置

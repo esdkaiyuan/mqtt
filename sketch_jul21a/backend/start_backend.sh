@@ -1,33 +1,30 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# 后端本地开发启动（SQLite，无需 Docker / PostgreSQL）
+# Windows 等价脚本: start_backend.bat
+#
+# 默认读取 backend/.env；首次运行会从 .env.example 复制一份。
 
-# 原始数据采集系统 - 启动脚本（SQLite版本）
-# 无需Docker或PostgreSQL
+set -euo pipefail
 
-echo "=========================================="
-echo "  原始数据采集系统 - 启动脚本"
-echo "  版本: 2.0.0 (SQLite)"
-echo "=========================================="
-echo ""
+cd "$(dirname "$0")"
 
-# 进入后端目录
-cd backend
+if [ ! -f .env ]; then
+    cp .env.example .env
+    echo "已创建 .env（默认使用 SQLite）"
+fi
 
-# 检查虚拟环境
-if [ ! -d "venv" ]; then
-    echo "创建Python虚拟环境..."
+if [ ! -d venv ]; then
+    echo "创建虚拟环境..."
     python -m venv venv
 fi
 
-# 激活虚拟环境
-source venv/Scripts/activate 2>/dev/null || source venv/bin/activate 2>/dev/null || true
+# shellcheck disable=SC1091
+source venv/bin/activate 2>/dev/null || source venv/Scripts/activate
 
-# 检查依赖
-echo "检查依赖..."
-python -c "import fastapi" 2>/dev/null || pip install fastapi uvicorn aiosqlite
+pip install -q -r requirements.txt
 
 echo ""
-echo "启动后端服务..."
+echo "启动后端: http://localhost:8000  (API 文档 /docs)"
 echo ""
-
-# 启动服务
-python -m uvicorn app.main_sqlite:app --host 0.0.0.0 --port 8000 --reload
+exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

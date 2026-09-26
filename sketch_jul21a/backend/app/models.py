@@ -2,7 +2,8 @@
 SQLAlchemy models for motion data and fall events.
 """
 
-from datetime import datetime
+import json
+
 from sqlalchemy import (
     Column, Integer, String, Float, DateTime, Boolean, Text, Index, func
 )
@@ -62,6 +63,52 @@ class MotionData(Base):
             "fall_type": self.fall_type,
             "confidence": self.confidence,
             "notes": self.notes,
+        }
+
+
+class Annotation(Base):
+    """
+    Stores manual annotations for a selected range of motion data.
+    Used to build labelled datasets for fall-detection model training.
+    """
+    __tablename__ = "annotations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String(50), nullable=True, index=True)
+
+    # Selected data range
+    start_time = Column(DateTime, nullable=False, index=True)
+    end_time = Column(DateTime, nullable=False)
+    data_count = Column(Integer, nullable=False, default=0)
+
+    # Annotation payload
+    type = Column(String(50), nullable=False)  # forward_fall / backward_fall / normal_walk ...
+    confidence = Column(Integer, nullable=True)  # 0-100, manual confidence
+    quality = Column(Integer, nullable=True)  # 1-5, data quality rating
+    tags = Column(Text, nullable=True)  # JSON-encoded list of tag strings
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=func.now(), server_default=func.now())
+
+    def to_dict(self):
+        """Convert to dictionary for JSON serialization."""
+        try:
+            tags = json.loads(self.tags) if self.tags else []
+        except (TypeError, ValueError):
+            tags = []
+
+        return {
+            "id": self.id,
+            "device_id": self.device_id,
+            "start_time": self.start_time.isoformat() if self.start_time else None,
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "data_count": self.data_count,
+            "type": self.type,
+            "confidence": self.confidence,
+            "quality": self.quality,
+            "tags": tags,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 

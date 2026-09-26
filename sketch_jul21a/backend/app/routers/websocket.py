@@ -1,157 +1,223 @@
 """
-WebSocket endpoint for receiving real-time motion data from ESP32.
+WebSocket endpoints.
+
+- ``/ws/motion/{device_id}`` — ingest stream for the ESP32 device (write path).
+- ``/ws/view/{device_id}``   — live stream for frontend clients (read-only).
 """
 
 import json
 from datetime import datetime
-from typing import Dict, List
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db, AsyncSessionLocal
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from app.database import AsyncSessionLocal
 from app.models import MotionData
-from app.services.fall_detection import FallDetectionService
+from app.services.connection_manager import manager
 from app.services.data_service import DataService
+from app.services.fall_detection import FallDetectionService
 
 router = APIRouter()
 
-# Store active WebSocket connections per device
-active_connections: Dict[str, List[WebSocket]] = {}
-
-# Fall detection service instance
 fall_detector = FallDetectionService()
+
+# Device-relative clock offset (device millis -> wall clock), per device.
+_clock_offsets: Dict[str, float] = {}
+
+
+def _parse_timestamp(raw: Any, device_id: str) -> datetime:
+    """
+    Normalise the timestamp sent by the firmware.
+
+    Accepts an ISO-8601 string, epoch seconds/milliseconds, or a device-relative
+    millisecond counter (as sent by the Arduino firmware, which reports
+    ``millis()``). Relative counters are anchored to wall-clock time using a
+    per-device offset captured on first contact.
+    """
+    if isinstance(raw, str):
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    elif isinstance(raw, (int, float)):
+        value = float(raw)
+        if value > 1e11:  # epoch milliseconds
+            return datetime.fromtimestamp(value / 1000)
+        if value > 1e9:  # epoch seconds
+            return datetime.fromtimestamp(value)
+        # Device-relative millis: anchor to wall clock.
+        now = datetime.utcnow()
+        offset = _clock_offsets.setdefault(
+            device_id, now.timestamp() - value / 1000
+        )
+        return datetime.fromtimestamp(value / 1000 + offset)
+
+    return datetime.utcnow()
+
+
+def _normalise_payload(payload: Any, device_id: str) -> list:
+    """Coerce a single sample or a JSON array of samples into a list of samples."""
+    if isinstance(payload, dict):
+        return [payload]
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    return []
+
+
+async def _persist_sample(device_id: str, sample: dict) -> Optional[MotionData]:
+    """Persist one sensor sample, run fall detection, and return the stored row."""
+    async with AsyncSessionLocal() as db:
+        timestamp = _parse_timestamp(sample.get("timestamp"), device_id)
+
+        motion_data = MotionData(
+            device_id=device_id,
+            timestamp=timestamp,
+            ax=float(sample.get("ax", 0.0)),
+            ay=float(sample.get("ay", 0.0)),
+            az=float(sample.get("az", 0.0)),
+            gx=float(sample.get("gx", 0.0)),
+            gy=float(sample.get("gy", 0.0)),
+            gz=float(sample.get("gz", 0.0)),
+        )
+
+        is_fall, fall_type, confidence = fall_detector.detect(
+            ax=motion_data.ax,
+            ay=motion_data.ay,
+            az=motion_data.az,
+            gx=motion_data.gx,
+            gy=motion_data.gy,
+            gz=motion_data.gz,
+            device_id=device_id,
+        )
+
+        motion_data.is_fall = is_fall
+        motion_data.fall_type = fall_type
+        motion_data.confidence = confidence
+
+        db.add(motion_data)
+        await db.commit()
+        await db.refresh(motion_data)
+
+        if is_fall:
+            await DataService.create_fall_event(
+                db=db,
+                device_id=device_id,
+                timestamp=timestamp,
+                peak_accel=fall_detector.get_peak_acceleration(device_id),
+                fall_type=fall_type,
+                confidence=confidence,
+            )
+
+        return motion_data
+
+
+async def _handle_batch(websocket: WebSocket, device_id: str, raw: str) -> int:
+    """Process one inbound frame. Returns the number of stored samples."""
+    payload = json.loads(raw)
+    samples = _normalise_payload(payload, device_id)
+    if not samples:
+        await websocket.send_json({"status": "error", "message": "Unsupported payload"})
+        return 0
+
+    stored = []
+    for sample in samples:
+        motion_data = await _persist_sample(device_id, sample)
+        if motion_data is not None:
+            stored.append(motion_data)
+
+    last = stored[-1]
+    fall_sample = next((item for item in stored if item.is_fall), None)
+
+    await websocket.send_json(
+        {
+            "status": "ok",
+            "count": len(stored),
+            "id": last.id,
+            "is_fall": bool(fall_sample),
+            "timestamp": last.timestamp.isoformat(),
+        }
+    )
+
+    await manager.broadcast_to_viewers(
+        device_id,
+        {
+            "type": "sensor_data",
+            "device_id": device_id,
+            "data": [item.to_dict() for item in stored],
+        },
+    )
+
+    if fall_sample is not None:
+        await manager.broadcast_to_viewers(
+            device_id,
+            {
+                "type": "fall_detected",
+                "device_id": device_id,
+                "fall_type": fall_sample.fall_type,
+                "confidence": fall_sample.confidence,
+                "timestamp": fall_sample.timestamp.isoformat(),
+            },
+        )
+
+    return len(stored)
 
 
 @router.websocket("/ws/motion/{device_id}")
 async def websocket_motion_data(websocket: WebSocket, device_id: str):
     """
-    WebSocket endpoint to receive real-time motion data from ESP32.
+    Ingest endpoint for the ESP32 device.
 
-    Data format expected from ESP32:
-    {
-        "timestamp": "2026-07-21T10:30:00.000Z",
-        "ax": 0.12, "ay": 0.05, "az": 9.81,
-        "gx": 1.23, "gy": -0.45, "gz": 0.67
-    }
+    Accepts either a single sample object or a JSON array of samples::
+
+        [{"timestamp": 12345, "ax": 0.12, "ay": 0.05, "az": 9.81,
+          "gx": 1.23, "gy": -0.45, "gz": 0.67}, ...]
     """
     await websocket.accept()
-
-    # Add connection to active connections
-    if device_id not in active_connections:
-        active_connections[device_id] = []
-    active_connections[device_id].append(websocket)
-
-    print(f"[WS] Device {device_id} connected. Active connections: {len(active_connections[device_id])}")
+    manager.add_sender(device_id, websocket)
 
     try:
         while True:
-            # Receive data from ESP32
-            data = await websocket.receive_text()
-
+            raw = await websocket.receive_text()
             try:
-                # Parse JSON data
-                payload = json.loads(data)
-
-                # Create database session
-                async with AsyncSessionLocal() as db:
-                    # Parse timestamp
-                    timestamp_str = payload.get("timestamp")
-                    if timestamp_str:
-                        # Handle ISO format with Z suffix
-                        timestamp_str = timestamp_str.replace("Z", "+00:00")
-                        timestamp = datetime.fromisoformat(timestamp_str)
-                    else:
-                        timestamp = datetime.utcnow()
-
-                    # Create motion data record
-                    motion_data = MotionData(
-                        device_id=device_id,
-                        timestamp=timestamp,
-                        ax=payload.get("ax", 0.0),
-                        ay=payload.get("ay", 0.0),
-                        az=payload.get("az", 0.0),
-                        gx=payload.get("gx", 0.0),
-                        gy=payload.get("gy", 0.0),
-                        gz=payload.get("gz", 0.0),
-                    )
-
-                    # Run fall detection algorithm
-                    is_fall, fall_type, confidence = fall_detector.detect(
-                        ax=motion_data.ax,
-                        ay=motion_data.ay,
-                        az=motion_data.az,
-                        gx=motion_data.gx,
-                        gy=motion_data.gy,
-                        gz=motion_data.gz,
-                        device_id=device_id,
-                    )
-
-                    # Update motion data with fall detection results
-                    motion_data.is_fall = is_fall
-                    motion_data.fall_type = fall_type
-                    motion_data.confidence = confidence
-
-                    # Save to database
-                    db.add(motion_data)
-                    await db.commit()
-                    await db.refresh(motion_data)
-
-                    # If fall detected, create fall event
-                    if is_fall:
-                        await DataService.create_fall_event(
-                            db=db,
-                            device_id=device_id,
-                            timestamp=timestamp,
-                            peak_accel=fall_detector.get_peak_acceleration(device_id),
-                            fall_type=fall_type,
-                            confidence=confidence,
-                        )
-
-                    # Send acknowledgment back to ESP32
-                    response = {
-                        "status": "received",
-                        "id": motion_data.id,
-                        "is_fall": is_fall,
-                        "timestamp": timestamp.isoformat(),
-                    }
-                    await websocket.send_json(response)
-
-                    # Broadcast to other connected clients (optional)
-                    await broadcast_motion_data(device_id, motion_data.to_dict())
-
-            except json.JSONDecodeError as e:
-                await websocket.send_json({"error": f"Invalid JSON: {str(e)}"})
-            except Exception as e:
-                print(f"[WS] Error processing data: {e}")
-                await websocket.send_json({"error": str(e)})
-
+                await _handle_batch(websocket, device_id, raw)
+            except json.JSONDecodeError as exc:
+                await websocket.send_json({"status": "error", "message": f"Invalid JSON: {exc}"})
+            except Exception as exc:  # keep the socket alive on per-frame errors
+                await websocket.send_json({"status": "error", "message": str(exc)})
     except WebSocketDisconnect:
-        print(f"[WS] Device {device_id} disconnected")
-    except Exception as e:
-        print(f"[WS] Unexpected error for device {device_id}: {e}")
+        pass
     finally:
-        # Remove connection from active connections
-        if device_id in active_connections:
-            active_connections[device_id].remove(websocket)
-            if not active_connections[device_id]:
-                del active_connections[device_id]
-                # Clean up fall detector buffer for this device
-                fall_detector.cleanup_device(device_id)
+        was_last = manager.remove_sender(device_id, websocket)
+        if was_last:
+            fall_detector.cleanup_device(device_id)
+            _clock_offsets.pop(device_id, None)
 
 
-async def broadcast_motion_data(device_id: str, data: dict):
-    """Broadcast motion data to all connected clients for a device (except sender)."""
-    if device_id in active_connections:
-        for connection in active_connections[device_id]:
-            try:
-                await connection.send_json({"type": "motion_update", "data": data})
-            except:
-                pass  # Connection might be closed
+@router.websocket("/ws/view/{device_id}")
+async def websocket_viewer(websocket: WebSocket, device_id: str):
+    """Read-only live stream for frontend clients."""
+    await websocket.accept()
+    manager.add_viewer(device_id, websocket)
+
+    await websocket.send_json(
+        {
+            "type": "device_info",
+            "device_id": device_id,
+            "online": manager.is_device_online(device_id),
+        }
+    )
+
+    try:
+        while True:
+            # Viewers are consumers only; drain keep-alive frames.
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        manager.remove_viewer(device_id, websocket)
 
 
-@router.get("/ws/status")
+@router.get("/ws/status", tags=["websocket"])
 async def websocket_status():
-    """Get status of active WebSocket connections."""
-    return {
-        "active_devices": list(active_connections.keys()),
-        "total_connections": sum(len(conns) for conns in active_connections.values()),
-    }
+    """Report active WebSocket connections."""
+    return manager.stats()

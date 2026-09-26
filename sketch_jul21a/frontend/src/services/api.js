@@ -1,90 +1,85 @@
 import axios from 'axios'
 
+const BASE_URL = import.meta.env.VITE_API_BASE || '/api'
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: BASE_URL,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json'
   }
 })
 
-// Request interceptor
-api.interceptors.request.use(
-  (config) => {
-    return config
-  },
-  (error) => {
-    return Promise.reject(error)
-  }
-)
-
-// Response interceptor
 api.interceptors.response.use(
-  (response) => {
-    return response.data
-  },
+  (response) => response.data,
   (error) => {
-    console.error('API Error:', error.response?.data || error.message)
+    const message = error.response?.data?.detail || error.message
+    console.error('API Error:', message)
     return Promise.reject(error)
   }
 )
 
-// Data API
+// Binary downloads use a client without the unwrapping interceptor, which
+// would otherwise discard the Content-Disposition filename.
+const downloadClient = axios.create({
+  baseURL: BASE_URL,
+  timeout: 60000
+})
+
+function parseFilename(disposition) {
+  if (!disposition) return null
+  const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 export const dataApi = {
-  // Get historical data
   getData(params = {}) {
     return api.get('/data', { params })
   },
 
-  // Get data by ID
   getDataById(id) {
     return api.get(`/data/${id}`)
   },
 
-  // Get fall events
-  getFallEvents(params = {}) {
+  getEvents(params = {}) {
     return api.get('/events', { params })
   },
 
-  // Get statistics
-  getStats() {
-    return api.get('/stats')
+  getStats(params = {}) {
+    return api.get('/stats', { params })
   },
 
-  // Get device info
-  getDeviceInfo() {
-    return api.get('/device/info`)
+  getDeviceInfo(deviceId) {
+    return api.get('/device/info', { params: { device_id: deviceId } })
   },
 
-  // Export data as CSV
-  exportData(params = {}) {
-    return api.get('/export', {
+  async exportData(params = {}) {
+    const response = await downloadClient.get('/export', {
       params,
       responseType: 'blob'
     })
+    return {
+      blob: response.data,
+      filename: parseFilename(response.headers['content-disposition'])
+    }
   }
 }
 
-// Annotation API
 export const annotationApi = {
-  // Save annotation
+  getAnnotations(params = {}) {
+    return api.get('/annotations', { params })
+  },
+
   saveAnnotation(annotation) {
     return api.post('/annotations', annotation)
   },
 
-  // Update annotation
   updateAnnotation(id, updates) {
     return api.put(`/annotations/${id}`, updates)
   },
 
-  // Delete annotation
   deleteAnnotation(id) {
     return api.delete(`/annotations/${id}`)
-  },
-
-  // Get annotations
-  getAnnotations(params = {}) {
-    return api.get('/annotations', { params })
   }
 }
 

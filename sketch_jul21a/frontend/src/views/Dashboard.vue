@@ -25,8 +25,9 @@
             </div>
             <div class="device-details" v-if="store.deviceInfo.deviceId">
               <p><strong>设备ID:</strong> {{ store.deviceInfo.deviceId }}</p>
-              <p><strong>固件版本:</strong> {{ store.deviceInfo.firmwareVersion }}</p>
-              <p><strong>电池电量:</strong> {{ store.deviceInfo.batteryLevel }}%</p>
+              <p><strong>设备状态:</strong> {{ store.deviceInfo.online ? '在线' : '离线' }}</p>
+              <p><strong>累计样本:</strong> {{ store.deviceInfo.totalRecords }}</p>
+              <p><strong>最后上报:</strong> {{ formatTime(store.deviceInfo.lastSeen) }}</p>
             </div>
             <el-button type="primary" @click="handleConnect" class="connect-btn">
               {{ store.isConnected ? '重新连接' : '连接设备' }}
@@ -77,10 +78,10 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMotionStore } from '../stores/motion'
-import { wsService } from '../services/websocket'
+import { wsService, DEFAULT_DEVICE_ID } from '../services/websocket'
 import StatsCards from '../components/StatsCards.vue'
 import RealTimeChart from '../components/RealTimeChart.vue'
 import DataTable from '../components/DataTable.vue'
@@ -90,16 +91,17 @@ const router = useRouter()
 const store = useMotionStore()
 
 const recentFalls = computed(() => {
-  return store.fallEvents.slice(0, 5)
+  return store.fallEvents.slice(0, 5).map(event => ({
+    ...event,
+    displayTime: formatTime(event.timestamp),
+    displayConfidence: `${Math.round((event.confidence || 0) * 100)}%`
+  }))
 })
 
 const fallColumns = [
-  { prop: 'timestamp', label: '时间', width: '180', sortable: true },
+  { prop: 'displayTime', label: '时间', width: '180' },
   { prop: 'type', label: '摔倒类型', width: '120' },
-  { prop: 'confidence', label: '置信度', width: '100', slot: 'confidence' },
-  { prop: 'ax', label: '加速度X', width: '100' },
-  { prop: 'ay', label: '加速度Y', width: '100' },
-  { prop: 'az', label: '加速度Z', width: '100' }
+  { prop: 'displayConfidence', label: '置信度', width: '100' }
 ]
 
 const fallActions = [
@@ -107,16 +109,23 @@ const fallActions = [
   { key: 'annotate', label: '标注', type: 'warning' }
 ]
 
+const formatTime = (value) => {
+  if (!value) return '—'
+  return new Date(value).toLocaleString()
+}
+
 const handleConnect = () => {
-  ElMessageBox.prompt('请输入WebSocket地址', '连接设备', {
+  ElMessageBox.prompt('请输入设备ID', '连接设备', {
     confirmButtonText: '连接',
     cancelButtonText: '取消',
-    inputPattern: /^ws:\/\/.+/,
-    inputErrorMessage: '请输入有效的WebSocket地址',
-    inputValue: 'ws://localhost:8080/ws'
+    inputPattern: /^\S+$/,
+    inputErrorMessage: '请输入有效的设备ID',
+    inputValue: wsService.deviceId || DEFAULT_DEVICE_ID
   }).then(({ value }) => {
     wsService.connect(value)
+    store.setDeviceInfo({ deviceId: value })
     ElMessage.success('正在连接...')
+    store.loadDeviceInfo(value)
   }).catch(() => {})
 }
 
@@ -127,6 +136,11 @@ const handleFallAction = ({ key, row }) => {
     router.push('/annotation')
   }
 }
+
+onMounted(() => {
+  store.loadSummary()
+  store.loadDeviceInfo(wsService.deviceId || DEFAULT_DEVICE_ID)
+})
 </script>
 
 <style scoped>

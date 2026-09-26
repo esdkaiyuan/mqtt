@@ -1,639 +1,225 @@
 # 使用指南
 
-## 系统概述
-
-摔倒检测数据采集系统由三部分组成：
-
-1. **ESP32-S3固件** - 采集MPU6500陀螺仪数据并通过WiFi发送
-2. **FastAPI后端** - 接收数据、存储到数据库、提供API接口
-3. **Vue3前端** - 实时波形显示、3D姿态可视化、数据标注和导出
-
-## 快速开始
-
-### 第一步：启动后端服务
-
-#### Windows用户
-```bash
-双击运行 start.bat
-```
-
-#### Linux/Mac用户
-```bash
-chmod +x start.sh
-./start.sh
-```
-
-服务启动后：
-- 后端API：http://localhost:8000
-- API文档：http://localhost:8000/docs
-- 前端界面：http://localhost:3000
-
-### 第二步：配置ESP32
-
-1. 打开 `esp32_firmware/include/config.h`
-2. 修改WiFi和服务器配置：
-   ```cpp
-   #define WIFI_SSID "8202"
-   #define WIFI_PASSWORD "88888888"
-   #define WS_SERVER "你的电脑IP地址"  # 例如：192.168.1.100
-   ```
-3. 使用PlatformIO或Arduino IDE编译并烧录固件
-
-### 第三步：查看数据
-
-1. 打开浏览器访问 http://localhost:3000
-2. ESP32会自动连接并开始发送数据
-3. 在波形页面查看实时数据
-4. 在3D视图页面查看姿态变化
-
-## 功能详解
-
-### 1. 实时波形显示
-
-**页面**：`/waveform`
-
-功能：
-- 显示6条实时波形曲线
-  - 红色：X轴加速度 (ax)
-  - 绿色：Y轴加速度 (ay)
-  - 蓝色：Z轴加速度 (az)
-  - 橙色：X轴角速度 (gx)
-  - 青色：Y轴角速度 (gy)
-  - 紫色：Z轴角速度 (gz)
-- 10秒滚动窗口
-- 实时数值显示
-- 可缩放和拖动查看
-
-使用技巧：
-- 点击图例可隐藏/显示特定曲线
-- 鼠标悬停可查看具体数值
-- 滚轮可缩放时间轴
-
-### 2. 3D姿态可视化
-
-**页面**：`/3d-view`
-
-功能：
-- 3D立方体实时旋转
-- 显示设备当前姿态
-- 坐标轴参考线
-- 实时角度数值显示
-
-使用技巧：
-- 鼠标拖动可旋转视角
-- 滚轮可缩放
-- 点击"重置视角"按钮恢复默认
-
-### 3. 数据标注
-
-**页面**：`/annotation`
-
-功能：
-- 选择时间范围
-- 标记摔倒类型：
-  - 前倒 (Forward)
-  - 后倒 (Backward)
-  - 左侧倒 (Left Side)
-  - 右侧倒 (Right Side)
-- 添加备注说明
-- 批量标注操作
-
-标注流程：
-1. 在数据表格中选择数据范围
-2. 点击"标注选中数据"
-3. 选择摔倒类型
-4. 添加备注（可选）
-5. 点击"确认标注"
-
-### 4. 数据导出
-
-**页面**：`/export`
-
-功能：
-- 按时间范围筛选
-- 按摔倒类型筛选
-- 按设备筛选
-- 导出CSV格式
-
-导出格式：
-```csv
-timestamp,ax,ay,az,gx,gy,gz,is_fall,fall_type,notes
-1234567890,0.12,-0.05,9.81,1.23,-0.45,0.67,true,forward,测试摔倒
-```
-
-用途：
-- 用于机器学习模型训练
-- 数据分析和可视化
-- 存档备份
-
-### 5. 仪表板
-
-**页面**：`/dashboard`
-
-功能：
-- 实时设备连接状态
-- 数据统计信息：
-  - 总数据量
-  - 摔倒事件数
-  - 今日数据量
-  - 活跃设备数
-- 最近摔倒事件列表
-- 快速操作入口
-
-## 常见使用场景
-
-### 场景1：采集摔倒数据用于训练
-
-1. 启动系统
-2. 将ESP32佩戴在测试者身上
-3. 进行摔倒模拟测试
-4. 系统自动检测并标记摔倒事件
-5. 在标注页面验证和补充标注
-6. 在导出页面下载标注好的CSV数据
-7. 使用数据训练机器学习模型
-
-### 场景2：长时间数据采集
-
-1. 启动系统
-2. 配置ESP32进入低功耗模式（可选）
-3. 系统自动采集和存储数据
-4. 定期查看统计信息
-5. 定期导出数据备份
-6. 使用清理脚本删除旧数据：
-   ```bash
-   docker-compose exec postgres psql -U fall_user -d fall_detection -c "SELECT cleanup_old_data();"
-   ```
-
-### 场景3：多设备同时采集
-
-1. 准备多个ESP32设备
-2. 为每个设备配置不同的device_id：
-   - ESP32_001
-   - ESP32_002
-   - ESP32_003
-3. 同时启动所有设备
-4. 在前端可按设备筛选数据
-5. 分析不同设备的数据差异
-
-## API使用示例
-
-### 获取统计信息
-
-```bash
-curl http://localhost:8000/api/stats
-```
-
-响应示例：
-```json
-{
-  "total_records": 100000,
-  "fall_records": 50,
-  "today_records": 5000,
-  "active_devices": 1,
-  "last_update": "2024-01-01T12:00:00"
-}
-```
-
-### 获取最近数据
-
-```bash
-curl "http://localhost:8000/api/data?limit=10&device_id=ESP32_001"
-```
-
-### 标注数据
-
-```bash
-curl -X POST http://localhost:8000/api/data/annotate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "start_id": 1000,
-    "end_id": 1200,
-    "is_fall": true,
-    "fall_type": "forward",
-    "notes": "前倒测试 #1"
-  }'
-```
-
-### 导出CSV
-
-```bash
-curl "http://localhost:8000/api/export?start_time=1704067200000&end_time=1704153600000" \
-  -o export.csv
-```
-
-## 数据库管理
-
-### 查看数据
-
-```bash
-# 进入数据库命令行
-docker-compose exec postgres psql -U fall_user -d fall_detection
-
-# 查看表结构
-\dt
-\d motion_data
-\d fall_events
-
-# 查询数据
-SELECT COUNT(*) FROM motion_data;
-SELECT * FROM fall_events ORDER BY detected_at DESC LIMIT 10;
-
-# 查看统计
-SELECT * FROM data_stats;
-SELECT * FROM fall_stats;
-```
-
-### 备份数据
-
-```bash
-# 使用备份脚本
-chmod +x scripts/backup.sh
-./scripts/backup.sh
-
-# 手动备份
-docker-compose exec postgres pg_dump -U fall_user -d fall_detection > backup.sql
-```
-
-### 恢复数据
-
-```bash
-# 使用恢复脚本
-chmod +x scripts/restore.sh
-./scripts/restore.sh ./backups/fall_detection_20240101_120000.sql.gz
-
-# 手动恢复
-docker-compose exec -T postgres psql -U fall_user -d fall_detection < backup.sql
-```
-
-## 测试和调试
-
-### 生成测试数据
-
-如果没有ESP32设备，可以使用测试数据生成脚本：
+面向使用者：如何打开系统、连接设备、看懂每个页面，以及典型场景怎么操作。
+部署与配置见 [deployment.md](deployment.md)，接口细节见 [api.md](api.md)。
+
+- [系统组成](#系统组成)
+- [打开与连接设备](#打开与连接设备)
+- [仪表板](#仪表板-dashboard)
+- [实时波形](#实时波形-waveform)
+- [3D 姿态](#3d-姿态-3d-view)
+- [数据标注](#数据标注-annotation)
+- [数据导出](#数据导出-export)
+- [统计口径说明](#统计口径说明)
+- [典型场景](#典型场景)
+- [没有硬件时](#没有硬件时)
+- [故障排除](#故障排除)
+
+## 系统组成
+
+| 部分 | 职责 |
+| --- | --- |
+| ESP32-S3 + MPU6500 固件 | 100Hz 采集六轴数据，经 WebSocket 上报 |
+| FastAPI 后端 | 接收、入库、摔倒检测、提供 REST 与实时推送 |
+| Vue 3 前端 | 实时波形、3D 姿态、标注、导出、统计（5 个页面） |
+
+数据是**单向**流动的：设备写入 → 后端处理 → 前端展示。前端只读，不会影响设备。
+
+## 打开与连接设备
+
+浏览器访问 `http://localhost:3000`（容器部署）或 `http://localhost:5173`（本地开发），
+默认进入**仪表板**。左侧导航栏切换 5 个页面，底部显示当前设备 ID。
+
+**连接设备**：在仪表板「连接状态」卡片点击「连接设备」，输入设备 ID
+（需与固件 `config.h` 中的 `DEVICE_ID` 一致，默认 `ESP32_001`），确认后前端订阅该设备的
+实时流。连接成功后卡片显示「设备已连接」，并展示设备在线状态、累计样本与最后上报时间。
+
+> 前端只是**订阅**，不会让设备上线。设备是否「在线」取决于它自身是否已连上后端——
+> 可在 `http://localhost:8000/ws/status` 查看 `active_devices`。
+
+## 仪表板 `/dashboard`
+
+- **统计卡片**（4 张）：总数据量、摔倒次数、今日数据、今日摔倒。
+  口径见[统计口径说明](#统计口径说明)。
+- **连接状态**：实时连接指示灯 + 设备 ID / 在线状态 / 累计样本 / 最后上报，含「连接设备」
+  或「重新连接」按钮。
+- **实时数据预览**：最近约 100 个点的实时曲线。
+- **最近摔倒事件**：最新 5 条，含时间、摔倒类型、置信度；「查看」为提示，
+  「标注」跳转到标注页。
+
+## 实时波形 `/waveform`
+
+上下两张独立图表：**加速度 (g)** 与 **陀螺仪 (°/s)**，各含 X/Y/Z 三条曲线
+（加速度：红/绿/蓝；陀螺仪：橙/紫/粉）。
+
+| 控件 | 说明 |
+| --- | --- |
+| 暂停 / 继续 | 冻结图表刷新（数据仍在后台接收） |
+| 清除 | 清空当前实时缓冲区 |
+| 截取 | 截取当前缓冲数据 |
+| 时间窗口 | 5 / 10 / 30 / 60 秒 |
+| 图表类型 | 折线图 / 散点图 |
+| 加速度、陀螺仪 | 复选，取消勾选则隐藏对应图表（可只留一张全宽显示） |
+
+底部「数据信息」显示数据点数、采样率与各轴最新值。
+
+> 前端实时缓冲区上限 500 点（`stores/motion.js` 的 `MAX_POINTS`），超出后丢弃最旧数据。
+> 页面上标注的「采样率 50 Hz」是固定文案，实际采样率以固件 `SAMPLE_RATE_HZ`（默认 100Hz）为准。
+
+## 3D 姿态 `/3d-view`
+
+用 Three.js 立方体表示设备当前姿态，右侧面板显示实时数值。
+
+| 控件 | 说明 |
+| --- | --- |
+| 重置姿态 | 立方体回正 |
+| 自动旋转 / 停止旋转 | 切换自转 |
+| 显示 / 隐藏坐标轴 | 切换参考轴 |
+| 视角 | 正面 / 侧面 / 顶部 / 自由 |
+| 缩放 | 滑块调节 |
+
+数据面板分三组：加速度 (g)、陀螺仪 (°/s)、旋转角度（俯仰 / 横滚 / 偏航）。
+
+## 数据标注 `/annotation`
+
+用于在波形上框选一段时间范围，打上摔倒类型标签，构建训练数据集。
+标注保存在数据库 `annotations` 表，可随时编辑、删除。
+
+### 新建标注
+
+1. 点击「选择数据」，按提示**在图表上点击并拖动**框选范围。
+   松手后显示起始时间、结束时间、数据点数、持续时间。
+2. 在「标注信息」中填写：
+
+   | 字段 | 说明 |
+   | --- | --- |
+   | 摔倒类型（必填） | 前倒 / 后倒 / 侧倒 / 坐下 / 蹲下 / 正常行走 / 其他 |
+   | 置信度 | 0–100，步进 5，默认 80 |
+   | 备注 | 自由文本 |
+   | 标签 | 测试数据 / 真实摔倒 / 误报 / 边界情况（可多选） |
+   | 数据质量 | 1–5 星，默认 3 |
+
+3. 点击「提交标注」。成功后表单重置、选择清除、列表刷新。
+
+> **选择范围来自当前实时缓冲区**，因此必须先连接设备并让它正在上报，且只能框选
+> 缓冲区内的数据（最多 500 点）。要标注历史数据，先用固件或
+> `scripts/generate_test_data.py` 让数据流经实时通道。
+>
+> 标注图只绘制**加速度**三条曲线（X/Y/Z），便于对齐撞击瞬间。
+
+### 管理已有标注
+
+- **筛选**：「筛选类型」下拉 + 时间范围选择器，改变后自动刷新。
+- **列表**：ID、起始时间、结束时间、类型、置信度、数据点数、备注、创建时间。
+- **编辑**：行内「编辑」，弹窗修改类型/置信度/质量/标签/备注。
+- **删除**：行内「删除」，需二次确认。
+- **批量修改**：勾选多行 → 选择「批量类型」→ 点击「批量修改」，把这些标注的类型统一改成所选值。
+
+## 数据导出 `/export`
+
+导出 CSV 用于模型训练或分析。
+
+| 筛选项 | 说明 |
+| --- | --- |
+| 设备 ID | 留空导出全部设备；默认填入当前设备 |
+| 时间范围 | 起止时间，可留空 |
+| 仅导出摔倒记录 | 勾选后只导出 `is_fall=true` 的样本 |
+| 文件格式 | 仅 CSV（当前固定，不可切换） |
+
+- **数据预览**：显示匹配总数与**前 20 条**（时间戳、设备、六轴、是否摔倒、摔倒类型）。
+- **导出数据**：下载 CSV，文件名由后端生成（`motion_data_<时间戳>.csv`）。
+- **本次会话导出记录**：列出本次已导出的文件，可再次下载。
+
+> 导出记录**只存在浏览器内存**，刷新页面即丢失，且不跨设备共享。需要留存请自行保存文件。
+
+导出列固定为：
+`id, device_id, timestamp, ax, ay, az, gx, gy, gz, is_fall, fall_type, confidence, notes`。
+
+## 统计口径说明
+
+统计卡片的数据来自两处，口径不同，请注意区分：
+
+| 卡片 | 来源 | 口径 |
+| --- | --- | --- |
+| 总数据量 | `GET /api/stats` 的 `total_records` | 数据库内全部样本数 |
+| 摔倒次数 | `GET /api/stats` 的 `total_falls` | 被标记 `is_fall` 的**样本**数（不是事件数） |
+| 今日数据 | 前端实时累加 | **本次打开页面后**经 WebSocket 收到的样本数，不查库、刷新即归零 |
+| 今日摔倒 | `GET /api/stats` 的 `recent_falls_24h` | 实为**最近 24 小时**的摔倒样本数，非自然日 |
+
+此外，摔倒样本数通常**大于**摔倒事件数：检测算法对同一次撞击只产生一个
+`fall_events` 事件，而撞击窗口内可能有多个样本被标记为摔倒。
+
+## 典型场景
+
+### 采集摔倒数据用于训练
+
+1. 启动系统并连接设备，确认仪表板显示「设备已连接」。
+2. 把 ESP32 佩戴在测试者身上，确认波形页有实时数据。
+3. 按计划执行各类摔倒动作（前倒/后倒/侧倒等），系统自动标记疑似摔倒。
+4. 到标注页逐段框选、核对类型并提交标注；对误报标注「误报」标签。
+5. 到导出页筛选后下载 CSV，用于训练模型。
+
+### 长时间采集
+
+1. 启动系统，保持后端与设备运行。
+2. 定期查看仪表板统计与波形，确认数据仍在流入。
+3. 定期备份数据库（见 [deployment.md](deployment.md#备份与恢复)）。
+4. 数据量大时按保留策略清理历史数据（`cleanup_old_data`）。
+
+### 多设备同时采集
+
+1. 为每块 ESP32 烧录不同的 `DEVICE_ID`（如 `ESP32_001` / `ESP32_002`）。
+2. 各设备独立连接，后端按设备隔离数据与连接。
+3. 前端一次订阅一个设备：在仪表板点「重新连接」输入目标设备 ID 切换。
+4. 导出页可按设备 ID 分别导出。
+
+## 没有硬件时
+
+用脚本模拟设备上报（走的是与真实设备相同的 WebSocket 写入通道）：
 
 ```bash
 cd scripts
 pip install websockets
-python generate_test_data.py --count 1000 --falls 5
+python generate_test_data.py --count 1000 --falls 5 --device ESP32_001 --server localhost:8000
 ```
 
-参数说明：
-- `--count`：生成数据点数量（默认1000）
-- `--falls`：生成摔倒事件数量（默认5）
-- `--device`：设备ID（默认ESP32_001）
-- `--server`：服务器地址（默认localhost:8000）
+参数：`--count` 数据点总数（默认 1000）、`--falls` 摔倒事件数（默认 5）、
+`--device` 设备 ID、`--server` 后端地址。
 
-### 查看日志
-
-```bash
-# 查看所有服务日志
-docker-compose logs -f
-
-# 查看后端日志
-docker-compose logs -f backend
-
-# 查看数据库日志
-docker-compose logs -f postgres
-```
-
-### 测试WebSocket连接
-
-使用websocat工具：
-
-```bash
-# 安装
-pip install websocat  # 或 cargo install websocat
-
-# 测试发送数据
-echo '{"device_id":"test","timestamp":12345,"ax":0.1,"ay":0.2,"az":9.8,"gx":1.0,"gy":2.0,"gz":3.0}' | websocat ws://localhost:8000/ws/motion/test
-```
-
-## 性能优化建议
-
-### 数据库优化
-
-1. **索引优化**（已默认配置）
-   - device_id索引
-   - timestamp索引
-   - 复合索引
-
-2. **定期清理**
-   - 默认保留30天数据
-   - 可配置保留时间
-
-3. **分区表**（大数据量时考虑）
-   - 按时间分区
-   - 按设备分区
-
-### 网络优化
-
-1. **批量发送**
-   - ESP32每10个样本打包发送
-   - 减少网络开销
-
-2. **数据压缩**
-   - 可选gzip压缩
-   - 减少带宽占用
-
-3. **采样率调节**
-   - 默认100Hz
-   - 可根据需求调整
-
-### 前端优化
-
-1. **数据采样**
-   - 显示时进行下采样
-   - 避免渲染过多点
-
-2. **虚拟滚动**
-   - 大数据量表格使用虚拟滚动
-   - 提高渲染性能
+脚本会构造「正常行走 → 摔倒 → 撞击」的波形，运行期间前端各页面应能看到实时数据与
+摔倒事件。设备 ID 用 `ESP32_001` 时，前端默认订阅即可收到。
 
 ## 故障排除
 
-### 问题：ESP32无法连接WiFi
+### 页面打开但没有任何数据
 
-**解决方案**：
-1. 检查WiFi名称和密码是否正确
-2. 确认ESP32在WiFi信号范围内
-3. 查看串口日志：
-   ```
-   pio device monitor
-   ```
-4. 尝试重启ESP32
+1. 确认已点「连接设备」并输入了正确的设备 ID。
+2. 打开 `http://localhost:8000/ws/status`，确认 `active_devices` 含该设备。
+   若为空，说明设备没连上后端——检查固件 WiFi 配置、`WS_SERVER_HOST` 是否为后端电脑的
+   局域网 IP、是否同一网段、防火墙是否放行 8000。
+3. 浏览器开发者工具 → Network → WS，确认 `/ws/view/<device_id>` 已建立且持续收到帧。
 
-### 问题：WebSocket连接失败
+### 仪表板数字不动
 
-**解决方案**：
-1. 确认后端服务正在运行：
-   ```bash
-   docker-compose ps
-   ```
-2. 检查防火墙设置
-3. 确认ESP32和电脑在同一网络
-4. 检查config.h中的服务器IP地址
+「今日数据」只统计打开页面后收到的样本。若设备没在实时上报（例如只导入了历史数据），
+该数字不会增长；总数据量/摔倒次数来自数据库，刷新页面即更新。
 
-### 问题：前端无法显示数据
+### 标注时拖不出选择范围
 
-**解决方案**：
-1. 检查浏览器控制台（F12）是否有错误
-2. 确认WebSocket连接正常
-3. 清除浏览器缓存
-4. 尝试使用其他浏览器
+需先点「选择数据」再拖动；且缓冲区必须有数据（先连接设备并确认波形页在动）。
+范围过小会提示「选择范围过小，请重新拖动」。
 
-### 问题：数据库连接失败
+### 导出为空
 
-**解决方案**：
-1. 检查PostgreSQL服务状态：
-   ```bash
-   docker-compose ps postgres
-   ```
-2. 查看数据库日志：
-   ```bash
-   docker-compose logs postgres
-   ```
-3. 确认数据库凭据正确
+检查筛选项：设备 ID 是否拼写正确、时间范围是否落在有数据的区间。可先在预览区确认
+「匹配 N 条」是否大于 0。若勾选了「仅导出摔倒记录」而库里没有摔倒样本，结果也会为空。
 
-### 问题：性能问题
+### 3D 场景空白
 
-**解决方案**：
-1. 降低采样率（修改ESP32固件）
-2. 清理旧数据：
-   ```sql
-   SELECT cleanup_old_data();
-   ```
-3. 增加数据库索引
-4. 使用更快的存储（SSD）
+浏览器需支持 WebGL。换用 Chrome/Edge 较新版本，或更新显卡驱动。
 
-## 进阶使用
+### 前端提示接口失败
 
-### 自定义摔倒检测算法
-
-编辑 `backend/app/services/fall_detection.py`：
-
-```python
-def custom_detect(self, data_window):
-    """自定义摔倒检测算法"""
-
-    # 1. 提取特征
-    accel_magnitudes = [sqrt(d.ax**2 + d.ay**2 + d.az**2) for d in data_window]
-    gyro_magnitudes = [sqrt(d.gx**2 + d.gy**2 + d.gz**2) for d in data_window]
-
-    # 2. 计算统计值
-    max_accel = max(accel_magnitudes)
-    max_gyro = max(gyro_magnitudes)
-    mean_accel = sum(accel_magnitudes) / len(accel_magnitudes)
-
-    # 3. 判断是否摔倒
-    if max_accel > self.threshold_acceleration and max_gyro > self.threshold_angular_velocity:
-        return {
-            'is_fall': True,
-            'confidence': min(max_accel / 5.0, 1.0),
-            'fall_type': 'detected'
-        }
-
-    return {'is_fall': False}
-```
-
-### 集成机器学习模型
-
-1. 训练模型：
-   ```python
-   # 使用导出的CSV数据训练
-   import pandas as pd
-   from sklearn.ensemble import RandomForestClassifier
-   from sklearn.model_selection import train_test_split
-
-   # 加载数据
-   df = pd.read_csv('export.csv')
-
-   # 提取特征
-   features = df[['ax', 'ay', 'az', 'gx', 'gy', 'gz']]
-   labels = df['is_fall']
-
-   # 训练模型
-   X_train, X_test, y_train, y_test = train_test_split(features, labels)
-   model = RandomForestClassifier()
-   model.fit(X_train, y_train)
-
-   # 保存模型
-   import joblib
-   joblib.dump(model, 'fall_detection_model.pkl')
-   ```
-
-2. 在后端集成模型：
-   ```python
-   import joblib
-
-   class FallDetector:
-       def __init__(self):
-           self.model = joblib.load('fall_detection_model.pkl')
-
-       def detect(self, data_window):
-           features = self.extract_features(data_window)
-           prediction = self.model.predict([features])
-           return prediction[0] == 1
-   ```
-
-### 添加实时报警
-
-1. 配置邮件通知：
-   ```python
-   # backend/app/services/notification.py
-   import smtplib
-   from email.mime.text import MIMEText
-
-   async def send_email_alert(fall_event):
-       msg = MIMEText(f'检测到摔倒事件！设备: {fall_event.device_id}')
-       msg['Subject'] = '摔倒报警'
-       msg['From'] = 'alert@example.com'
-       msg['To'] = 'user@example.com'
-
-       with smtplib.SMTP('smtp.example.com', 587) as server:
-           server.send_message(msg)
-   ```
-
-2. 配置钉钉通知：
-   ```python
-   import requests
-
-   async def send_dingtalk_alert(fall_event):
-       webhook = 'https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN'
-       data = {
-           'msgtype': 'text',
-           'text': {
-               'content': f'摔倒报警！设备: {fall_event.device_id}'
-           }
-       }
-       requests.post(webhook, json=data)
-   ```
-
-## 最佳实践
-
-### 数据采集
-
-1. **多样化数据**
-   - 不同摔倒方向
-   - 不同摔倒速度
-   - 不同穿戴位置
-   - 不同体型测试者
-
-2. **数据标注**
-   - 及时标注，避免遗忘
-   - 详细记录摔倒类型
-   - 添加环境信息备注
-
-3. **数据质量**
-   - 定期检查数据异常
-   - 清理噪声数据
-   - 验证标注准确性
-
-### 模型训练
-
-1. **数据预处理**
-   - 标准化/归一化
-   - 处理缺失值
-   - 平滑噪声
-
-2. **特征工程**
-   - 时域特征：均值、方差、峰值
-   - 频域特征：FFT系数
-   - 统计特征：斜度、峰度
-
-3. **模型选择**
-   - 传统机器学习：SVM、Random Forest
-   - 深度学习：LSTM、GRU、CNN
-   - 集成方法：Stacking、Blending
-
-4. **评估指标**
-   - 准确率 (Accuracy)
-   - 精确率 (Precision)
-   - 召回率 (Recall)
-   - F1分数
-   - 混淆矩阵
-
-## 技术支持
-
-### 文档资源
-
-- 后端API文档：http://localhost:8000/docs
-- 开发指南：`docs/development.md`
-- README：`README.md`
-
-### 日志查看
-
-```bash
-# 实时查看日志
-docker-compose logs -f
-
-# 查看特定服务
-docker-compose logs -f backend
-docker-compose logs -f frontend
-docker-compose logs -f postgres
-```
-
-### 常用命令
-
-```bash
-# 启动服务
-docker-compose up -d
-
-# 停止服务
-docker-compose down
-
-# 重启服务
-docker-compose restart
-
-# 查看状态
-docker-compose ps
-
-# 进入容器
-docker-compose exec backend bash
-docker-compose exec postgres psql -U fall_user -d fall_detection
-```
-
-## 更新和维护
-
-### 更新系统
-
-```bash
-# 拉取最新代码
-git pull
-
-# 重新构建并重启
-docker-compose down
-docker-compose up -d --build
-```
-
-### 数据库迁移
-
-```bash
-# 创建迁移
-cd backend
-alembic revision --autogenerate -m "description"
-
-# 执行迁移
-alembic upgrade head
-```
-
-### 清理数据
-
-```bash
-# 清理30天前的数据
-docker-compose exec postgres psql -U fall_user -d fall_detection -c "SELECT cleanup_old_data();"
-
-# 清空所有数据（谨慎使用）
-docker-compose exec postgres psql -U fall_user -d fall_detection -c "TRUNCATE motion_data, fall_events;"
-```
-
-## 许可证
-
-MIT License
-
-## 联系方式
-
-如有问题或建议，请：
-1. 查看文档
-2. 搜索已知问题
-3. 提交Issue
-4. 联系开发者
+确认后端在运行：`curl http://localhost:8000/health`。容器部署时看
+`docker compose logs backend`；本地开发时看后端终端输出。
+更多排查见 [deployment.md](deployment.md#故障排除)。

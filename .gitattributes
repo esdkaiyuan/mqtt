@@ -1,0 +1,29 @@
+# ============================================================
+# 统一换行符：仓库内一律以 LF 存储与检出
+# 避免 shell 脚本在 Linux/Docker 中因 CRLF 报 "bad interpreter"
+# ============================================================
+* text=auto eol=lf
+
+# Windows 批处理脚本必须保持 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# ============================================================
+# 二进制文件不做换行转换
+# ============================================================
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg text
+*.pdf binary
+*.zip binary
+*.gz binary
+*.jar binary
+*.db binary
+*.sqlite binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

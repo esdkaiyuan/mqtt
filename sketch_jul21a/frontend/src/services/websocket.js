@@ -1,112 +1,135 @@
 import { useMotionStore } from '../stores/motion'
 
+export const DEFAULT_DEVICE_ID = 'ESP32_001'
+
+function resolveBaseUrl() {
+  const configured = import.meta.env.VITE_WS_BASE
+  if (configured) {
+    return configured.replace(/\/$/, '')
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${window.location.host}`
+}
+
 class WebSocketService {
   constructor() {
     this.ws = null
+    this.deviceId = DEFAULT_DEVICE_ID
     this.reconnectAttempts = 0
     this.maxReconnectAttempts = 5
     this.reconnectDelay = 3000
     this.store = null
+    this.manualClose = false
   }
 
-  connect(url = 'ws://localhost:8080/ws') {
+  buildUrl(deviceId) {
+    return `${resolveBaseUrl()}/ws/view/${encodeURIComponent(deviceId)}`
+  }
+
+  connect(deviceId = DEFAULT_DEVICE_ID) {
     if (!this.store) {
       this.store = useMotionStore()
     }
+
+    this.disconnect()
+    this.manualClose = false
+    this.deviceId = deviceId
+
+    const url = this.buildUrl(deviceId)
 
     try {
       this.ws = new WebSocket(url)
 
       this.ws.onopen = () => {
-        console.log('WebSocket connected')
         this.reconnectAttempts = 0
         this.store.setConnectionStatus(true)
       }
 
       this.ws.onmessage = (event) => {
         try {
-          const data = JSON.parse(event.data)
-          this.handleMessage(data)
+          this.handleMessage(JSON.parse(event.data))
         } catch (error) {
           console.error('Error parsing WebSocket message:', error)
         }
       }
 
-      this.ws.onerror = (error) => {
-        console.error('WebSocket error:', error)
+      this.ws.onerror = () => {
         this.store.setConnectionStatus(false)
       }
 
       this.ws.onclose = () => {
-        console.log('WebSocket disconnected')
         this.store.setConnectionStatus(false)
-        this.attemptReconnect(url)
+        if (!this.manualClose) {
+          this.attemptReconnect()
+        }
       }
     } catch (error) {
       console.error('Error creating WebSocket:', error)
-      this.attemptReconnect(url)
+      this.store.setConnectionStatus(false)
+      this.attemptReconnect()
     }
   }
 
   handleMessage(data) {
-    if (!this.store) return
+    if (!this.store || !data || !data.type) return
 
     switch (data.type) {
       case 'sensor_data':
-        this.store.addDataPoint({
-          timestamp: data.timestamp || Date.now(),
-          ax: data.ax || 0,
-          ay: data.ay || 0,
-          az: data.az || 0,
-          gx: data.gx || 0,
-          gy: data.gy || 0,
-          gz: data.gz || 0
-        })
+        // Backend pushes whole batches; each sample carries an ISO timestamp.
+        for (const sample of data.data || []) {
+          this.store.addDataPoint({
+            timestamp: Date.parse(sample.timestamp),
+            ax: sample.ax ?? 0,
+            ay: sample.ay ?? 0,
+            az: sample.az ?? 0,
+            gx: sample.gx ?? 0,
+            gy: sample.gy ?? 0,
+            gz: sample.gz ?? 0
+          })
+        }
         break
 
       case 'fall_detected':
         this.store.addFallEvent({
           type: data.fall_type || 'unknown',
-          confidence: data.confidence || 0,
-          ax: data.ax,
-          ay: data.ay,
-          az: data.az,
-          gx: data.gx,
-          gy: data.gy,
-          gz: data.gz
+          confidence: data.confidence ?? 0,
+          timestamp: data.timestamp
         })
         break
 
       case 'device_info':
         this.store.setDeviceInfo({
           deviceId: data.device_id,
-          firmwareVersion: data.firmware_version,
-          batteryLevel: data.battery_level
+          online: Boolean(data.online)
         })
         break
 
       default:
-        console.log('Unknown message type:', data.type)
+        break
     }
   }
 
-  attemptReconnect(url) {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++
-      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`)
-
-      setTimeout(() => {
-        this.connect(url)
-      }, this.reconnectDelay)
-    } else {
-      console.log('Max reconnection attempts reached')
+  attemptReconnect() {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      return
     }
+    this.reconnectAttempts++
+    setTimeout(() => {
+      if (!this.manualClose) {
+        this.connect(this.deviceId)
+      }
+    }, this.reconnectDelay)
   }
 
   disconnect() {
     if (this.ws) {
+      this.manualClose = true
+      this.ws.onclose = null
       this.ws.close()
       this.ws = null
+      if (this.store) {
+        this.store.setConnectionStatus(false)
+      }
     }
   }
 

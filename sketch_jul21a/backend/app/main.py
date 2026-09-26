@@ -1,65 +1,61 @@
 """
 FastAPI Backend for Fall Detection System
 ==========================================
-Receives real-time motion data from ESP32 via WebSocket,
-stores in PostgreSQL, and provides REST API for data management.
+Receives real-time motion data from ESP32 over WebSocket, stores it in
+PostgreSQL/SQLite, and exposes a REST API for data management.
 """
 
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
 from app.database import engine, Base
-from app.routers import websocket, api
+from app.routers import annotations, api, websocket
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown events."""
-    # Create tables on startup
+    """Create tables on startup and dispose the pool on shutdown."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    print("Database tables created/verified")
     yield
-    # Cleanup on shutdown
     await engine.dispose()
-    print("Database connections closed")
 
 
 app = FastAPI(
-    title="Fall Detection System API",
+    title=settings.APP_NAME,
     description="Backend service for ESP32 fall detection system",
-    version="1.0.0",
+    version=settings.APP_VERSION,
     lifespan=lifespan,
 )
 
-# CORS middleware - allow frontend cross-origin access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure specific origins in production
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
+# WebSocket routes are absolute (/ws/...); REST routes live under /api.
 app.include_router(websocket.router)
-app.include_router(api.router, prefix="/api")
+app.include_router(api.router, prefix="/api", tags=["data"])
+app.include_router(annotations.router, prefix="/api")
 
 
-@app.get("/")
+@app.get("/", tags=["health"])
 async def root():
-    """Health check endpoint."""
+    """Service metadata."""
     return {
         "status": "running",
-        "service": "Fall Detection System API",
-        "version": "1.0.0",
+        "service": settings.APP_NAME,
+        "version": settings.APP_VERSION,
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["health"])
 async def health_check():
-    """Detailed health check."""
-    return {
-        "status": "healthy",
-        "database": "connected",
-    }
+    """Liveness probe."""
+    return {"status": "healthy"}

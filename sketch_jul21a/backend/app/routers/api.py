@@ -2,14 +2,17 @@
 REST API endpoints for data management, querying, and export.
 """
 
-from datetime import datetime, timedelta
-from typing import Optional, List
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, cast, Integer
 from app.database import get_db
 from app.models import MotionData, FallEvent
+from app.schemas import DeviceInfo, MotionAnnotateRequest
+from app.services.connection_manager import manager
 from app.services.data_service import DataService
 import csv
 import io
@@ -90,36 +93,32 @@ async def get_motion_data_by_id(data_id: int, db: AsyncSession = Depends(get_db)
 
 @router.post("/data/annotate")
 async def annotate_motion_data(
-    data_id: int,
-    fall_type: Optional[str] = None,
-    notes: Optional[str] = None,
-    is_fall: Optional[bool] = None,
+    payload: MotionAnnotateRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Annotate motion data with fall type and notes.
+    Annotate a single motion data record with a manual fall label.
 
     Parameters:
     - data_id: ID of the motion data record
+    - is_fall: Manual override for fall status
     - fall_type: Type of fall (forward, backward, lateral, etc.)
     - notes: Additional notes
-    - is_fall: Manual override for fall status
     """
     result = await db.execute(
-        select(MotionData).where(MotionData.id == data_id)
+        select(MotionData).where(MotionData.id == payload.data_id)
     )
     data = result.scalar_one_or_none()
 
     if not data:
         raise HTTPException(status_code=404, detail="Data not found")
 
-    # Update annotation fields
-    if fall_type is not None:
-        data.fall_type = fall_type
-    if notes is not None:
-        data.notes = notes
-    if is_fall is not None:
-        data.is_fall = is_fall
+    if payload.fall_type is not None:
+        data.fall_type = payload.fall_type
+    if payload.notes is not None:
+        data.notes = payload.notes
+    if payload.is_fall is not None:
+        data.is_fall = payload.is_fall
 
     await db.commit()
     await db.refresh(data)
@@ -127,7 +126,7 @@ async def annotate_motion_data(
     return {"status": "annotated", "data": data.to_dict()}
 
 
-@router.get("/fall-events")
+@router.get("/events")
 async def get_fall_events(
     device_id: Optional[str] = None,
     start_time: Optional[datetime] = None,
@@ -176,6 +175,47 @@ async def get_fall_events(
         "limit": limit,
         "offset": offset,
         "data": [event.to_dict() for event in events],
+    }
+
+
+@router.get("/device/info", response_model=DeviceInfo)
+async def get_device_info(
+    device_id: str = Query(..., min_length=1, max_length=50),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get metadata for a single device.
+
+    Derived from stored motion data plus the live WebSocket registry, so the
+    ``online`` flag reflects whether the device is currently streaming.
+    """
+    summary = await db.execute(
+        select(
+            func.count(MotionData.id),
+            func.sum(cast(MotionData.is_fall, Integer)),
+            func.min(MotionData.timestamp),
+            func.max(MotionData.timestamp),
+        ).where(MotionData.device_id == device_id)
+    )
+    total_records, fall_records, first_seen, last_seen = summary.one()
+
+    if not total_records:
+        raise HTTPException(status_code=404, detail=f"Device {device_id} not found")
+
+    last_fall = await db.execute(
+        select(func.max(MotionData.timestamp)).where(
+            and_(MotionData.device_id == device_id, MotionData.is_fall.is_(True))
+        )
+    )
+
+    return {
+        "device_id": device_id,
+        "total_records": total_records or 0,
+        "fall_records": fall_records or 0,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "last_fall_at": last_fall.scalar(),
+        "online": manager.is_device_online(device_id),
     }
 
 

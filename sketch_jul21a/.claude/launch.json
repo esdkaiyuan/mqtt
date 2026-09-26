@@ -3,15 +3,17 @@
   "configurations": [
     {
       "name": "frontend",
-      "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server"],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "frontend",
       "autoPort": true
     },
     {
       "name": "backend",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "uvicorn", "app.main_fixed:app", "--host", "0.0.0.0", "--port", "8004"],
-      "port": 8004
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+      "cwd": "backend",
+      "port": 8000
     }
   ]
 }
