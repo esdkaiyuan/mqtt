@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DeviceStatusHistoryMapper">
+
+    <sql id="baseColumns">
+        id, device_id, status, timestamp
+    </sql>
+
+    <select id="findByDeviceId" resultType="com.mqtt.cloud.entity.DeviceStatus">
+        SELECT <include refid="baseColumns"/>
+        FROM device_status_history
+        WHERE device_id = #{deviceId}
+        ORDER BY timestamp DESC
+        LIMIT 100
+    </select>
+
+    <select id="findByDeviceIdAndTimeRange" resultType="com.mqtt.cloud.entity.DeviceStatus">
+        SELECT <include refid="baseColumns"/>
+        FROM device_status_history
+        WHERE device_id = #{deviceId}
+          AND timestamp &gt;= #{startTime}
+          AND timestamp &lt;= #{endTime}
+        ORDER BY timestamp DESC
+    </select>
+
+</mapper>

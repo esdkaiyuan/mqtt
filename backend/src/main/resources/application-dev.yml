@@ -1,0 +1,21 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+  datasource:
+    url: jdbc:mysql://localhost:3306/mqtt_cloud?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: root_password
+  data:
+    redis:
+      host: localhost
+      port: 6379
+  mqtt:
+    host: tcp://192.168.1.57:1883
+    username: admin
+    password: public
+
+logging:
+  level:
+    com.mqtt.cloud: DEBUG
+    com.baomidou.mybatisplus: DEBUG

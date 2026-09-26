@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Data Overview</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#F5F5F5;padding:20px}
+.container{max-width:1400px;margin:0 auto}
+.header{background:#FFF;border:1px solid #E0E0E0;padding:24px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:18px;font-weight:600}
+.section{background:#FFF;border:1px solid #E0E0E0;padding:24px;margin-bottom:20px}
+.section h2{font-size:16px;font-weight:600;margin-bottom:16px}
+.btn{padding:8px 16px;border:none;cursor:pointer;font-size:13px;text-decoration:none}
+.btn-outline{background:transparent;border:1px solid #333;color:#333}
+.btn-primary{background:#333;color:#FFF}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:20px}
+.stat{background:#FFF;border:1px solid #E0E0E0;padding:20px}
+.stat-label{font-size:12px;color:#666;margin-bottom:8px}
+.stat-value{font-size:24px;font-weight:600;color:#333}
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}
+.chart-box{border:1px solid #E0E0E0;padding:16px;background:#FFF}
+.chart-box h3{font-size:14px;font-weight:600;margin-bottom:12px}
+canvas{width:100%;height:250px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px;text-align:left;border-bottom:1px solid #E0E0E0;font-size:13px}
+th{background:#F5F5F5;font-weight:600}
+.select-area{margin-bottom:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+select{padding:8px 12px;border:1px solid #DDD;font-size:13px;min-width:300px}
+label{font-size:13px;display:flex;align-items:center;gap:4px}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>Data Overview</h1>
+<a href="visualization.html" class="btn btn-outline">Back</a>
+</div>
+
+<div class="section">
+<h2>Select Recording Files (Multi-Select)</h2>
+<div class="select-area">
+<select id="fileSelect" multiple size="5" style="min-width:400px;height:120px" onchange="onSelectChange()"></select>
+<div>
+<button class="btn btn-primary" onclick="loadSelectedFiles()" style="margin-bottom:8px">Load Selected</button><br>
+<button class="btn btn-outline" onclick="selectAll()">Select All</button>
+</div>
+<div id="selectedInfo" style="font-size:13px;color:#666;margin-left:10px"></div>
+</div>
+</div>
+
+<div class="stats-grid" id="statsGrid" style="display:none">
+<div class="stat"><div class="stat-label">Total Files</div><div class="stat-value" id="totalFiles">0</div></div>
+<div class="stat"><div class="stat-label">Total Records</div><div class="stat-value" id="totalRecords">0</div></div>
+<div class="stat"><div class="stat-label">Max Accel (g)</div><div class="stat-value" id="maxAccel">-</div></div>
+<div class="stat"><div class="stat-label">Max Gyro (deg/s)</div><div class="stat-value" id="maxGyro">-</div></div>
+</div>
+
+<div class="chart-row" id="chartsArea" style="display:none">
+<div class="section">
+<h2>Accel Distribution</h2>
+<div class="chart-box"><canvas id="accelDistChart"></canvas></div>
+</div>
+<div class="section">
+<h2>Gyro Distribution</h2>
+<div class="chart-box"><canvas id="gyroDistChart"></canvas></div>
+</div>
+</div>
+
+<div class="section" id="compareArea" style="display:none">
+<h2>File Comparison</h2>
+<div class="chart-box"><canvas id="compareChart"></canvas></div>
+</div>
+
+<div class="section" id="tableArea" style="display:none">
+<h2>File Details</h2>
+<table id="detailTable">
+<thead><tr><th>Filename</th><th>Records</th><th>AX avg</th><th>AY avg</th><th>AZ avg</th><th>Max Accel</th></tr></thead>
+<tbody id="detailBody"></tbody>
+</table>
+</div>
+</div>
+
+<script>
+const API='http://localhost:8004';
+let allRecordings=[];
+let loadedData={};
+let charts={};
+
+async function loadFileList(){
+const res=await fetch(API+'/api/recordings');
+const data=await res.json();
+allRecordings=data.recordings||[];
+const select=document.getElementById('fileSelect');
+select.innerHTML='';
+allRecordings.forEach(rec=>{
+const opt=document.createElement('option');
+opt.value=rec.filename;
+opt.textContent=rec.filename+' ('+rec.record_time+', '+rec.data_count+' records)';
+select.appendChild(opt);
+});
+}
+
+function onSelectChange(){
+const select=document.getElementById('fileSelect');
+const count=select.selectedOptions.length;
+document.getElementById('selectedInfo').textContent='Selected: '+count+' files';
+}
+
+function selectAll(){
+const select=document.getElementById('fileSelect');
+for(let i=0;i<select.options.length;i++)select.options[i].selected=true;
+onSelectChange();
+}
+
+async function loadSelectedFiles(){
+const select=document.getElementById('fileSelect');
+const files=Array.from(select.selectedOptions).map(o=>o.value);
+if(!files.length){alert('Please select files');return;}
+
+loadedData={};
+for(const filename of files){
+try{
+const res=await fetch(API+'/api/recordings/'+filename);
+const csv=await res.text();
+loadedData[filename]=parseCSV(csv);
+}catch(e){console.error('Load failed:',filename);}
+}
+
+showOverview();
+}
+
+function parseCSV(csv){
+const lines=csv.trim().split('\n');
+const data=[];
+for(let i=1;i<lines.length;i++){
+if(lines[i]){
+const c=lines[i].split(',');
+data.push({ax:+c[3],ay:+c[4],az:+c[5],gx:+c[6],gy:+c[7],gz:+c[8]});
+}
+}
+return data;
+}
+
+function showOverview(){
+const files=Object.keys(loadedData);
+if(!files.length)return;
+
+document.getElementById('statsGrid').style.display='grid';
+document.getElementById('chartsArea').style.display='grid';
+document.getElementById('compareArea').style.display='block';
+document.getElementById('tableArea').style.display='block';
+
+let totalRec=0,maxAccel=0,maxGyro=0;
+const fileDetails=[];
+
+files.forEach(fn=>{
+const d=loadedData[fn];
+totalRec+=d.length;
+d.forEach(p=>{
+const a=Math.sqrt(p.ax*p.ax+p.ay*p.ay+p.az*p.az);
+const g=Math.sqrt(p.gx*p.gx+p.gy*p.gy+p.gz*p.gz);
+if(a>maxAccel)maxAccel=a;
+if(g>maxGyro)maxGyro=g;
+});
+const axAvg=d.reduce((s,p)=>s+p.ax,0)/d.length;
+const ayAvg=d.reduce((s,p)=>s+p.ay,0)/d.length;
+const azAvg=d.reduce((s,p)=>s+p.az,0)/d.length;
+const maxA=Math.max(...d.map(p=>Math.sqrt(p.ax*p.ax+p.ay*p.ay+p.az*p.az)));
+fileDetails.push({fn,len:d.length,axAvg,ayAvg,azAvg,maxA});
+});
+
+document.getElementById('totalFiles').textContent=files.length;
+document.getElementById('totalRecords').textContent=totalRec;
+document.getElementById('maxAccel').textContent=maxAccel.toFixed(2);
+document.getElementById('maxGyro').textContent=maxGyro.toFixed(1);
+
+drawDistribution();
+drawComparison(fileDetails);
+drawTable(fileDetails);
+}
+
+function drawDistribution(){
+const allAx=[],allAy=[],allAz=[],allGx=[],allGy=[],allGz=[];
+Object.values(loadedData).forEach(d=>d.forEach(p=>{allAx.push(p.ax);allAy.push(p.ay);allAz.push(p.az);allGx.push(p.gx);allGy.push(p.gy);allGz.push(p.gz);}));
+
+const bins=20;
+const makeBins=(arr,min,max)=>{
+const step=(max-min)/bins;const counts=new Array(bins).fill(0);
+const labels=[];
+for(let i=0;i<bins;i++){labels.push((min+i*step).toFixed(2));}
+arr.forEach(v=>{const idx=Math.min(Math.floor((v-min)/step),bins-1);if(idx>=0)counts[idx]++;});
+return{labels,counts};
+};
+
+const ab=makeBins(allAx,-2,2);
+if(charts.accelDist)charts.accelDist.destroy();
+charts.accelDist=new Chart(document.getElementById('accelDistChart'),{
+type:'bar',data:{labels:ab.labels,datasets:[{label:'AX',data:ab.counts,backgroundColor:'#E74C3C30',borderColor:'#E74C3C',borderWidth:1}]},
+options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:'g'}},y:{title:{display:true,text:'Count'}}}}
+});
+
+const gb=makeBins(allGx,-100,100);
+if(charts.gyroDist)charts.gyroDist.destroy();
+charts.gyroDist=new Chart(document.getElementById('gyroDistChart'),{
+type:'bar',data:{labels:gb.labels,datasets:[{label:'GX',data:gb.counts,backgroundColor:'#E67E2230',borderColor:'#E67E22',borderWidth:1}]},
+options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{title:{display:true,text:'deg/s'}},y:{title:{display:true,text:'Count'}}}}
+});
+}
+
+function drawComparison(details){
+if(charts.compare)charts.compare.destroy();
+charts.compare=new Chart(document.getElementById('compareChart'),{
+type:'bar',
+data:{
+labels:details.map(d=>d.fn.replace('recording_','').replace('.csv','')),
+datasets:[
+{label:'AX avg',data:details.map(d=>d.axAvg),backgroundColor:'#E74C3C'},
+{label:'AY avg',data:details.map(d=>d.ayAvg),backgroundColor:'#2ECC71'},
+{label:'AZ avg',data:details.map(d=>d.azAvg),backgroundColor:'#3498DB'}
+]
+},
+options:{responsive:true,maintainAspectRatio:false,scales:{y:{title:{display:true,text:'g'}}}}
+});
+}
+
+function drawTable(details){
+const tbody=document.getElementById('detailBody');
+tbody.innerHTML='';
+details.forEach(d=>{
+tbody.innerHTML+='<tr><td>'+d.fn+'</td><td>'+d.len+'</td><td>'+d.axAvg.toFixed(4)+'</td><td>'+d.ayAvg.toFixed(4)+'</td><td>'+d.azAvg.toFixed(4)+'</td><td>'+d.maxA.toFixed(4)+'</td></tr>';
+});
+}
+
+loadFileList();
+</script>
+</body>
+</html>

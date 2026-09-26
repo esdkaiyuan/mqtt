@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Waveform Viewer</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#F5F5F5;padding:20px}
+.container{max-width:1400px;margin:0 auto}
+.header{background:#FFF;border:1px solid #E0E0E0;padding:24px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:18px;font-weight:600}
+.section{background:#FFF;border:1px solid #E0E0E0;padding:24px;margin-bottom:20px}
+.section h2{font-size:16px;font-weight:600;margin-bottom:16px}
+.btn{padding:8px 16px;border:none;cursor:pointer;font-size:13px;text-decoration:none}
+.btn-outline{background:transparent;border:1px solid #333;color:#333}
+select{padding:8px 12px;border:1px solid #DDD;font-size:13px;min-width:300px}
+.chart-box{border:1px solid #E0E0E0;padding:16px;margin-bottom:16px;background:#FFF}
+canvas{width:100%;height:200px}
+.legend{display:flex;gap:20px;margin-top:8px;font-size:12px;color:#666}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-color{width:12px;height:3px}
+.info{font-size:13px;color:#666;margin-top:16px}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>Waveform Viewer</h1>
+<a href="visualization.html" class="btn btn-outline">Back</a>
+</div>
+<div class="section">
+<h2>Select Recording File</h2>
+<select id="fileSelect" onchange="loadRecording()">
+<option value="">Please select a file</option>
+</select>
+<span id="fileInfo" style="font-size:13px;color:#666;margin-left:10px"></span>
+</div>
+<div class="section">
+<h2>Acceleration Data (g)</h2>
+<div class="chart-box">
+<canvas id="accelChart"></canvas>
+<div class="legend">
+<div class="legend-item"><div class="legend-color" style="background:#E74C3C"></div>AX</div>
+<div class="legend-item"><div class="legend-color" style="background:#2ECC71"></div>AY</div>
+<div class="legend-item"><div class="legend-color" style="background:#3498DB"></div>AZ</div>
+</div>
+</div>
+</div>
+<div class="section">
+<h2>Gyroscope Data (deg/s)</h2>
+<div class="chart-box">
+<canvas id="gyroChart"></canvas>
+<div class="legend">
+<div class="legend-item"><div class="legend-color" style="background:#E67E22"></div>GX</div>
+<div class="legend-item"><div class="legend-color" style="background:#9B59B6"></div>GY</div>
+<div class="legend-item"><div class="legend-color" style="background:#1ABC9C"></div>GZ</div>
+</div>
+</div>
+</div>
+<div class="section">
+<h2>Statistics</h2>
+<div id="statsInfo" class="info">Please select a file</div>
+</div>
+</div>
+<script>
+const API='http://localhost:8004';
+let accelChart=null,gyroChart=null,currentData=null;
+
+async function loadFileList(){
+const res=await fetch(API+'/api/recordings');
+const data=await res.json();
+const select=document.getElementById('fileSelect');
+data.recordings.forEach(rec=>{
+const opt=document.createElement('option');
+opt.value=rec.filename;
+opt.textContent=rec.filename+' ('+rec.record_time+')';
+select.appendChild(opt);
+});
+}
+
+async function loadRecording(){
+const filename=document.getElementById('fileSelect').value;
+if(!filename){clearCharts();return;}
+const res=await fetch(API+'/api/recordings/'+filename);
+const csv=await res.text();
+currentData=parseCSV(csv);
+document.getElementById('fileInfo').textContent=currentData.length+' records';
+drawCharts();
+showStats();
+}
+
+function parseCSV(csv){
+const lines=csv.trim().split('\n');
+const data=[];
+for(let i=1;i<lines.length;i++){
+if(lines[i]){
+const c=lines[i].split(',');
+data.push({id:+c[0],ax:+c[3],ay:+c[4],az:+c[5],gx:+c[6],gy:+c[7],gz:+c[8]});
+}
+}
+return data;
+}
+
+function drawCharts(){
+if(!currentData||!currentData.length)return;
+const labels=currentData.map((_,i)=>i);
+if(accelChart)accelChart.destroy();
+if(gyroChart)gyroChart.destroy();
+
+accelChart=new Chart(document.getElementById('accelChart'),{
+type:'line',
+data:{labels,datasets:[
+{label:'AX',data:currentData.map(d=>d.ax),borderColor:'#E74C3C',borderWidth:1,pointRadius:0,tension:0.1},
+{label:'AY',data:currentData.map(d=>d.ay),borderColor:'#2ECC71',borderWidth:1,pointRadius:0,tension:0.1},
+{label:'AZ',data:currentData.map(d=>d.az),borderColor:'#3498DB',borderWidth:1,pointRadius:0,tension:0.1}
+]},
+options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:'Sample'}},y:{title:{display:true,text:'g'}}},plugins:{legend:{display:false}}}
+});
+
+gyroChart=new Chart(document.getElementById('gyroChart'),{
+type:'line',
+data:{labels,datasets:[
+{label:'GX',data:currentData.map(d=>d.gx),borderColor:'#E67E22',borderWidth:1,pointRadius:0,tension:0.1},
+{label:'GY',data:currentData.map(d=>d.gy),borderColor:'#9B59B6',borderWidth:1,pointRadius:0,tension:0.1},
+{label:'GZ',data:currentData.map(d=>d.gz),borderColor:'#1ABC9C',borderWidth:1,pointRadius:0,tension:0.1}
+]},
+options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:'Sample'}},y:{title:{display:true,text:'deg/s'}}},plugins:{legend:{display:false}}}
+});
+}
+
+function showStats(){
+if(!currentData||!currentData.length)return;
+const calc=(arr)=>({min:Math.min(...arr).toFixed(4),max:Math.max(...arr).toFixed(4),avg:(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(4)});
+const ax=calc(currentData.map(d=>d.ax));
+const ay=calc(currentData.map(d=>d.ay));
+const az=calc(currentData.map(d=>d.az));
+document.getElementById('statsInfo').innerHTML='<b>Count:</b> '+currentData.length+' | <b>AX:</b> '+ax.min+' ~ '+ax.max+' (avg '+ax.avg+') | <b>AY:</b> '+ay.min+' ~ '+ay.max+' (avg '+ay.avg+') | <b>AZ:</b> '+az.min+' ~ '+az.max+' (avg '+az.avg+')';
+}
+
+function clearCharts(){
+if(accelChart){accelChart.destroy();accelChart=null;}
+if(gyroChart){gyroChart.destroy();gyroChart=null;}
+document.getElementById('fileInfo').textContent='';
+document.getElementById('statsInfo').textContent='Please select a file';
+}
+
+loadFileList();
+</script>
+</body>
+</html>

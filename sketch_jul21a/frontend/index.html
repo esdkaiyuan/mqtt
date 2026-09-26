@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>原始数据采集系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #F5F5F5;
+            color: #333333;
+            line-height: 1.6;
+        }
+
+        /* Layout */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        /* Header */
+        .header {
+            background: #FFFFFF;
+            border: 1px solid #E0E0E0;
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333333;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header p {
+            font-size: 14px;
+            color: #666666;
+        }
+
+        /* Status */
+        .status {
+            padding: 12px 16px;
+            margin-bottom: 24px;
+            font-size: 13px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status.ok {
+            background: #F0FFF4;
+            color: #22543D;
+            border: 1px solid #C6F6D5;
+        }
+
+        .status.error {
+            background: #FFF5F5;
+            color: #C53030;
+            border: 1px solid #FED7D7;
+        }
+
+        /* Stats Grid */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat {
+            background: #FFFFFF;
+            border: 1px solid #E0E0E0;
+            padding: 24px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            font-weight: 500;
+            color: #666666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 600;
+            color: #333333;
+        }
+
+        /* Data Section */
+        .data-section {
+            background: #FFFFFF;
+            border: 1px solid #E0E0E0;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Buttons */
+        .btn-group {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        .btn-primary {
+            background: #333333;
+            color: #FFFFFF;
+        }
+
+        .btn-primary:hover {
+            background: #1A1A1A;
+        }
+
+        .btn-success {
+            background: #22543D;
+            color: #FFFFFF;
+        }
+
+        .btn-success:hover {
+            background: #1A3D2C;
+        }
+
+        .btn-danger {
+            background: #C53030;
+            color: #FFFFFF;
+        }
+
+        .btn-danger:hover {
+            background: #9B2C2C;
+        }
+
+        .btn-outline {
+            background: transparent;
+            color: #333333;
+            border: 1px solid #333333;
+        }
+
+        .btn-outline:hover {
+            background: #333333;
+            color: #FFFFFF;
+        }
+
+        /* Table */
+        .table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: #F5F5F5;
+        }
+
+        th {
+            padding: 12px 16px;
+            text-align: left;
+            font-size: 12px;
+            font-weight: 600;
+            color: #333333;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid #E0E0E0;
+        }
+
+        td {
+            padding: 12px 16px;
+            font-size: 13px;
+            color: #333333;
+            border-bottom: 1px solid #E0E0E0;
+            font-variant-numeric: tabular-nums;
+        }
+
+        tbody tr:hover {
+            background: #FAFAFA;
+        }
+
+        .device-id {
+            font-weight: 500;
+        }
+
+        /* SVG Icons */
+        .icon {
+            width: 16px;
+            height: 16px;
+            fill: currentColor;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .section-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .stats {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5"/>
+                    <path d="M2 12l10 5 10-5"/>
+                </svg>
+                数据采集系统
+            </h1>
+            <p>ESP32-S3 + MPU6500 - 六轴惯性传感器数据采集</p>
+        </div>
+
+        <div id="status" class="status ok">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M9 12l2 2 4-4"/>
+            </svg>
+            正在检查服务连接...
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-label">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7V4h16v3"/>
+                        <path d="M9 20h6"/>
+                        <path d="M12 4v16"/>
+                    </svg>
+                    总数据量
+                </div>
+                <div class="stat-value" id="total">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="7" width="20" height="14" rx="2"/>
+                        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
+                    </svg>
+                    设备数量
+                </div>
+                <div class="stat-value" id="devices">0</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    首条数据
+                </div>
+                <div class="stat-value" id="first" style="font-size: 16px; font-weight: 400;">-</div>
+            </div>
+            <div class="stat">
+                <div class="stat-label">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    最新数据
+                </div>
+                <div class="stat-value" id="last" style="font-size: 16px; font-weight: 400;">-</div>
+            </div>
+        </div>
+
+        <div class="data-section">
+            <div class="section-header">
+                <div class="section-title">
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="16" y1="13" x2="8" y2="13"/>
+                        <line x1="16" y1="17" x2="8" y2="17"/>
+                        <polyline points="10 9 9 9 8 9"/>
+                    </svg>
+                    最新数据
+                </div>
+                <div class="btn-group">
+                    <a href="recordings.html" class="btn btn-outline">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        记录管理
+                    </a>
+                    <a href="visualization.html" class="btn btn-outline">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21.21 15.89A10 10 0 1 1 8 2.83"/>
+                            <path d="M22 12A10 10 0 0 0 12 2v10z"/>
+                        </svg>
+                        数据可视化
+                    </a>
+                    <button class="btn btn-primary" onclick="fetchData()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"/>
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                        </svg>
+                        刷新
+                    </button>
+                    <button class="btn btn-success" onclick="startRecord5s('realtime')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                        记录5秒(实时)
+                    </button>
+                    <button class="btn btn-outline" onclick="startRecord5s('history')">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        记录历史
+                    </button>
+                    <button class="btn btn-danger" onclick="clearData()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3 6 5 6 21 6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                        清除数据
+                    </button>
+                    <button class="btn btn-outline" onclick="exportCSV()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        导出CSV
+                    </button>
+                </div>
+            </div>
+
+            <div id="record-status" class="status" style="display: none; margin-bottom: 15px;"></div>
+
+            <div class="pagination" style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+                <span style="font-size: 13px; color: #666;">每页显示:</span>
+                <select id="pageSize" onchange="changePageSize()" style="padding: 5px 10px; border: 1px solid #ddd; font-size: 13px;">
+                    <option value="50">50条</option>
+                    <option value="100">100条</option>
+                    <option value="200" selected>200条</option>
+                    <option value="500">500条</option>
+                </select>
+                <span id="pageInfo" style="font-size: 13px; color: #666;"></span>
+                <button class="btn btn-outline" onclick="prevPage()" id="prevBtn" style="padding: 5px 10px;">
+                    上一页
+                </button>
+                <button class="btn btn-outline" onclick="nextPage()" id="nextBtn" style="padding: 5px 10px;">
+                    下一页
+                </button>
+            </div>
+
+            <div class="table-wrapper">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>设备</th>
+                            <th>时间</th>
+                            <th>AX (g)</th>
+                            <th>AY (g)</th>
+                            <th>AZ (g)</th>
+                            <th>GX (度/秒)</th>
+                            <th>GY (度/秒)</th>
+                            <th>GZ (度/秒)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="data"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 分页状态
+        let currentPage = 1;
+        let currentPageSize = 200;
+        let totalItems = 0;
+
+        const API = 'http://localhost:8004';
+
+        async function loadStats() {
+            try {
+                const res = await fetch(`${API}/api/stats`);
+                const data = await res.json();
+                document.getElementById('total').textContent = data.total_records.toLocaleString();
+                document.getElementById('devices').textContent = data.device_count;
+                document.getElementById('first').textContent = data.first_record || '-';
+                document.getElementById('last').textContent = data.last_record || '-';
+                document.getElementById('status').textContent = '服务正常运行';
+                document.getElementById('status').className = 'status ok';
+            } catch (e) {
+                document.getElementById('status').textContent = '服务连接失败';
+                document.getElementById('status').className = 'status error';
+            }
+        }
+
+        async function fetchData() {
+            try {
+                const res = await fetch(`${API}/api/data?page=${currentPage}&page_size=${currentPageSize}`);
+                const data = await res.json();
+                const tbody = document.getElementById('data');
+                tbody.innerHTML = '';
+                totalItems = data.pagination.total_items;
+
+                data.data.forEach(item => {
+                    let timeStr = item.created_at || '-';
+
+                    tbody.innerHTML += `
+                        <tr>
+                            <td>${item.id}</td>
+                            <td class="device-id">${item.device_id}</td>
+                            <td>${timeStr}</td>
+                            <td>${item.ax?.toFixed(4) || '-'}</td>
+                            <td>${item.ay?.toFixed(4) || '-'}</td>
+                            <td>${item.az?.toFixed(4) || '-'}</td>
+                            <td>${item.gx?.toFixed(4) || '-'}</td>
+                            <td>${item.gy?.toFixed(4) || '-'}</td>
+                            <td>${item.gz?.toFixed(4) || '-'}</td>
+                        </tr>
+                    `;
+                });
+
+                updatePagination();
+            } catch (e) {
+                console.error('获取数据失败:', e);
+            }
+        }
+
+        function updatePagination() {
+            const totalPages = Math.ceil(totalItems / currentPageSize);
+            const pageInfo = document.getElementById('pageInfo');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+
+            pageInfo.textContent = `第 ${currentPage} / ${totalPages} 页，共 ${totalItems} 条`;
+            prevBtn.disabled = currentPage <= 1;
+            nextBtn.disabled = currentPage >= totalPages;
+        }
+
+        function prevPage() {
+            if (currentPage > 1) {
+                currentPage--;
+                fetchData();
+            }
+        }
+
+        function nextPage() {
+            const totalPages = Math.ceil(totalItems / currentPageSize);
+            if (currentPage < totalPages) {
+                currentPage++;
+                fetchData();
+            }
+        }
+
+        function changePageSize() {
+            currentPageSize = parseInt(document.getElementById('pageSize').value);
+            currentPage = 1;
+            fetchData();
+        }
+
+        function exportCSV() {
+            window.open(`${API}/api/export`, '_blank');
+        }
+
+        async function clearData() {
+            if (!confirm('确定要清除所有数据吗？')) return;
+
+            try {
+                const res = await fetch(`${API}/api/clear`, { method: 'POST' });
+                const data = await res.json();
+                alert(data.message);
+                loadStats();
+                fetchData();
+            } catch (e) {
+                console.error('清除失败:', e);
+                alert('清除数据失败');
+            }
+        }
+
+        let recordTimer = null;
+
+        async function startRecord5s(mode = 'realtime') {
+            const statusDiv = document.getElementById('record-status');
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'status ok';
+
+            if (mode === 'realtime') {
+                // 实时模式：前端倒计时，后端只负责查询数据
+                const startTime = Date.now();  // 记录开始时间戳
+                statusDiv.innerHTML = `
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    开始记录实时数据...
+                `;
+
+                // 前端倒计时5秒
+                await new Promise(resolve => {
+                    let elapsed = 0;
+                    const interval = setInterval(() => {
+                        elapsed++;
+                        statusDiv.innerHTML = `
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                            正在记录... ${elapsed}/5秒
+                        `;
+                        if (elapsed >= 5) {
+                            clearInterval(interval);
+                            resolve();
+                        }
+                    }, 1000);
+                });
+
+                // 5秒后，请求后端保存这个时间段的数据
+                const endTime = Date.now();
+                try {
+                    const res = await fetch(`${API}/api/record_realtime?start_time=${startTime}&end_time=${endTime}`, { method: 'POST' });
+                    const data = await res.json();
+
+                    statusDiv.innerHTML = `
+                        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <path d="M9 12l2 2 4-4"/>
+                        </svg>
+                        记录完成！${data.message}
+                    `;
+                } catch (e) {
+                    console.error('记录失败:', e);
+                    statusDiv.textContent = '记录失败: ' + e.message;
+                }
+                setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+
+            } else {
+                // 历史模式：记录最近500条
+                statusDiv.innerHTML = `
+                    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    正在记录历史数据...
+                `;
+
+                try {
+                    const res = await fetch(`${API}/api/record?device_id=ESP32_001&mode=history`, { method: 'POST' });
+                    const data = await res.json();
+
+                    if (data.status === 'completed') {
+                        statusDiv.innerHTML = `
+                            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <path d="M9 12l2 2 4-4"/>
+                            </svg>
+                            ${data.message}
+                        `;
+                    } else {
+                        statusDiv.textContent = '记录失败: ' + (data.message || '未知错误');
+                    }
+                    setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+                } catch (e) {
+                    console.error('记录失败:', e);
+                    statusDiv.textContent = '记录失败: ' + e.message;
+                    setTimeout(() => { statusDiv.style.display = 'none'; }, 3000);
+                }
+            }
+        }
+
+        // 每3秒自动刷新
+        setInterval(() => { loadStats(); fetchData(); }, 5000);
+
+        // 初始化
+        loadStats();
+        fetchData();
+    </script>
+</body>
+</html>

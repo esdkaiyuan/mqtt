@@ -1,0 +1,144 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mqtt-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${DB_NAME:-mqtt_cloud}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ../scripts/init-mysql.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - mqtt-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: mqtt-redis
+    restart: always
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping; else redis-cli ping; fi | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - mqtt-network
+
+  # 说明：EMQX 5 默认不启用认证，此处 MQTT_USERNAME/MQTT_PASSWORD 仅透传给后端。
+  # 生产环境请在 EMQX Dashboard(18083) 或 emqx.conf 中开启密码认证后再下发账号。
+  emqx:
+    image: emqx/emqx:5.0
+    container_name: mqtt-emqx
+    restart: always
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+      - "${MQTT_WS_PORT:-8083}:8083"
+      - "${EMQX_DASHBOARD_PORT:-18083}:18083"
+    volumes:
+      - emqx_data:/opt/emqx/data
+      - emqx_log:/opt/emqx/log
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - mqtt-network
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    image: mqtt-cloud-backend:1.0.0
+    container_name: mqtt-backend
+    restart: always
+    stop_grace_period: 30s
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    environment:
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_USERNAME: ${DB_USERNAME:-root}
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+      DB_NAME: ${DB_NAME:-mqtt_cloud}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      # 与 application.yml 的 spring.mqtt.host 对应，必须为 tcp://host:port
+      MQTT_HOST: tcp://emqx:1883
+      MQTT_USERNAME: ${MQTT_USERNAME:-admin}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-public}
+      MQTT_CLIENT_ID: mqtt_backend
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须在 .env 中配置}
+      SERVER_PORT: 8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - mqtt-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      emqx:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        VITE_MQTT_URL: ${VITE_MQTT_URL:-ws://localhost:8083/mqtt}
+        VITE_MQTT_USERNAME: ${MQTT_USERNAME:-admin}
+        VITE_MQTT_PASSWORD: ${MQTT_PASSWORD:-public}
+    image: mqtt-cloud-frontend:1.0.0
+    container_name: mqtt-frontend
+    restart: always
+    ports:
+      - "${FRONTEND_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - mqtt-network
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+  emqx_data:
+    driver: local
+  emqx_log:
+    driver: local
+
+networks:
+  mqtt-network:
+    driver: bridge

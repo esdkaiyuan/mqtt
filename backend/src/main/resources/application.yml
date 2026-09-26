@@ -1,0 +1,105 @@
+spring:
+  application:
+    name: mqtt-cloud-backend
+
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration
+
+  # 数据源配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/mqtt_cloud?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:root_password}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-test-query: SELECT 1
+
+  # Redis配置
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DATABASE:0}
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+          max-wait: 5000ms
+
+  # MQTT配置
+  mqtt:
+    host: ${MQTT_HOST:tcp://localhost:1883}
+    username: ${MQTT_USERNAME:admin}
+    password: ${MQTT_PASSWORD:public}
+    clientId: ${MQTT_CLIENT_ID:mqtt_backend}
+    timeout: ${MQTT_TIMEOUT:10}
+    keepalive: ${MQTT_KEEPALIVE:60}
+    reconnect: true
+    clean-session: ${MQTT_CLEAN_SESSION:true}
+    max-inflight: ${MQTT_MAX_INFLIGHT:100}
+
+  # Jackson配置
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: Asia/Shanghai
+    serialization:
+      WRITE_DATES_AS_TIMESTAMPS: false
+
+# MyBatis Plus配置
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    cache-enabled: true
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: AUTO
+  mapper-locations: classpath*:com/mqtt/cloud/mapper/**/*.xml
+
+# 服务器配置
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /api
+  shutdown: graceful
+
+# 应用配置
+app:
+  jwt:
+    secret: ${JWT_SECRET:TXlNU1RDbG91ZENsb3VkU2VjcmV0S2V5MjAyNVlvdXJTZWNyZXRrZXlGb3JIT1BERVI=}
+    expiration: ${JWT_EXPIRATION:604800000}
+    refresh-expiration: ${JWT_REFRESH:2592000000}
+  device:
+    status-check-interval: 60000
+    status-timeout: 300000
+
+# 日志配置
+logging:
+  level:
+    com.mqtt.cloud: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: DEBUG
+    com.baomidou.mybatisplus: DEBUG
+    org.eclipse.paho: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# 管理端点
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always

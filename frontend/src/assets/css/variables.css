@@ -1,0 +1,82 @@
+:root {
+  /* ========== 品牌色（ThingsCloud 蓝色体系） ========== */
+  --color-primary: #165DFF;
+  --color-primary-light: #E8F3FF;
+  --color-primary-hover: #4080FF;
+  --color-primary-active: #0E42D2;
+
+  /* ========== 中性色 ========== */
+  --color-white: #FFFFFF;
+  --color-bg: #F5F7FA;
+  --color-card: #FFFFFF;
+  --color-text-primary: #1D2129;
+  --color-text-regular: #4E5969;
+  --color-text-tertiary: #86909C;
+  --color-border: #E5E6EB;
+  --color-border-light: #F2F3F5;
+
+  /* ========== 功能色 ========== */
+  --color-success: #00B42A;
+  --color-success-light: #E8FFEA;
+  --color-warning: #FF7D00;
+  --color-warning-light: #FFF3E8;
+  --color-danger: #F53F3F;
+  --color-danger-light: #FFECEC;
+  --color-info: #165DFF;
+
+  /* ========== 字体体系 ========== */
+  --font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  --font-family-mono: 'SF Mono', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+  --font-size-2xl: 24px;
+  --font-size-3xl: 32px;
+  --font-size-4xl: 48px;
+
+  /* ========== 字重 ========== */
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ========== 间距体系 ========== */
+  --spacing-2xs: 2px;
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 12px;
+  --spacing-lg: 16px;
+  --spacing-xl: 20px;
+  --spacing-2xl: 24px;
+  --spacing-3xl: 32px;
+  --spacing-4xl: 48px;
+
+  /* ========== 阴影 ========== */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-card-hover: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.1);
+
+  /* ========== 边框与圆角 ========== */
+  --border-radius-sm: 4px;
+  --border-radius: 8px;
+  --border-radius-md: 12px;
+  --border-radius-lg: 16px;
+  --border-color: #E5E6EB;
+  --border-color-light: #F2F3F5;
+
+  /* ========== 布局 ========== */
+  --sidebar-width: 220px;
+  --sidebar-width-collapsed: 64px;
+  --header-height: 56px;
+  --page-max-width: 1200px;
+
+  /* ========== 兼容旧变量名 ========== */
+  --color-gray-light: var(--color-bg);
+  --color-gray-border: var(--color-border);
+  --color-gray-text: var(--color-text-regular);
+  --color-gray-dark: var(--color-text-primary);
+  --shadow-sm: var(--shadow-card);
+  --shadow-md: var(--shadow-card-hover);
+}

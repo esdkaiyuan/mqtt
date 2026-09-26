@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>测试页面</title>
+</head>
+<body>
+    <h1>API测试</h1>
+    <button onclick="testAPI()">测试连接</button>
+    <pre id="result">等待测试...</pre>
+    
+    <script>
+        const API = 'http://localhost:8001';
+        
+        async function testAPI() {
+            try {
+                const res = await fetch(`${API}/health`);
+                const data = await res.json();
+                document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                document.getElementById('result').textContent = '错误: ' + e.message;
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# ========== 构建阶段 ==========
+# 构建上下文为仓库根目录（见 docker/docker-compose.yml 的 build.context）
+FROM node:18-alpine AS builder
+WORKDIR /build
+
+COPY frontend/package.json frontend/package-lock.json ./
+# 构建依赖 vite 属于 devDependencies，不能只装生产依赖
+RUN npm ci --no-audit --no-fund
+
+# 构建期注入的前端运行时配置（Vite 仅暴露 VITE_ 前缀变量）
+ARG VITE_MQTT_URL=ws://localhost:8083/mqtt
+ARG VITE_MQTT_USERNAME=admin
+ARG VITE_MQTT_PASSWORD=public
+ENV VITE_MQTT_URL=$VITE_MQTT_URL \
+    VITE_MQTT_USERNAME=$VITE_MQTT_USERNAME \
+    VITE_MQTT_PASSWORD=$VITE_MQTT_PASSWORD
+
+COPY frontend/ ./
+RUN npm run build
+
+# ========== 运行阶段 ==========
+FROM nginx:alpine
+
+RUN apk add --no-cache curl
+
+COPY --from=builder /build/dist /usr/share/nginx/html
+COPY docker/nginx.conf /etc/nginx/nginx.conf
+
+EXPOSE 80
+
+CMD ["nginx", "-g", "daemon off;"]

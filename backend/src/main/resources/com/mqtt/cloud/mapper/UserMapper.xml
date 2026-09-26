@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.UserMapper">
+
+    <sql id="baseColumns">
+        id, username, password, email, phone, role, status,
+        last_login, created_at, updated_at
+    </sql>
+
+    <sql id="excludePassword">
+        id, username, email, phone, role, status,
+        last_login, created_at, updated_at
+    </sql>
+
+    <select id="findByUsername" resultType="com.mqtt.cloud.entity.User">
+        SELECT <include refid="baseColumns"/>
+        FROM sys_user
+        WHERE username = #{username}
+          AND deleted = 0
+    </select>
+
+    <select id="findActiveUsers" resultType="com.mqtt.cloud.entity.User">
+        SELECT <include refid="excludePassword"/>
+        FROM sys_user
+        WHERE status = 'ACTIVE'
+          AND deleted = 0
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findByRole" resultType="com.mqtt.cloud.entity.User">
+        SELECT <include refid="excludePassword"/>
+        FROM sys_user
+        WHERE role = #{role}
+          AND deleted = 0
+        ORDER BY created_at DESC
+    </select>
+
+    <update id="updateLastLogin">
+        UPDATE sys_user
+        SET last_login = #{lastLogin}, updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+</mapper>

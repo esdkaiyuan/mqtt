@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Comparison</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:Arial,sans-serif;background:#F5F5F5;padding:20px}
+.container{max-width:1400px;margin:0 auto}
+.header{background:#FFF;border:1px solid #E0E0E0;padding:24px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
+.header h1{font-size:18px;font-weight:600}
+.section{background:#FFF;border:1px solid #E0E0E0;padding:24px;margin-bottom:20px}
+.section h2{font-size:16px;font-weight:600;margin-bottom:16px}
+.btn{padding:8px 16px;border:none;cursor:pointer;font-size:13px;text-decoration:none}
+.btn-primary{background:#333;color:#FFF}
+.btn-outline{background:transparent;border:1px solid #333;color:#333}
+select{padding:8px 12px;border:1px solid #DDD;font-size:13px;min-width:300px}
+.chart-box{border:1px solid #E0E0E0;padding:16px;margin-bottom:16px;background:#FFF}
+canvas{width:100%;height:300px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-color{width:20px;height:3px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px;text-align:left;border-bottom:1px solid #E0E0E0;font-size:13px}
+th{background:#F5F5F5;font-weight:600}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<h1>Multi-File Comparison</h1>
+<a href="visualization.html" class="btn btn-outline">Back</a>
+</div>
+
+<div class="section">
+<h2>Select Files to Compare</h2>
+<select id="fileSelect" multiple size="6" style="min-width:400px;height:140px" onchange="onSelect()"></select>
+<div style="margin-top:10px">
+<button class="btn btn-primary" onclick="compare()">Compare</button>
+<button class="btn btn-outline" onclick="selectAll()" style="margin-left:8px">Select All</button>
+<span id="selInfo" style="font-size:13px;color:#666;margin-left:10px"></span>
+</div>
+</div>
+
+<div id="resultArea" style="display:none">
+<div class="section">
+<h2>Acceleration Overlap</h2>
+<div class="chart-box"><canvas id="accelOverlay"></canvas></div>
+<div class="legend" id="accelLegend"></div>
+</div>
+
+<div class="section">
+<h2>Average Comparison</h2>
+<div class="chart-box"><canvas id="avgChart"></canvas></div>
+</div>
+
+<div class="section">
+<h2>Peak Comparison</h2>
+<div class="chart-box"><canvas id="peakChart"></canvas></div>
+</div>
+
+<div class="section">
+<h2>Details Table</h2>
+<table>
+<thead><tr><th>File</th><th>Samples</th><th>AX avg</th><th>AY avg</th><th>AZ avg</th><th>Peak |a|</th><th>GX avg</th><th>GY avg</th><th>GZ avg</th><th>Peak |g|</th></tr></thead>
+<tbody id="tableBody"></tbody>
+</table>
+</div>
+</div>
+</div>
+
+<script>
+const API='http://localhost:8004';
+let allRecordings=[];
+let charts={};
+const COLORS=['#E74C3C','#2ECC71','#3498DB','#E67E22','#9B59B6','#1ABC9C','#F39C12','#2C3E50'];
+
+async function loadFileList(){
+const res=await fetch(API+'/api/recordings');
+const data=await res.json();
+allRecordings=data.recordings||[];
+const sel=document.getElementById('fileSelect');
+sel.innerHTML='';
+allRecordings.forEach(r=>{
+const o=document.createElement('option');
+o.value=r.filename;
+o.textContent=r.filename+' ('+r.record_time+')';
+sel.appendChild(o);
+});
+}
+
+function onSelect(){
+const sel=document.getElementById('fileSelect');
+document.getElementById('selInfo').textContent='Selected: '+sel.selectedOptions.length+' files';
+}
+
+function selectAll(){
+const sel=document.getElementById('fileSelect');
+for(let i=0;i<sel.options.length;i++)sel.options[i].selected=true;
+onSelect();
+}
+
+async function compare(){
+const sel=document.getElementById('fileSelect');
+const files=Array.from(sel.selectedOptions).map(o=>o.value);
+if(files.length<2){alert('Select at least 2 files');return;}
+
+const results=[];
+for(const fn of files){
+try{
+const res=await fetch(API+'/api/recordings/'+fn);
+const csv=await res.text();
+const data=parseCSV(csv);
+const stats=calcStats(data,fn);
+results.push(stats);
+}catch(e){console.error(e);}
+}
+
+document.getElementById('resultArea').style.display='block';
+drawOverlay(results);
+drawAvg(results);
+drawPeak(results);
+drawTable(results);
+}
+
+function parseCSV(csv){
+const lines=csv.trim().split('\n');
+const data=[];
+for(let i=1;i<lines.length;i++){
+if(lines[i]){
+const c=lines[i].split(',');
+data.push({ax:+c[3],ay:+c[4],az:+c[5],gx:+c[6],gy:+c[7],gz:+c[8]});
+}
+}
+return data;
+}
+
+function calcStats(data,name){
+const n=data.length;
+const avg=(arr)=>arr.reduce((s,v)=>s+v,0)/n;
+const ax=data.map(d=>d.ax),ay=data.map(d=>d.ay),az=data.map(d=>d.az);
+const gx=data.map(d=>d.gx),gy=data.map(d=>d.gy),gz=data.map(d=>d.gz);
+const mags=data.map(d=>Math.sqrt(d.ax*d.ax+d.ay*d.ay+d.az*d.az));
+const gmags=data.map(d=>Math.sqrt(d.gx*d.gx+d.gy*d.gy+d.gz*d.gz));
+return{
+name:name.replace('recording_','').replace('.csv',''),
+data, n,
+axAvg:avg(ax),ayAvg:avg(ay),azAvg:avg(az),
+gxAvg:avg(gx),gyAvg:avg(gy),gzAvg:avg(gz),
+peakAccel:Math.max(...mags),peakGyro:Math.max(...gmags)
+};
+}
+
+function drawOverlay(results){
+if(charts.overlay)charts.overlay.destroy();
+const maxLen=Math.max(...results.map(r=>r.n));
+const labels=Array.from({length:maxLen},(_,i)=>i);
+const datasets=[];
+results.forEach((r,i)=>{
+datasets.push({
+label:r.name+' |a|',
+data:r.data.map(d=>Math.sqrt(d.ax*d.ax+d.ay*d.ay+d.az*d.az)),
+borderColor:COLORS[i%COLORS.length],
+borderWidth:1,pointRadius:0,tension:0.1
+});
+});
+
+charts.overlay=new Chart(document.getElementById('accelOverlay'),{
+type:'line',
+data:{labels,datasets},
+options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:'Sample'}},y:{title:{display:true,text:'g'}}},plugins:{legend:{display:false}}}
+});
+
+const legend=document.getElementById('accelLegend');
+legend.innerHTML='';
+results.forEach((r,i)=>{
+legend.innerHTML+='<div class="legend-item"><div class="legend-color" style="background:'+COLORS[i%COLORS.length]+'"></div>'+r.name+'</div>';
+});
+}
+
+function drawAvg(results){
+if(charts.avg)charts.avg.destroy();
+charts.avg=new Chart(document.getElementById('avgChart'),{
+type:'bar',
+data:{
+labels:results.map(r=>r.name),
+datasets:[
+{label:'AX avg',data:results.map(r=>r.axAvg),backgroundColor:'#E74C3C'},
+{label:'AY avg',data:results.map(r=>r.ayAvg),backgroundColor:'#2ECC71'},
+{label:'AZ avg',data:results.map(r=>r.azAvg),backgroundColor:'#3498DB'}
+]
+},
+options:{responsive:true,maintainAspectRatio:false,scales:{y:{title:{display:true,text:'g'}}}}
+});
+}
+
+function drawPeak(results){
+if(charts.peak)charts.peak.destroy();
+charts.peak=new Chart(document.getElementById('peakChart'),{
+type:'bar',
+data:{
+labels:results.map(r=>r.name),
+datasets:[
+{label:'Peak Accel (g)',data:results.map(r=>r.peakAccel),backgroundColor:'#E74C3C80'},
+{label:'Peak Gyro (deg/s)',data:results.map(r=>r.peakGyro/10),backgroundColor:'#3498DB80'}
+]
+},
+options:{responsive:true,maintainAspectRatio:false,scales:{y:{title:{display:true,text:'Value'}}}}
+});
+}
+
+function drawTable(results){
+const tbody=document.getElementById('tableBody');
+tbody.innerHTML='';
+results.forEach(r=>{
+tbody.innerHTML+='<tr><td>'+r.name+'</td><td>'+r.n+'</td><td>'+r.axAvg.toFixed(4)+'</td><td>'+r.ayAvg.toFixed(4)+'</td><td>'+r.azAvg.toFixed(4)+'</td><td>'+r.peakAccel.toFixed(4)+'</td><td>'+r.gxAvg.toFixed(2)+'</td><td>'+r.gyAvg.toFixed(2)+'</td><td>'+r.gzAvg.toFixed(2)+'</td><td>'+r.peakGyro.toFixed(2)+'</td></tr>';
+});
+}
+
+loadFileList();
+</script>
+</body>
+</html>

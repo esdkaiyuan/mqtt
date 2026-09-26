@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>记录管理 - 数据采集系统</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; background: #F5F5F5; color: #333; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { background: #FFF; border: 1px solid #E0E0E0; padding: 24px; margin-bottom: 20px; }
+        .header h1 { font-size: 18px; font-weight: 600; margin-bottom: 8px; }
+        .header p { font-size: 13px; color: #666; }
+        .section { background: #FFF; border: 1px solid #E0E0E0; padding: 24px; margin-bottom: 20px; }
+        .section h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #E0E0E0; font-size: 13px; }
+        th { background: #F5F5F5; font-weight: 600; }
+        .btn { padding: 8px 16px; border: none; cursor: pointer; font-size: 13px; text-decoration: none; display: inline-block; }
+        .btn-outline { background: transparent; border: 1px solid #333; color: #333; }
+        .empty { text-align: center; padding: 40px; color: #666; }
+        .back-btn { margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>记录管理</h1>
+            <p>查看和管理5秒记录文件</p>
+            <a href="index.html" class="btn btn-outline back-btn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; vertical-align: middle; margin-right: 4px;">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
+                返回主页面
+            </a>
+        </div>
+
+        <div class="section">
+            <h2>记录列表</h2>
+            <div id="recordings-list">
+                <p class="empty">加载中...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = 'http://localhost:8004';
+        let recordings = [];
+        let selectedIds = new Set();
+
+        async function loadRecordings() {
+            try {
+                const res = await fetch(`${API}/api/recordings`);
+                const data = await res.json();
+                recordings = data.recordings || [];
+                displayRecordings();
+            } catch (e) {
+                console.error('加载记录失败:', e);
+                document.getElementById('recordings-list').innerHTML = '<p class="empty">加载失败: ' + e.message + '</p>';
+            }
+        }
+
+        function displayRecordings() {
+            const listDiv = document.getElementById('recordings-list');
+
+            if (recordings.length === 0) {
+                listDiv.innerHTML = '<p class="empty">暂无记录</p>';
+                return;
+            }
+
+            let html = `
+                <div style="margin-bottom: 15px; display: flex; gap: 10px; align-items: center;">
+                    <label style="font-size: 13px;">
+                        <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 全选
+                    </label>
+                    <span id="selectedCount" style="font-size: 13px; color: #666;">已选择 0 条</span>
+                    <button class="btn btn-primary" onclick="batchDownload()" id="batchDownloadBtn" disabled>批量下载</button>
+                    <button class="btn btn-danger" onclick="batchDelete()" id="batchDeleteBtn" disabled>批量删除</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;"><input type="checkbox" id="headerCheckbox" onchange="toggleSelectAll()"></th>
+                            <th>ID</th>
+                            <th>文件名</th>
+                            <th>设备</th>
+                            <th>记录时间</th>
+                            <th>数据量</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+
+            recordings.forEach(rec => {
+                const isSelected = selectedIds.has(rec.id);
+                html += `<tr style="${isSelected ? 'background: #F0F7FF;' : ''}">
+                    <td><input type="checkbox" value="${rec.id}" ${isSelected ? 'checked' : ''} onchange="toggleSelect(${rec.id})"></td>
+                    <td>${rec.id}</td>
+                    <td>${rec.filename}</td>
+                    <td>${rec.device_id}</td>
+                    <td>${rec.record_time}</td>
+                    <td>${rec.data_count} 条</td>
+                    <td>
+                        <a href="${API}/api/recordings/${rec.filename}" class="btn btn-outline" download style="margin-right: 5px;">下载</a>
+                        <button class="btn btn-danger" onclick="deleteRecording('${rec.filename}', ${rec.id})" style="padding: 8px 12px;">删除</button>
+                    </td>
+                </tr>`;
+            });
+
+            html += '</tbody></table>';
+            listDiv.innerHTML = html;
+            updateButtons();
+        }
+
+        function toggleSelectAll() {
+            const selectAll = document.getElementById('selectAll');
+            const headerCheckbox = document.getElementById('headerCheckbox');
+            const isChecked = selectAll.checked || headerCheckbox.checked;
+
+            selectAll.checked = isChecked;
+            headerCheckbox.checked = isChecked;
+
+            if (isChecked) {
+                recordings.forEach(rec => selectedIds.add(rec.id));
+            } else {
+                selectedIds.clear();
+            }
+
+            displayRecordings();
+        }
+
+        function toggleSelect(id) {
+            if (selectedIds.has(id)) {
+                selectedIds.delete(id);
+            } else {
+                selectedIds.add(id);
+            }
+            updateButtons();
+            displayRecordings();
+        }
+
+        function updateButtons() {
+            const count = selectedIds.size;
+            document.getElementById('selectedCount').textContent = `已选择 ${count} 条`;
+            document.getElementById('batchDownloadBtn').disabled = count === 0;
+            document.getElementById('batchDeleteBtn').disabled = count === 0;
+        }
+
+        async function batchDownload() {
+            const selected = recordings.filter(rec => selectedIds.has(rec.id));
+
+            for (const rec of selected) {
+                const link = document.createElement('a');
+                link.href = `${API}/api/recordings/${rec.filename}`;
+                link.download = rec.filename;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                await new Promise(r => setTimeout(r, 200));
+            }
+
+            alert(`已下载 ${selected.length} 个文件`);
+        }
+
+        async function batchDelete() {
+            if (!confirm(`确定要删除选中的 ${selectedIds.size} 条记录吗？`)) return;
+
+            const selected = recordings.filter(rec => selectedIds.has(rec.id));
+
+            for (const rec of selected) {
+                try {
+                    await fetch(`${API}/api/recordings/${rec.filename}`, { method: 'DELETE' });
+                } catch (e) {
+                    console.error('删除失败:', e);
+                }
+            }
+
+            selectedIds.clear();
+            await loadRecordings();
+            alert('删除完成');
+        }
+
+        async function deleteRecording(filename, id) {
+            if (!confirm(`确定要删除记录 ${filename} 吗？`)) return;
+
+            try {
+                await fetch(`${API}/api/recordings/${filename}`, { method: 'DELETE' });
+                selectedIds.delete(id);
+                await loadRecordings();
+                alert('删除成功');
+            } catch (e) {
+                console.error('删除失败:', e);
+                alert('删除失败');
+            }
+        }
+
+        loadRecordings();
+    </script>
+</body>
+</html>

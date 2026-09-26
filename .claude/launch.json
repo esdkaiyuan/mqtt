@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mqtt-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "frontend"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

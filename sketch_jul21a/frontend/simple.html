@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>简单测试</title>
+</head>
+<body>
+    <h1>数据测试</h1>
+    <button onclick="loadData()">加载数据</button>
+    <div id="result"></div>
+    
+    <script>
+        const API = 'http://localhost:8001';
+        
+        async function loadData() {
+            try {
+                const res = await fetch(API + '/api/data?page_size=5');
+                const data = await res.json();
+                let html = '<h2>数据列表</h2><ul>';
+                data.data.forEach(item => {
+                    html += '<li>ID: ' + item.id + ', AX: ' + item.ax.toFixed(4) + '</li>';
+                });
+                html += '</ul><p>总数: ' + data.pagination.total_items + '</p>';
+                document.getElementById('result').innerHTML = html;
+            } catch (e) {
+                document.getElementById('result').innerHTML = '错误: ' + e.message;
+            }
+        }
+    </script>
+</body>
+</html>

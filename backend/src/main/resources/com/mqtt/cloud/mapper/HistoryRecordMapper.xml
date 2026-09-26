@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.HistoryRecordMapper">
+
+    <sql id="baseColumns">
+        id, device_id, topic, payload, timestamp, created_at
+    </sql>
+
+    <select id="findByDeviceIdAndTimeRange" resultType="com.mqtt.cloud.entity.HistoryRecord">
+        SELECT <include refid="baseColumns"/>
+        FROM history_record
+        WHERE device_id = #{deviceId}
+          AND timestamp &gt;= #{startTime}
+          AND timestamp &lt;= #{endTime}
+        ORDER BY timestamp DESC
+    </select>
+
+    <select id="pageQuery" resultType="com.mqtt.cloud.entity.HistoryRecord">
+        SELECT h.id, h.device_id, h.topic, h.payload, h.timestamp, h.created_at,
+               d.device_name AS device_name
+        FROM history_record h
+        LEFT JOIN device d ON h.device_id = d.id AND d.deleted = 0
+        WHERE 1=1
+          <if test="dto.deviceId != null">
+            AND h.device_id = #{dto.deviceId}
+          </if>
+          <if test="dto.topic != null and dto.topic != ''">
+            AND h.topic LIKE CONCAT('%', #{dto.topic}, '%')
+          </if>
+          <if test="dto.startTime != null and dto.startTime != ''">
+            AND h.timestamp &gt;= #{dto.startTime}
+          </if>
+          <if test="dto.endTime != null and dto.endTime != ''">
+            AND h.timestamp &lt;= #{dto.endTime}
+          </if>
+          <if test="userId != null">
+            AND d.owner_id = #{userId}
+          </if>
+        ORDER BY h.timestamp DESC
+    </select>
+
+</mapper>

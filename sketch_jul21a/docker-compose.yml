@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: fall_detection_db
+    environment:
+      POSTGRES_DB: fall_detection
+      POSTGRES_USER: fall_user
+      POSTGRES_PASSWORD: fall_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - fall_detection_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fall_user -d fall_detection"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fall_detection_backend
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://fall_user:fall_password@postgres:5432/fall_detection
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./backend:/app
+      - backend_data:/app/data
+    networks:
+      - fall_detection_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: fall_detection_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_WS_URL: ws://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - fall_detection_network
+    restart: unless-stopped
+
+networks:
+  fall_detection_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_data:
+    driver: local
