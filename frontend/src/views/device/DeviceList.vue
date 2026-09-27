@@ -144,7 +144,7 @@
             </option>
           </select>
           <p v-if="!productsLoading && products.length === 0" class="form-hint">
-            暂无可用产品，请先在「产品管理」中创建并启用产品
+            暂无可用产品，请先通过 POST /api/products 创建并启用产品
           </p>
         </div>
         <div class="form-group">
