@@ -39,8 +39,8 @@ services:
     networks:
       - mqtt-network
 
-  # 说明：EMQX 5 默认不启用认证，此处 MQTT_USERNAME/MQTT_PASSWORD 仅透传给后端。
-  # 生产环境请在 EMQX Dashboard(18083) 或 emqx.conf 中开启密码认证后再下发账号。
+  # 说明：EMQX 5 默认不启用认证，认证与授权由 emqx-init 服务通过 REST API 下发：
+  # 认证/授权均回调后端 /api/internal/emqx/**，由后端按产品-设备-一机一密规则裁决。
   emqx:
     image: emqx/emqx:5.0
     container_name: mqtt-emqx
@@ -82,11 +82,19 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       # 与 application.yml 的 spring.mqtt.host 对应，必须为 tcp://host:port
       MQTT_HOST: tcp://emqx:1883
-      MQTT_USERNAME: ${MQTT_USERNAME:-admin}
-      MQTT_PASSWORD: ${MQTT_PASSWORD:-public}
+      # 后端自身连接 Broker 使用平台账号：用户名固定为 PLATFORM，密码为 PLATFORM_SECRET
+      MQTT_USERNAME: PLATFORM
+      MQTT_PASSWORD: ${PLATFORM_SECRET:?PLATFORM_SECRET 必须在 .env 中配置}
       MQTT_CLIENT_ID: mqtt_backend
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须在 .env 中配置}
       SERVER_PORT: 8080
+      # 接入访问控制（EMQX HTTP 回调）
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN 必须在 .env 中配置}
+      PLATFORM_SECRET: ${PLATFORM_SECRET:?PLATFORM_SECRET 必须在 .env 中配置}
+      FRONTEND_SECRET: ${FRONTEND_SECRET:-}
+      ACCESS_CONTROL_ENFORCE_AUTH: ${ACCESS_CONTROL_ENFORCE_AUTH:-false}
+      DIRECT_FRONTEND_ENABLED: ${DIRECT_FRONTEND_ENABLED:-true}
+      STREAM_TIMEOUT_MS: ${STREAM_TIMEOUT_MS:-0}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
       interval: 30s
@@ -102,6 +110,26 @@ services:
         condition: service_healthy
       emqx:
         condition: service_healthy
+
+  # 一次性初始化：通过 EMQX REST API 下发 HTTP 认证与授权源（可重复执行，幂等）
+  emqx-init:
+    image: curlimages/curl:8.8.0
+    container_name: mqtt-emqx-init
+    restart: "no"
+    volumes:
+      - ../scripts/emqx-init.sh:/emqx-init.sh:ro
+    entrypoint: ["sh", "/emqx-init.sh"]
+    environment:
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN 必须在 .env 中配置}
+      EMQX_DASHBOARD_USER: ${EMQX_DASHBOARD_USER:-admin}
+      EMQX_DASHBOARD_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
+    depends_on:
+      emqx:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - mqtt-network
 
   frontend:
     build:

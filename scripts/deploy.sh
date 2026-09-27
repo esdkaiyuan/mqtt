@@ -38,16 +38,24 @@ gen_secret() {
     fi
 }
 
-# JWT_SECRET 为空会导致 JWT 签名抛 WeakKeyException，此处自动补齐
-if ! grep -qE '^JWT_SECRET=.+' "$ENV_FILE"; then
-    SECRET="$(gen_secret)"
-    if grep -qE '^JWT_SECRET=' "$ENV_FILE"; then
-        sed -i.bak "s|^JWT_SECRET=.*|JWT_SECRET=${SECRET}|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
-    else
-        printf '\nJWT_SECRET=%s\n' "$SECRET" >> "$ENV_FILE"
+# JWT_SECRET 为空会导致 JWT 签名抛 WeakKeyException；
+# INTERNAL_TOKEN / PLATFORM_SECRET 是 EMQX 回调与平台账号的凭据，弱值等于放开设备接入。
+# 三者若为空或仍是 .env.example 的 change-me 占位值，此处统一自动生成。
+needs_secret() {
+    ! grep -qE "^$1=.+" "$ENV_FILE" || grep -qE "^$1=change-me" "$ENV_FILE"
+}
+
+for KEY in JWT_SECRET INTERNAL_TOKEN PLATFORM_SECRET; do
+    if needs_secret "$KEY"; then
+        SECRET="$(gen_secret)"
+        if grep -qE "^${KEY}=" "$ENV_FILE"; then
+            sed -i.bak "s|^${KEY}=.*|${KEY}=${SECRET}|" "$ENV_FILE" && rm -f "${ENV_FILE}.bak"
+        else
+            printf '\n%s=%s\n' "$KEY" "$SECRET" >> "$ENV_FILE"
+        fi
+        echo -e "${YELLOW}⚠ ${KEY} 为空或为占位值，已自动生成并写入 .env${NC}"
     fi
-    echo -e "${YELLOW}⚠ JWT_SECRET 为空，已自动生成并写入 .env${NC}"
-fi
+done
 echo -e "${GREEN}✓ 环境配置就绪${NC}"
 
 # 3. 构建并启动（前后端均在容器内构建，无需本地 Maven/Node）
