@@ -92,6 +92,19 @@ app:
   device:
     status-check-interval: 60000
     status-timeout: 300000
+  # 接入访问控制（EMQX HTTP 回调）
+  access-control:
+    # false 时认证与授权回调一律放行，用于迁移期双轨运行
+    enforce-auth: ${ACCESS_CONTROL_ENFORCE_AUTH:true}
+    # 内部接口共享令牌，EMQX 与后端必须一致
+    internal-token: ${INTERNAL_TOKEN:}
+    # 后端自身连接 Broker 使用的平台账号密码
+    platform-secret: ${PLATFORM_SECRET:}
+    # 迁移期前端直连 Broker 的受限账号密码（配合 realtime.direct-frontend-enabled）
+    frontend-secret: ${FRONTEND_SECRET:}
+  realtime:
+    # true 时保留 EMQX 直连受限账号供未升级前端过渡
+    direct-frontend-enabled: ${DIRECT_FRONTEND_ENABLED:false}
 
 # 日志配置
 logging:
