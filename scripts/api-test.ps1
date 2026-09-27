@@ -3,8 +3,8 @@
     MQTT 云平台后端接口集成测试（T-09）。
 
 .DESCRIPTION
-    覆盖认证、设备、消息、历史、统计分析、API Key、Webhook、外部开放接口
-    共 38 个接口的正向路径，以及未认证/无效凭证/越权/重复键等异常路径。
+    覆盖认证、产品、设备、消息、历史、统计分析、API Key、Webhook、外部开放接口，
+    以及 T-11 的产品模板、一机一密凭据下发/重置/导出、内部回调令牌校验等路径。
 
     依赖：本机已启动后端（默认 http://127.0.0.1:18080/api）、MySQL、Redis，
     以及可连接的 MQTT Broker（默认 tcp://localhost:1883）。
@@ -119,15 +119,34 @@ $r = Check '5b' 'POST /auth/login (re-login after logout)' (Call -Method POST -P
 $TOKEN = (J $r).data.token
 Write-Host "  [info] re-login token length = $($TOKEN.Length)"
 
+# ---------- 产品（T-11：设备类型模板） ----------
+$pk = "t11-prod-$suffix"
+$r = Check 'P1' 'POST /products' (Call -Method POST -Path '/products' -Body @{ productKey = $pk; productName = "T11产品$suffix"; topicPrefix = 'device/{deviceKey}'; payloadFormat = 'JSON' } -Token $TOKEN) 200 200
+$prodId = (J $r).data.id
+$r = Check 'P2' 'GET /products' (Call -Method GET -Path '/products' -Token $TOKEN) 200 200
+$r = Check 'P3' 'POST /products (duplicate key -> 409/6001)' (Call -Method POST -Path '/products' -Body @{ productKey = $pk; productName = '重复产品' } -Token $TOKEN) 409 6001
+$r = Check 'P4' 'PUT /products/{id}' (Call -Method PUT -Path "/products/$prodId" -Body @{ productKey = $pk; productName = "T11产品改名$suffix" } -Token $TOKEN) 200 200
+
 # ---------- 设备 ----------
 $dk = "t09-dev-$suffix"
-$r = Check '6' 'POST /devices' (Call -Method POST -Path '/devices' -Body @{ deviceName = "T09设备$suffix"; deviceKey = $dk; deviceType = 'sensor'; topic = "device/$dk/data" } -Token $TOKEN) 200 200
+$r = Check '6' 'POST /devices' (Call -Method POST -Path '/devices' -Body @{ productId = $prodId; deviceName = "T09设备$suffix"; deviceKey = $dk; deviceType = 'sensor'; topic = "device/$dk/data" } -Token $TOKEN) 200 200
 $devId = (J $r).data.id
+$devCred = J $r
+$credOk = [bool]($devCred.data.deviceSecret) -and ($devCred.data.username -eq "$pk.$dk")
+if ($credOk) { $script:PASS++ } else { $script:FAIL++ }
+$script:ROWS += [pscustomobject]@{ Id = '6b'; Desc = 'POST /devices returns one-time credential (username=productKey.deviceKey)'; Http = $r.http; ExpHttp = 200; Code = $null; ExpCode = $null; Result = $(if ($credOk) { 'PASS' } else { 'FAIL' }) }
 $r = Check '7' 'GET /devices' (Call -Method GET -Path '/devices' -Token $TOKEN -Query @{ pageNum = 1; pageSize = 10 }) 200 200
 $r = Check '8' 'GET /devices/{id}' (Call -Method GET -Path "/devices/$devId" -Token $TOKEN) 200 200
 $r = Check '9' 'PUT /devices/{id}' (Call -Method PUT -Path "/devices/$devId" -Body @{ deviceName = "T09设备改名$suffix"; deviceType = 'sensor'; topic = "device/$dk/data" } -Token $TOKEN) 200 200
 $r = Check '11' 'GET /devices/online' (Call -Method GET -Path '/devices/online' -Token $TOKEN) 200 200
 $r = Check '12' 'GET /devices/{id}/status' (Call -Method GET -Path "/devices/$devId/status" -Token $TOKEN) 200 200
+
+# ---------- 产品删除保护 / 凭据管理 / 内部接口令牌（T-11） ----------
+$r = Check 'P5' 'DELETE /products/{id} with devices -> 409/6003' (Call -Method DELETE -Path "/products/$prodId" -Token $TOKEN) 409 6003
+$r = Check 'P6' 'POST /devices/{id}/reset-secret' (Call -Method POST -Path "/devices/$devId/reset-secret" -Token $TOKEN) 200 200
+$r = Check 'P7' 'POST /devices/export-credentials' (Call -Method POST -Path '/devices/export-credentials' -Token $TOKEN) 200 200
+$r = Check 'P8' 'POST /internal/emqx/auth without token -> 401' (Call -Method POST -Path '/internal/emqx/auth' -Body @{ username = 'x'; password = 'y' }) 401
+$r = Check 'P9' 'POST /internal/emqx/acl without token -> 401' (Call -Method POST -Path '/internal/emqx/acl' -Body @{ username = 'x'; action = 'publish'; topic = 'device/x/data' }) 401
 
 # ---------- 消息 ----------
 $r = Check '13' 'POST /messages/publish' (Call -Method POST -Path '/messages/publish' -Body @{ topic = "device/$dk/data"; payload = '{"temp":26.5}'; qos = 1 } -Token $TOKEN) 200 200
@@ -200,7 +219,8 @@ $r = Check 'E1' 'No token GET /devices -> 401/401' (Call -Method GET -Path '/dev
 $r = Check 'E2' 'Invalid token GET /devices -> 401/3003' (Call -Method GET -Path '/devices' -Token 'not.a.valid.token') 401 3003
 $r = Check 'E3' 'Duplicate username register -> 409/1001' (Call -Method POST -Path '/auth/register' -Body @{ username = 'admin'; password = 'Passw0rd!23' }) 409 1001
 $r = Check 'E4' 'Wrong password login -> 401/3001' (Call -Method POST -Path '/auth/login' -Body @{ username = 'admin'; password = 'definitely-wrong' }) 401 3001
-$r = Check 'E6' 'Duplicate deviceKey -> 409/2001' (Call -Method POST -Path '/devices' -Body @{ deviceName = 'dup'; deviceKey = $dk; deviceType = 'sensor'; topic = "device/$dk/data" } -Token $TOKEN) 409 2001
+$r = Check 'E6' 'Duplicate deviceKey in same product -> 409/2001' (Call -Method POST -Path '/devices' -Body @{ productId = $prodId; deviceName = 'dup'; deviceKey = $dk; deviceType = 'sensor'; topic = "device/$dk/data" } -Token $TOKEN) 409 2001
+$r = Check 'E6b' 'Create device with unknown product -> 404/6002' (Call -Method POST -Path '/devices' -Body @{ productId = 99999999; deviceName = 'noprod'; deviceKey = "noprod-$suffix"; deviceType = 'sensor'; topic = "device/noprod-$suffix/data" } -Token $TOKEN) 404 6002
 $r = Check 'E7' 'Invalid API Key -> 401/3501' (Call -Method GET -Path '/external/v1/devices' -ApiKey 'deadbeef') 401 3501
 $r = Check 'E10' 'Unmapped route -> 404/404' (Call -Method GET -Path '/no-such-endpoint' -Token $TOKEN) 404 404
 
@@ -219,6 +239,7 @@ $null = Call -Method DELETE -Path "/webhooks/$hookA" -Token $TOKEN
 # ---------- 清理 ----------
 $r = Check '27' 'DELETE /api-keys/{id}' (Call -Method DELETE -Path "/api-keys/$keyId" -Token $TOKEN) 200 200
 $r = Check '10' 'DELETE /devices/{id}' (Call -Method DELETE -Path "/devices/$devId" -Token $TOKEN) 200 200
+$r = Check 'P10' 'DELETE /products/{id} (after devices removed)' (Call -Method DELETE -Path "/products/$prodId" -Token $TOKEN) 200 200
 
 Write-Host "`n================ RESULTS ================" -ForegroundColor Cyan
 foreach ($row in $script:ROWS) {
