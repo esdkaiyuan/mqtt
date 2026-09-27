@@ -1,16 +1,7 @@
 -- ============================================================
--- MQTT云平台系统 - MySQL数据库初始化脚本
--- 适用版本：MySQL 8.0+
+-- V1 基线：T-11 之前的既有 schema
+-- 来源：原 scripts/init-mysql.sql（建表与种子数据，语义不变）
 -- ============================================================
-
--- 1. 创建数据库
--- 注意：MySQL 的 CREATE DATABASE 不支持 COMMENT 子句（MariaDB 才支持），
--- 这里只保留字符集与排序规则，避免初始化在 MySQL 8.x 上直接语法报错。
-CREATE DATABASE IF NOT EXISTS mqtt_cloud
-    DEFAULT CHARACTER SET utf8mb4
-    DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE mqtt_cloud;
 
 -- 2. 创建用户认证表
 CREATE TABLE IF NOT EXISTS sys_user (
@@ -160,8 +151,3 @@ VALUES
     ('温度传感器-01', 'sensor-temp-001', 'sensor', 'device/sensor-temp-001/data', '客厅温度传感器', 1, 'INACTIVE', '{"unit":"°C","min":-20,"max":80}'),
     ('湿度传感器-01', 'sensor-hum-001', 'sensor', 'device/sensor-hum-001/data', '客厅湿度传感器', 1, 'INACTIVE', '{"unit":"%","min":0,"max":100}'),
     ('智能开关-01', 'switch-001', 'actuator', 'device/switch-001/control', '客厅主灯开关', 1, 'INACTIVE', '{"type":"relay","channels":1}');
-
--- 完成提示
-SELECT 'MQTT云平台数据库初始化完成！' AS message;
-SELECT COUNT(*) AS user_count FROM sys_user;
-SELECT COUNT(*) AS device_count FROM device;
