@@ -114,8 +114,10 @@ public class SecurityConfig {
                     .anyRequest().authenticated()
             )
             .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class)
+            // 注意顺序：internalTokenFilter 以 JwtAuthenticationFilter 为锚点，
+            // 必须在其之前完成 jwtFilter 的注册，否则锚点无已知顺序会抛 IllegalStateException
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class)
             .formLogin(form -> form.disable())
             .httpBasic(basic -> basic.disable())
             .logout(logout -> logout.disable());
