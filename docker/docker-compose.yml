@@ -107,10 +107,6 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
-      args:
-        VITE_MQTT_URL: ${VITE_MQTT_URL:-ws://localhost:8083/mqtt}
-        VITE_MQTT_USERNAME: ${MQTT_USERNAME:-admin}
-        VITE_MQTT_PASSWORD: ${MQTT_PASSWORD:-public}
     image: mqtt-cloud-frontend:1.0.0
     container_name: mqtt-frontend
     restart: always
