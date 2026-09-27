@@ -1,6 +1,8 @@
 package com.mqtt.cloud.filter;
 
+import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.common.security.RestSecurityExceptionHandler;
 import com.mqtt.cloud.service.TokenBlacklistService;
 import com.mqtt.cloud.util.JwtUtil;
 import io.jsonwebtoken.Claims;
@@ -49,6 +51,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         try {
             if (tokenBlacklistService.contains(token)) {
                 log.debug("Token 已登出，拒绝认证: uri={}", request.getRequestURI());
+                request.setAttribute(RestSecurityExceptionHandler.AUTH_ERROR_ATTRIBUTE, ResultCode.TOKEN_INVALID);
                 filterChain.doFilter(request, response);
                 return;
             }
@@ -68,6 +71,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             SecurityContextHolder.getContext().setAuthentication(authentication);
         } catch (BusinessException e) {
             SecurityContextHolder.clearContext();
+            request.setAttribute(RestSecurityExceptionHandler.AUTH_ERROR_ATTRIBUTE, e.getResultCode());
             log.debug("Token 校验失败: {}", e.getMessage());
         }
 

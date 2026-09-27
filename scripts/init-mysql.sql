@@ -4,10 +4,11 @@
 -- ============================================================
 
 -- 1. 创建数据库
+-- 注意：MySQL 的 CREATE DATABASE 不支持 COMMENT 子句（MariaDB 才支持），
+-- 这里只保留字符集与排序规则，避免初始化在 MySQL 8.x 上直接语法报错。
 CREATE DATABASE IF NOT EXISTS mqtt_cloud
     DEFAULT CHARACTER SET utf8mb4
-    DEFAULT COLLATE utf8mb4_unicode_ci
-    COMMENT='MQTT云平台业务数据库';
+    DEFAULT COLLATE utf8mb4_unicode_ci;
 
 USE mqtt_cloud;
 
@@ -141,7 +142,7 @@ CREATE TABLE IF NOT EXISTS webhook_config (
 INSERT INTO sys_user (username, password, email, role, status)
 VALUES (
     'admin',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
+    '$2a$10$GbLOksTglzegx2KgJiLL4eXZg8nAMlAySBgU/OyyW9vgsTM/TTXd6',
     'admin@mqtt-cloud.local',
     'ADMIN',
     'ACTIVE'
@@ -151,8 +152,8 @@ ON DUPLICATE KEY UPDATE username = username;
 -- 10. 插入测试数据
 INSERT IGNORE INTO sys_user (username, password, email, role, status)
 VALUES
-    ('operator1', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'op1@test.local', 'OPERATOR', 'ACTIVE'),
-    ('viewer1', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'viewer1@test.local', 'VIEWER', 'ACTIVE');
+    ('operator1', '$2a$10$GbLOksTglzegx2KgJiLL4eXZg8nAMlAySBgU/OyyW9vgsTM/TTXd6', 'op1@test.local', 'OPERATOR', 'ACTIVE'),
+    ('viewer1', '$2a$10$GbLOksTglzegx2KgJiLL4eXZg8nAMlAySBgU/OyyW9vgsTM/TTXd6', 'viewer1@test.local', 'VIEWER', 'ACTIVE');
 
 INSERT IGNORE INTO device (device_name, device_key, device_type, topic, description, owner_id, status, metadata)
 VALUES

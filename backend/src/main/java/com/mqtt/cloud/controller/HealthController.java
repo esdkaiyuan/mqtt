@@ -1,5 +1,7 @@
 package com.mqtt.cloud.controller;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,6 +15,7 @@ import java.util.Map;
 /**
  * 健康检查端点
  */
+@Tag(name = "健康检查", description = "服务与依赖（数据库、Redis）健康状态探测，公开访问")
 @RestController
 @RequestMapping("/health")
 public class HealthController {
@@ -23,6 +26,7 @@ public class HealthController {
     @Autowired
     private StringRedisTemplate redisTemplate;
 
+    @Operation(summary = "健康检查", description = "返回 status/database/redis/timestamp；任一依赖异常时 status 为 DOWN。该接口不包装 Result，直接返回 Map")
     @GetMapping
     public Map<String, Object> health() {
         Map<String, Object> result = new HashMap<>();

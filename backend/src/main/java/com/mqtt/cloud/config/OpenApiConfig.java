@@ -73,4 +73,59 @@ public class OpenApiConfig {
                 .pathsToMatch("/api/history/**")
                 .build();
     }
+
+    /**
+     * 统计分析API分组
+     */
+    @Bean
+    public GroupedOpenApi analyticsApi() {
+        return GroupedOpenApi.builder()
+                .group("统计分析")
+                .pathsToMatch("/api/analytics/**")
+                .build();
+    }
+
+    /**
+     * API密钥管理分组
+     */
+    @Bean
+    public GroupedOpenApi apiKeyApi() {
+        return GroupedOpenApi.builder()
+                .group("API密钥")
+                .pathsToMatch("/api/api-keys/**")
+                .build();
+    }
+
+    /**
+     * Webhook管理分组
+     */
+    @Bean
+    public GroupedOpenApi webhookApi() {
+        return GroupedOpenApi.builder()
+                .group("Webhook")
+                .pathsToMatch("/api/webhooks/**")
+                .build();
+    }
+
+    /**
+     * 外部开放API分组（X-API-Key 认证）
+     */
+    @Bean
+    public GroupedOpenApi externalApi() {
+        return GroupedOpenApi.builder()
+                .group("外部API")
+                .pathsToMatch("/api/external/v1/**")
+                .build();
+    }
+
+    /**
+     * 健康检查分组
+     */
+    @Bean
+    public GroupedOpenApi healthApi() {
+        return GroupedOpenApi.builder()
+                .group("健康检查")
+                .pathsToMatch("/api/health")
+                .build();
+    }
 }

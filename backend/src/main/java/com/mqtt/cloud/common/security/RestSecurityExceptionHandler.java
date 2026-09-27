@@ -26,18 +26,29 @@ import java.nio.charset.StandardCharsets;
 @RequiredArgsConstructor
 public class RestSecurityExceptionHandler implements AuthenticationEntryPoint, AccessDeniedHandler {
 
+    /**
+     * 请求属性名：过滤器解析凭证失败时写入具体错误码（如 TOKEN_INVALID / API_KEY_INVALID），
+     * 供此处输出精确的业务码，避免所有认证失败都退化成笼统的 401。
+     */
+    public static final String AUTH_ERROR_ATTRIBUTE = "com.mqtt.cloud.security.AUTH_ERROR";
+
     private final ObjectMapper objectMapper;
 
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response,
                          AuthenticationException authException) throws IOException {
-        write(response, ResultCode.UNAUTHORIZED);
+        write(response, resolveAuthError(request));
     }
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response,
                        AccessDeniedException accessDeniedException) throws IOException {
         write(response, ResultCode.FORBIDDEN);
+    }
+
+    private ResultCode resolveAuthError(HttpServletRequest request) {
+        Object attribute = request.getAttribute(AUTH_ERROR_ATTRIBUTE);
+        return attribute instanceof ResultCode resultCode ? resultCode : ResultCode.UNAUTHORIZED;
     }
 
     private void write(HttpServletResponse response, ResultCode resultCode) throws IOException {
