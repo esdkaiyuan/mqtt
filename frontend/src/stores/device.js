@@ -32,11 +32,12 @@ export const useDeviceStore = defineStore('device', () => {
 
   async function createDevice(deviceData) {
     const result = await api.post('/devices', deviceData)
-    const newDevice = result.data || result
-    devices.value.push(newDevice)
-    totalDevices.value++
+    // 创建接口返回 DeviceCreatedDTO（含一次性明文密钥），其字段与列表项
+    // 不同（缺少 status/deviceType/topic），直接插入会导致表格行渲染异常，
+    // 因此只返回该 DTO，由调用方刷新列表。
+    const created = result.data || result
     ElMessage.success('设备创建成功')
-    return newDevice
+    return created
   }
 
   async function updateDevice(deviceId, deviceData) {
