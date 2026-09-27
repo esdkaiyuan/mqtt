@@ -1,0 +1,108 @@
+package com.mqtt.cloud.service.impl;
+
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.dto.request.ProductRequest;
+import com.mqtt.cloud.entity.Product;
+import com.mqtt.cloud.mapper.ProductMapper;
+import com.mqtt.cloud.service.ProductService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+
+import java.util.List;
+
+@Service
+@RequiredArgsConstructor
+public class ProductServiceImpl implements ProductService {
+
+    private static final String DEFAULT_TOPIC_PREFIX = "device/{deviceKey}";
+    private static final String DEFAULT_PAYLOAD_FORMAT = "JSON";
+    private static final String AUTH_MODE_SECRET = "SECRET";
+    private static final String STATUS_ENABLED = "ENABLED";
+    private static final String RESERVED_KEY = "platform";
+
+    private final ProductMapper productMapper;
+
+    @Override
+    @Transactional
+    public Product create(ProductRequest request) {
+        String productKey = request.getProductKey();
+        if (RESERVED_KEY.equalsIgnoreCase(productKey)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "产品标识 " + RESERVED_KEY + " 为保留名");
+        }
+        if (existsByKey(productKey, null)) {
+            throw new BusinessException(ResultCode.PRODUCT_KEY_EXISTS);
+        }
+        Product product = new Product();
+        product.setProductKey(productKey);
+        product.setProductName(request.getProductName());
+        product.setDescription(request.getDescription());
+        product.setAuthMode(AUTH_MODE_SECRET);
+        product.setTopicPrefix(StringUtils.hasText(request.getTopicPrefix())
+                ? request.getTopicPrefix() : DEFAULT_TOPIC_PREFIX);
+        product.setPayloadFormat(StringUtils.hasText(request.getPayloadFormat())
+                ? request.getPayloadFormat() : DEFAULT_PAYLOAD_FORMAT);
+        product.setMetadataSchema(request.getMetadataSchema());
+        product.setStatus(STATUS_ENABLED);
+        productMapper.insert(product);
+        return product;
+    }
+
+    @Override
+    public List<Product> list() {
+        return productMapper.selectList(
+                Wrappers.<Product>lambdaQuery().orderByAsc(Product::getId));
+    }
+
+    @Override
+    @Transactional
+    public Product update(Long id, ProductRequest request) {
+        Product existing = requireById(id);
+        if (existsByKey(request.getProductKey(), id)) {
+            throw new BusinessException(ResultCode.PRODUCT_KEY_EXISTS);
+        }
+        existing.setProductKey(request.getProductKey());
+        existing.setProductName(request.getProductName());
+        existing.setDescription(request.getDescription());
+        if (StringUtils.hasText(request.getTopicPrefix())) {
+            existing.setTopicPrefix(request.getTopicPrefix());
+        }
+        if (StringUtils.hasText(request.getPayloadFormat())) {
+            existing.setPayloadFormat(request.getPayloadFormat());
+        }
+        existing.setMetadataSchema(request.getMetadataSchema());
+        productMapper.updateById(existing);
+        return existing;
+    }
+
+    @Override
+    @Transactional
+    public void delete(Long id) {
+        requireById(id);
+        productMapper.deleteById(id);
+    }
+
+    @Override
+    public Product getByProductKey(String productKey) {
+        return productMapper.selectOne(
+                Wrappers.<Product>lambdaQuery().eq(Product::getProductKey, productKey));
+    }
+
+    @Override
+    public Product requireById(Long id) {
+        Product product = productMapper.selectById(id);
+        if (product == null) {
+            throw new BusinessException(ResultCode.PRODUCT_NOT_FOUND);
+        }
+        return product;
+    }
+
+    private boolean existsByKey(String productKey, Long excludeId) {
+        return productMapper.selectCount(Wrappers.<Product>lambdaQuery()
+                .eq(Product::getProductKey, productKey)
+                .ne(excludeId != null, Product::getId, excludeId)) > 0;
+    }
+}
