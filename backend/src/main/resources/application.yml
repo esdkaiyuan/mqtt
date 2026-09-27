@@ -105,6 +105,8 @@ app:
   realtime:
     # true 时保留 EMQX 直连受限账号供未升级前端过渡
     direct-frontend-enabled: ${DIRECT_FRONTEND_ENABLED:false}
+    # SSE 连接超时（毫秒），0 表示不超时
+    stream-timeout-ms: ${STREAM_TIMEOUT_MS:0}
 
 # 日志配置
 logging:
