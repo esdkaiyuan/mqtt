@@ -21,6 +21,9 @@ class ProductServiceImplTest {
     @Mock
     private ProductMapper productMapper;
 
+    @org.mockito.Mock
+    private com.mqtt.cloud.mapper.DeviceMapper deviceMapper;
+
     @InjectMocks
     private ProductServiceImpl productService;
 
@@ -55,5 +58,17 @@ class ProductServiceImplTest {
         assertThat(created.getPayloadFormat()).isEqualTo("JSON");
         assertThat(created.getAuthMode()).isEqualTo("SECRET");
         assertThat(created.getStatus()).isEqualTo("ENABLED");
+    }
+
+    @Test
+    void delete_should_reject_when_product_has_devices() {
+        Product existing = new Product();
+        existing.setId(9L);
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(deviceMapper.selectCount(any())).thenReturn(2L);
+
+        assertThatThrownBy(() -> productService.delete(9L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("该产品下存在设备");
     }
 }

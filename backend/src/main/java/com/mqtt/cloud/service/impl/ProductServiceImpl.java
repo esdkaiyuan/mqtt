@@ -5,6 +5,7 @@ import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.dto.request.ProductRequest;
 import com.mqtt.cloud.entity.Product;
+import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.ProductMapper;
 import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
@@ -25,6 +26,8 @@ public class ProductServiceImpl implements ProductService {
     private static final String RESERVED_KEY = "platform";
 
     private final ProductMapper productMapper;
+
+    private final DeviceMapper deviceMapper;
 
     @Override
     @Transactional
@@ -82,6 +85,12 @@ public class ProductServiceImpl implements ProductService {
     @Transactional
     public void delete(Long id) {
         requireById(id);
+        long deviceCount = deviceMapper.selectCount(
+                Wrappers.<com.mqtt.cloud.entity.Device>lambdaQuery()
+                        .eq(com.mqtt.cloud.entity.Device::getProductId, id));
+        if (deviceCount > 0) {
+            throw new BusinessException(ResultCode.PRODUCT_HAS_DEVICES);
+        }
         productMapper.deleteById(id);
     }
 
