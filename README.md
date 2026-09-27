@@ -89,9 +89,11 @@ MQTT自建站点/
 
 ## 文档
 
+- [系统架构](docs/ARCHITECTURE.md)
 - [数据库设计](docs/T-01_数据库设计与Schema初始化_开发文档.md)
 - [后端架构](docs/T-02_后端项目基础架构搭建_开发文档.md)
 - [部署文档](docs/DEPLOYMENT.md)
+- [设备接入（ESP32）](docs/ESP32_接入手册.md)
 - [API文档](http://localhost:8080/api/swagger-ui.html)（本地部署后访问）
 
 ## 开发
