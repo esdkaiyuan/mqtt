@@ -15,7 +15,7 @@ import java.util.List;
 
 @Tag(name = "产品管理", description = "设备类型模板（产品）的增删改查")
 @RestController
-@RequestMapping("/api/products")
+@RequestMapping("/products")
 @RequiredArgsConstructor
 public class ProductController {
 
