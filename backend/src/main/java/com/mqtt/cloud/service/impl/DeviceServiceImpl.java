@@ -11,10 +11,15 @@ import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
+import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.DeviceMapper;
+import com.mqtt.cloud.service.DeviceCredentialService;
+import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
+import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -28,17 +33,26 @@ import java.util.Objects;
 public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> implements DeviceService {
 
     private final DeviceStatusHistoryService deviceStatusHistoryService;
+    private final DeviceCredentialService deviceCredentialService;
+    private final DeviceSecretService deviceSecretService;
+    private final ProductService productService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Device createDevice(Long userId, CreateDeviceDTO dto) {
+    public DeviceCreatedDTO createDevice(Long userId, CreateDeviceDTO dto) {
+        Product product = productService.requireById(dto.getProductId());
+
+        // deviceKey 唯一性收敛到产品维度，与 uk_product_device 保持一致
         LambdaQueryWrapper<Device> keyWrapper = new LambdaQueryWrapper<>();
-        keyWrapper.eq(Device::getDeviceKey, dto.getDeviceKey()).eq(Device::getDeleted, 0);
+        keyWrapper.eq(Device::getProductId, product.getId())
+                  .eq(Device::getDeviceKey, dto.getDeviceKey())
+                  .eq(Device::getDeleted, 0);
         if (this.count(keyWrapper) > 0) {
             throw new BusinessException(ResultCode.DEVICE_KEY_EXISTS);
         }
 
         Device device = new Device();
+        device.setProductId(product.getId());
         device.setDeviceName(dto.getDeviceName());
         device.setDeviceKey(dto.getDeviceKey());
         device.setDeviceType(dto.getDeviceType());
@@ -47,10 +61,21 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         device.setOwnerId(userId);
         device.setStatus(DeviceStatusValue.INACTIVE);
         device.setLastSeen(null);
+        device.setEnabled(1);
         device.setDeleted(0);
 
         this.save(device);
-        return device;
+
+        // 与设备创建同事务签发凭据：签发失败则设备创建一并回滚，避免产生无凭据的“半成品”设备
+        String plaintext = deviceCredentialService.issueSecret(device.getId());
+
+        DeviceCreatedDTO response = new DeviceCreatedDTO();
+        response.setId(device.getId());
+        response.setDeviceKey(device.getDeviceKey());
+        response.setProductKey(product.getProductKey());
+        response.setUsername(deviceSecretService.buildUsername(product.getProductKey(), device.getDeviceKey()));
+        response.setDeviceSecret(plaintext);
+        return response;
     }
 
     @Override

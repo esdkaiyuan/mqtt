@@ -8,15 +8,18 @@ import com.mqtt.cloud.common.security.SecurityUtils;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
+import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceStatus;
 import com.mqtt.cloud.filter.UserPrincipal;
+import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -31,17 +34,37 @@ public class DeviceController {
 
     private final DeviceService deviceService;
     private final DeviceStatusHistoryService deviceStatusHistoryService;
+    private final DeviceCredentialService deviceCredentialService;
 
-    public DeviceController(DeviceService deviceService, DeviceStatusHistoryService deviceStatusHistoryService) {
+    public DeviceController(DeviceService deviceService,
+                            DeviceStatusHistoryService deviceStatusHistoryService,
+                            DeviceCredentialService deviceCredentialService) {
         this.deviceService = deviceService;
         this.deviceStatusHistoryService = deviceStatusHistoryService;
+        this.deviceCredentialService = deviceCredentialService;
     }
 
-    @Operation(summary = "创建设备", description = "为当前用户创建设备，初始状态为 INACTIVE；deviceKey 重复返回 2001")
+    @Operation(summary = "创建设备", description = "为当前用户创建设备，初始状态为 INACTIVE；"
+            + "响应中的 deviceSecret 为一次性明文密钥，仅本次返回。deviceKey 在同一产品内重复返回 2001")
     @PostMapping
-    public Result<Device> createDevice(@Valid @RequestBody CreateDeviceDTO dto) {
-        Device device = deviceService.createDevice(SecurityUtils.requireUserId(), dto);
-        return Result.success(device);
+    public Result<DeviceCreatedDTO> createDevice(@Valid @RequestBody CreateDeviceDTO dto) {
+        return Result.success(deviceService.createDevice(SecurityUtils.requireUserId(), dto));
+    }
+
+    @Operation(summary = "重置设备密钥", description = "重新签发一机一密密钥并返回一次性明文，旧密钥立即失效")
+    @PostMapping("/{deviceId}/reset-secret")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Result<String> resetSecret(
+            @Parameter(description = "设备ID", required = true) @PathVariable Long deviceId) {
+        return Result.success(deviceCredentialService.resetSecret(deviceId));
+    }
+
+    @Operation(summary = "导出全部设备凭据", description = "一次性导出全部设备的 [productKey, deviceKey, username, secret]；"
+            + "导出会重置密钥，旧密钥立即失效，请谨慎使用")
+    @PostMapping("/export-credentials")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Result<List<String[]>> exportCredentials() {
+        return Result.success(deviceCredentialService.exportCredentials());
     }
 
     @Operation(summary = "获取设备列表", description = "分页查询设备；ADMIN 可见全部设备，其他角色仅可见自己名下设备")
