@@ -222,8 +222,7 @@ spring:
 -- 1. 创建数据库
 CREATE DATABASE IF NOT EXISTS mqtt_cloud
     DEFAULT CHARACTER SET utf8mb4
-    DEFAULT COLLATE utf8mb4_unicode_ci
-    COMMENT='MQTT云平台业务数据库';
+    DEFAULT COLLATE utf8mb4_unicode_ci;
 
 -- 切换到业务数据库
 USE mqtt_cloud;
@@ -316,7 +315,7 @@ CREATE TABLE IF NOT EXISTS history_record (
 INSERT INTO sys_user (username, password, email, role, status)
 VALUES (
     'admin',
-    '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
+    '$2a$10$GbLOksTglzegx2KgJiLL4eXZg8nAMlAySBgU/OyyW9vgsTM/TTXd6',
     'admin@mqtt-cloud.local',
     'ADMIN',
     'ACTIVE'
@@ -327,8 +326,8 @@ ON DUPLICATE KEY UPDATE username = username;
 -- 测试用户
 INSERT IGNORE INTO sys_user (username, password, email, role, status)
 VALUES
-    ('operator1', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'op1@test.local', 'OPERATOR', 'ACTIVE'),
-    ('viewer1', '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy', 'viewer1@test.local', 'VIEWER', 'ACTIVE');
+    ('operator1', '$2a$10$GbLOksTglzegx2KgJiLL4eXZg8nAMlAySBgU/OyyW9vgsTM/TTXd6', 'op1@test.local', 'OPERATOR', 'ACTIVE'),
+    ('viewer1', '$2a$10$GbLOksTglzegx2KgJiLL4eXZg8nAMlAySBgU/OyyW9vgsTM/TTXd6', 'viewer1@test.local', 'VIEWER', 'ACTIVE');
 
 -- 测试设备（关联admin用户，id=1）
 INSERT IGNORE INTO device (device_name, device_key, device_type, topic, description, owner_id, status, metadata)
@@ -343,7 +342,7 @@ SELECT COUNT(*) AS user_count FROM sys_user;
 SELECT COUNT(*) AS device_count FROM device;
 ```
 
-**密码说明：** `admin123` 经BCrypt加密后的固定值为 `$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy`，可直接在初始化脚本中使用。
+**密码说明：** `admin123` 经BCrypt加密后的固定值为 `$2a$10$GbLOksTglzegx2KgJiLL4eXZg8nAMlAySBgU/OyyW9vgsTM/TTXd6`，可直接在初始化脚本中使用。
 
 ---
 

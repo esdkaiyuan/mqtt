@@ -1,5 +1,7 @@
 package com.mqtt.cloud.filter;
 
+import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.security.RestSecurityExceptionHandler;
 import com.mqtt.cloud.entity.ApiKey;
 import com.mqtt.cloud.service.ApiKeyService;
 import jakarta.servlet.FilterChain;
@@ -64,6 +66,8 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                         principal, null, List.of(new SimpleGrantedAuthority("ROLE_EXTERNAL")));
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+            } else {
+                request.setAttribute(RestSecurityExceptionHandler.AUTH_ERROR_ATTRIBUTE, ResultCode.API_KEY_INVALID);
             }
         }
 

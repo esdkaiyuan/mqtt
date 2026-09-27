@@ -55,30 +55,45 @@ bash scripts/health-check.sh
 - EMQX后台：http://localhost:18083
 - 默认账号：admin / admin123
 
+### 步骤6：可观测端点（Actuator）
+- 应用健康：`http://localhost:8080/api/actuator/health`（公开）
+- Prometheus 指标：`http://localhost:8080/api/actuator/prometheus`（公开，供抓取）
+- `info` / `metrics` 需 ADMIN 角色 JWT 访问
+
+> 指标由 `spring-boot-starter-actuator` + `micrometer-registry-prometheus` 提供；暴露范围与鉴权见 `application.yml` 的 `management.*` 与 `SecurityConfig`。
+
 ## 3. 手动部署（不推荐，用于理解流程）
 
-### 步骤1：构建后端
+> 提示：compose 文件在 `docker/` 子目录、`.env` 在仓库根目录，compose 默认只在 compose 文件所在目录查找 `.env`，因此下面命令统一在**仓库根目录**执行并显式指定 `--env-file .env`。
+
+### 步骤1：准备环境变量
+```bash
+cp .env.example .env
+# JWT_SECRET 必须填写（Base64，解码后不少于 32 字节），否则 compose 会因 :? 校验直接报错
+openssl rand -base64 48
+```
+
+### 步骤2：构建后端（可选，容器内也会构建）
 ```bash
 cd backend
 mvn clean package -DskipTests
 ```
 
-### 步骤2：构建前端
+### 步骤3：构建前端（可选，容器内也会构建）
 ```bash
 cd frontend
 npm install
 npm run build
 ```
 
-### 步骤3：启动服务
+### 步骤4：启动服务（在仓库根目录执行）
 ```bash
-cd docker
-docker-compose up -d --build
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 ```
 
-### 步骤4：验证
+### 步骤5：验证
 ```bash
-bash ../scripts/health-check.sh
+bash scripts/health-check.sh
 ```
 
 ## 4. 常见问题
@@ -101,6 +116,13 @@ A: 使用 `docker exec mqtt-mysql mysqldump` 备份MySQL。
 ### Q6: 如何升级版本？
 A: 重新执行 `bash scripts/deploy.sh`。
 
+### Q7: compose 报 `required variable JWT_SECRET is missing a value`？
+A: `.env` 中 `JWT_SECRET` 为空。手动执行 `openssl rand -base64 48` 生成后写入 `.env`，或直接运行 `bash scripts/deploy.sh`（会自动生成）。
+
+### Q8: 进入 `docker/` 目录执行 `docker compose up` 报变量缺失/配置未生效？
+A: compose 只会在 compose 文件所在目录查找 `.env`，而本项目 `.env` 位于仓库根目录。请在**仓库根目录**执行，并显式指定配置文件与变量文件：
+`docker compose --env-file .env -f docker/docker-compose.yml up -d --build`。
+
 ## 5. 生产环境建议
 
 1. **更换JWT密钥：** 修改`.env`中的`JWT_SECRET`为强随机字符串
@@ -108,4 +130,4 @@ A: 重新执行 `bash scripts/deploy.sh`。
 3. **配置防火墙：** 仅开放必要端口（80/443）
 4. **设置日志轮转：** 配置Docker日志大小限制
 5. **定期备份：** 设置自动备份脚本
-6. **监控告警：** 集成Prometheus + Grafana监控系统
+6. **监控告警：** 后端已内置 Actuator + Micrometer，可直接由 Prometheus 抓取 `http://<host>:8080/api/actuator/prometheus`，再接入 Grafana 展示

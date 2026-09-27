@@ -94,7 +94,12 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
-# 管理端点
+# 管理端点（Actuator + Micrometer）
+# 依赖：spring-boot-starter-actuator、micrometer-registry-prometheus
+# 访问控制见 SecurityConfig：/actuator/health 与 /actuator/prometheus 公开，
+# 其余 /actuator/**（info、metrics）仅 ADMIN。
+# 注意：show-details=always 会让公开的 /actuator/health 返回依赖组件明细，
+# 与自定义 HealthController（/api/health）行为一致；如需收紧改为 when-authorized。
 management:
   endpoints:
     web:

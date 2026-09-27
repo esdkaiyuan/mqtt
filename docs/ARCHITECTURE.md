@@ -1,0 +1,218 @@
+# MQTT云平台 - 系统架构文档
+
+> 版本：v1.1　最后更新：2026-09-28
+> 适用范围：`MQTT自建站点` 主项目（Spring Boot + Vue 3 + EMQX + MySQL + Redis）
+
+---
+
+## 1. 系统概述
+
+本系统是一个自部署的 MQTT 物联网云平台，围绕 **EMQX Broker** 构建，提供：
+
+- 用户认证与 RBAC 权限（ADMIN / OPERATOR / VIEWER）
+- 设备管理与在线状态监控
+- MQTT 消息发布、实时订阅与历史查询
+- 统计分析、API Key 与 Webhook 对外集成能力
+
+设计原则：分层解耦（Controller → Service → Mapper）、配置外置（环境变量注入）、统一响应与统一异常、默认安全（鉴权前置）。
+
+---
+
+## 2. 总体架构
+
+```mermaid
+flowchart TB
+    subgraph Client["客户端"]
+        Browser["浏览器（Vue 3 SPA）"]
+        Device["IoT 设备 / ESP32"]
+        Third["第三方系统"]
+    end
+
+    subgraph Edge["接入层"]
+        Nginx["Nginx（前端静态资源 + /api 反向代理）"]
+    end
+
+    subgraph App["应用层"]
+        Backend["Spring Boot 后端（context-path: /api）"]
+    end
+
+    subgraph Broker["消息层"]
+        EMQX["EMQX 5（TCP 1883 / WS 8083 / Dashboard 18083）"]
+    end
+
+    subgraph Data["数据层"]
+        MySQL[("MySQL 8")]
+        Redis[("Redis 7")]
+    end
+
+    Browser -->|"HTTP :80"| Nginx
+    Nginx -->|"/api → backend:8080"| Backend
+    Browser -.->|"MQTT over WebSocket ws://host:8083/mqtt"| EMQX
+    Device -->|"MQTT over TCP :1883"| EMQX
+
+    Backend -->|"TCP :1883 订阅/发布"| EMQX
+    Backend --> MySQL
+    Backend --> Redis
+    Backend -->|"Webhook 回调（HTTP）"| Third
+```
+
+要点：
+
+- **两条实时通道**：后端以 TCP 客户端身份订阅 Broker（用于落库、状态判定、Webhook 分发）；浏览器以 WebSocket 客户端身份直连 Broker（用于实时消息流展示），互不阻塞。
+- **Nginx 只代理 `/api`**：前端静态资源与 SPA 回退由 Nginx 承担，MQTT 的 WebSocket 不走 Nginx（由前端按 `VITE_MQTT_URL` 直连 EMQX）。
+- **无独立 WebSocket 服务端**：实时性完全由 MQTT 提供，后端不额外暴露 WebSocket 端点。
+
+---
+
+## 3. 部署拓扑与端口
+
+| 服务 | 镜像 | 容器名 | 宿主端口 | 说明 |
+|------|------|--------|----------|------|
+| MySQL | `mysql:8.0` | `mqtt-mysql` | 3306 | 业务数据；`scripts/init-mysql.sql` 首次启动初始化 |
+| Redis | `redis:7-alpine` | `mqtt-redis` | 6379 | Token 黑名单、设备在线状态缓存 |
+| EMQX | `emqx/emqx:5.0` | `mqtt-emqx` | 1883 / 8083 / 18083 | MQTT TCP / MQTT WebSocket / 管理后台 |
+| 后端 | `mqtt-cloud-backend:1.0.0` | `mqtt-backend` | 8080 | Spring Boot，健康检查 `/api/health` |
+| 前端 | `mqtt-cloud-frontend:1.0.0` | `mqtt-frontend` | 80 | Nginx 托管 SPA，健康检查 `/health` |
+
+- 编排文件：`docker/docker-compose.yml`；网络：`mqtt-network`（bridge）；命名卷：`mysql_data` / `redis_data` / `emqx_data` / `emqx_log`。
+- 启动依赖：`backend` 依赖 `mysql`/`redis`/`emqx` 均为 `service_healthy`；`frontend` 依赖 `backend` 为 `service_healthy`。
+- **环境变量注意**：compose 文件位于 `docker/`，而 `.env` 位于仓库根目录，执行时需显式 `--env-file .env`（详见 `docs/DEPLOYMENT.md`）。
+
+---
+
+## 4. 后端架构
+
+### 4.1 分层结构
+
+```
+com.mqtt.cloud
+├── controller/     # 9 个控制器，仅做参数校验与编排，统一返回 Result<T>
+├── service/        # 业务接口 + impl/ 实现，事务边界所在
+├── mapper/         # MyBatis-Plus Mapper（注解 SQL + Wrapper）
+├── entity/         # 与表一一对应的实体
+├── dto/
+│   ├── request/    # 入参对象（@Valid 校验）
+│   └── response/   # 出参对象（不直接暴露 entity）
+├── mqtt/           # MqttClientManager / MqttMessageHandler / MqttProperties
+├── filter/         # JwtAuthenticationFilter / ApiKeyAuthFilter / UserPrincipal
+├── config/         # Security / Redis / MyBatis-Plus / OpenAPI / Async / Schedule / RestTemplate
+├── common/         # Result / ResultCode / exception / security / constant
+└── util/           # JwtUtil / ApiKeyGenerator
+```
+
+### 4.2 控制器清单
+
+| 控制器 | 前缀 | 职责 |
+|--------|------|------|
+| `AuthController` | `/auth` | 注册、登录、登出、当前用户、修改密码 |
+| `DeviceController` | `/devices` | 设备 CRUD、状态查询、在线列表、下发指令 |
+| `MessageController` | `/messages` | 发布消息、最近消息 |
+| `HistoryController` | `/history` | 按设备/时间/Topic 分页查询历史 |
+| `AnalyticsController` | `/analytics` | 消息量趋势等统计 |
+| `ApiKeyController` | `/api-keys` | API Key 的签发与吊销 |
+| `WebhookController` | `/webhooks` | Webhook 配置 CRUD |
+| `ExternalApiController` | `/external/v1` | 面向第三方的 API Key 鉴权接口 |
+| `HealthController` | `/health` | 健康检查 |
+
+Swagger 分组共 9 组，与上表一一对应，访问 `/api/swagger-ui.html`。
+
+### 4.3 关键组件
+
+- **`MqttClientManager`**：应用启动时按 `spring.mqtt.*` 建立到 EMQX 的 TCP 长连接，负责订阅通配 Topic 与发布下发指令。
+- **`MqttMessageHandler`**：消息回调入口，解析 payload → 落 `message` 表 → 更新设备在线状态 → 触发 Webhook 分发。
+- **`DeviceMonitorService`**：定时任务（`ScheduleConfig` 启用），根据最近心跳时间判定设备在线/离线并写 `device_status_history`。
+- **`WebhookDispatcher`**：基于 `RestTemplate`（`RestTemplateConfig`）向已配置 URL 推送事件。
+- **`TokenBlacklistService`**：登出后把 Token 写入 Redis 黑名单，`JwtAuthenticationFilter` 据此拒绝已登出 Token。
+- **`AsyncConfig`**：为落库/通知等旁路逻辑提供线程池，避免阻塞 MQTT 回调线程。
+
+---
+
+## 5. 前端架构
+
+### 5.1 目录与职责
+
+```
+frontend/src
+├── api/          # axios 实例与按域拆分的接口封装（auth/device/message/history/stats）
+├── stores/       # Pinia：auth（令牌与用户）、device（设备列表与在线态）
+├── router/       # Vue Router，含登录态守卫
+├── components/   # Icon.vue（SVG 精灵）、Layout/MainLayout.vue、Layout/Sidebar.vue
+├── views/        # landing / auth / dashboard / device / message / history / api
+├── assets/       # css 设计令牌 + svg/icons 图标库
+└── utils/        # echarts 按需封装
+```
+
+### 5.2 数据流
+
+- **请求类**：组件 → `api/*.js` → `api/axios.js`（统一 baseURL `/api`、注入 `Authorization`、统一错误提示）→ 后端。
+- **实时类**：`views/message/MessageMonitor.vue` 通过 `mqtt.js` 直连 EMQX（`VITE_MQTT_URL`，默认 `ws://localhost:8083/mqtt`）订阅 Topic，实时渲染消息流并显示连接状态。
+- **图表类**：`utils/echarts.js` 按需引入 ECharts，用于统计页。
+
+### 5.3 构建优化
+
+- Element Plus 按需引入 + 图标 tree-shaking，样式按需拆分。
+- `manualChunks` 拆分 vendor，入口 chunk 已从 1.25MB 降至约 63KB。
+- 构建期通过 `VITE_MQTT_*` 注入运行时配置（Vite 仅暴露 `VITE_` 前缀变量）。
+
+---
+
+## 6. 数据模型
+
+| 表 | 说明 |
+|----|------|
+| `sys_user` | 用户与角色（ADMIN/OPERATOR/VIEWER）、BCrypt 密码 |
+| `device` | 设备档案（名称、Topic、所属用户、最近心跳） |
+| `device_status_history` | 设备在线状态变更流水 |
+| `message` | 设备上报/平台发布的消息 |
+| `history_record` | 历史查询用归档记录 |
+| `api_key` | 第三方接入密钥（哈希存储） |
+| `webhook_config` | Webhook 目标地址与事件订阅 |
+
+初始化脚本：`scripts/init-mysql.sql`（幂等，含默认管理员 `admin / admin123`）。字段级设计与索引见 `docs/T-01_数据库设计与Schema初始化_开发文档.md`。
+
+---
+
+## 7. 安全设计
+
+- **认证方式**
+  - 管理面：JWT（`JwtUtil` 签发，`JwtAuthenticationFilter` 校验），登出走 Redis 黑名单。
+  - 开放面：API Key（`ApiKeyAuthFilter` 校验，`ApiKeyGenerator` 生成），仅放行 `/api/external/v1/**`。
+- **授权模型**：基于角色的 RBAC，`SecurityConfig` 声明各路径所需角色，`@PreAuthorize` 做方法级细化。
+- **错误码精确化**：过滤器把具体失败原因（如 Token 失效 / Token 过期 / API Key 无效）写入请求属性，由 `RestSecurityExceptionHandler` 映射为对应 `ResultCode`，避免一律返回笼统 401。
+- **统一出口**：`GlobalExceptionHandler` 收敛 `BusinessException` 与参数校验异常，统一为 `Result<T>` 结构。
+- **密钥管理**：`JWT_SECRET` 必须由 `.env` 提供（compose 使用 `:?` 强校验），`.env` 与 `*.pem/*.key` 已在 `.dockerignore` 中排除，避免进入镜像。
+
+---
+
+## 8. 外部依赖与配置
+
+| 依赖 | 配置项（环境变量） | 默认值 |
+|------|-------------------|--------|
+| MySQL | `DB_HOST`/`DB_PORT`/`DB_USERNAME`/`DB_PASSWORD`/`DB_NAME` | localhost:3306 / root / root_password / mqtt_cloud |
+| Redis | `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD` | localhost:6379 |
+| EMQX | `MQTT_HOST`（须为 `tcp://host:port`）/`MQTT_USERNAME`/`MQTT_PASSWORD` | tcp://localhost:1883 / admin / public |
+| 服务 | `SERVER_PORT` | 8080 |
+| 安全 | `JWT_SECRET` | 无默认，必须显式配置 |
+| 前端 | `VITE_MQTT_URL`/`VITE_MQTT_USERNAME`/`VITE_MQTT_PASSWORD` | ws://localhost:8083/mqtt / admin / public |
+
+配置集中定义于 `backend/src/main/resources/application.yml` 与根目录 `.env.example`。
+
+---
+
+## 9. 非功能性设计
+
+- **性能**：HikariCP 连接池（最大 20）、Redis Lettuce 池化、MQTT 批量/异步处理；前端按需引入与分包；后端镜像多阶段构建（448MB）、前端镜像 97.4MB。
+- **可观测**：SLF4J + Logback 分级日志；`/api/health` 供容器健康检查；Spring Boot Actuator 提供运行时指标——`/actuator/health`、`/actuator/prometheus` 公开，`/actuator/info`、`/actuator/metrics` 仅 ADMIN（见 `SecurityConfig`），Prometheus 抓取指标由 `micrometer-registry-prometheus` 输出；EMQX Dashboard 观察连接与吞吐。
+- **可扩展**：新增设备类型仅需扩展 `device` 表字段与对应 Service；新增 MQTT Topic 在配置侧注册；新增页面在 `router` 注册并复用 Layout；对接第三方通过 Webhook 或 `/api/external/v1`。
+- **数据持久化**：全部状态数据落在命名卷，`docker compose down`（不带 `-v`）不丢数据。
+
+---
+
+## 10. 相关文档
+
+- 部署与运维：[`docs/DEPLOYMENT.md`](DEPLOYMENT.md)
+- 数据库设计：[`docs/T-01_数据库设计与Schema初始化_开发文档.md`](T-01_数据库设计与Schema初始化_开发文档.md)
+- 后端各模块：[`docs/T-02`](T-02_后端项目基础架构搭建_开发文档.md) ~ [`docs/T-05`](T-05_后端消息管理与历史查询_开发文档.md)
+- 前端各模块：[`docs/T-06`](T-06_前端项目基础架构与设计系统_开发文档.md) ~ [`docs/T-08`](T-08_前端实时消息与历史页面_开发文档.md)
+- 集成测试：[`docs/T-09_API集成与端到端测试_开发文档.md`](T-09_API集成与端到端测试_开发文档.md)
+- 设备接入：[`docs/ESP32_接入手册.md`](ESP32_接入手册.md)

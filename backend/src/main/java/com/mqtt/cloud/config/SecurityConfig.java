@@ -30,12 +30,21 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
-    /** 无需认证即可访问的端点（登录/注册/健康检查/接口文档） */
+    /**
+     * 无需认证即可访问的端点（登录/注册/健康检查/接口文档/监控抓取）。
+     * <p>
+     * Actuator 说明：{@code /actuator/health} 供容器与负载均衡探活；
+     * {@code /actuator/prometheus} 供 Prometheus 无凭证抓取（如需收紧，删掉该行并改为内网抓取）。
+     * 其余 {@code /actuator/**}（info、metrics 等）仍要求 ADMIN。
+     */
     private static final String[] PUBLIC_ENDPOINTS = {
             "/auth/login",
             "/auth/register",
             "/health",
             "/health/**",
+            "/actuator/health",
+            "/actuator/health/**",
+            "/actuator/prometheus",
             "/v3/api-docs/**",
             "/swagger-ui.html",
             "/swagger-ui/**",
@@ -89,6 +98,8 @@ public class SecurityConfig {
                     .requestMatchers("/external/v1/**").hasRole("EXTERNAL")
                     // 系统管理类接口仅 ADMIN 可访问
                     .requestMatchers("/api-keys/**", "/webhooks/**").hasRole("ADMIN")
+                    // 监控端点：health 与 prometheus 已在 PUBLIC_ENDPOINTS 放行，其余（info/metrics）仅 ADMIN
+                    .requestMatchers("/actuator/**").hasRole("ADMIN")
                     // 实时消息与统计分析：ADMIN / OPERATOR
                     .requestMatchers("/messages/**", "/analytics/**").hasAnyRole("ADMIN", "OPERATOR")
                     .anyRequest().authenticated()

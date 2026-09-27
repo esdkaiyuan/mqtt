@@ -19,6 +19,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -82,6 +83,13 @@ public class GlobalExceptionHandler {
         logger.warn("请求方法不支持: {}", e.getMessage());
         return ResponseEntity.status(ResultCode.BAD_REQUEST.getHttpStatus())
                 .body(Result.error(ResultCode.BAD_REQUEST.getCode(), "请求方法不支持: " + e.getMethod()));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Result<Void>> handleNoResourceFound(NoResourceFoundException e) {
+        logger.warn("资源不存在: {}", e.getMessage());
+        return ResponseEntity.status(ResultCode.NOT_FOUND.getHttpStatus())
+                .body(Result.error(ResultCode.NOT_FOUND));
     }
 
     @ExceptionHandler({UsernameNotFoundException.class, BadCredentialsException.class})

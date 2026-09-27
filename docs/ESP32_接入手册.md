@@ -1,6 +1,6 @@
 # ESP32 接入 MQTT 云平台 - 接入手册
 
-> 版本：v1.0 | 日期：2025-08-11
+> 版本：v1.1 | 日期：2026-09-28
 
 ---
 
@@ -8,12 +8,14 @@
 
 | 项目 | 当前值 | 说明 |
 |------|--------|------|
-| MQTT Broker | Mosquitto | 运行在本地（或服务器 IP） |
+| MQTT Broker | EMQX 5（Docker Compose 部署） | 运行在本地（或服务器 IP） |
 | MQTT TCP 端口 | 1883 | 设备通过此端口连接 |
-| MQTT 用户名 | `admin` | 全局统一认证账号 |
-| MQTT 密码 | `public` | 全局统一认证密码 |
+| MQTT WebSocket 端口 | 8083 | 前端实时消息监控使用（设备无需关心） |
+| EMQX Dashboard | 18083 | 管理后台，查看连接/启用认证 |
+| MQTT 用户名 | `admin` | 后端连接透传；EMQX 5 默认不校验（见 8.2） |
+| MQTT 密码 | `public` | 后端连接透传；EMQX 5 默认不校验（见 8.2） |
 | 后端服务 | http://localhost:8080/api | 负责接收并持久化设备消息 |
-| 前端管理页 | http://localhost:3000 | 创建设备、查看数据 |
+| 前端管理页 | http://localhost:3000 | 创建设备、查看数据（Docker 部署为 80 端口） |
 | 设备注册方式 | 前端页面手动创建 | ESP32 须先在前端注册才能发消息 |
 
 ---
@@ -333,7 +335,7 @@ online
 
 ### 6.3 遗言（`/lwt`）
 
-断线时 Mosquitto 自动发送：
+断线时 EMQX 自动发送（Last Will and Testament）：
 ```
 offline
 ```
@@ -382,42 +384,36 @@ MQTT Broker：localhost:1883
 
 ### 8.1 服务器环境要求
 
+推荐直接用仓库内的 Docker Compose 起栈（MySQL / Redis / EMQX / 后端 / 前端 一体），无需手工安装 Broker。
+
 | 软件 | 最低版本 | 说明 |
 |------|---------|------|
-| Java | 17+ | 运行后端 |
-| MySQL | 8.0+ | 存储数据 |
-| Redis | 7+ | 缓存 |
-| Mosquitto | 2.0+ | MQTT Broker |
+| Docker + Docker Compose | 24+ / v2 | 一键起栈（推荐） |
+| Java | 17+ | 非容器方式运行后端时 |
+| MySQL | 8.0+ | 存储数据（或使用 compose 内置） |
+| Redis | 7+ | 缓存（或使用 compose 内置） |
+| EMQX | 5.x | MQTT Broker（或使用 compose 内置） |
 | Node.js | 18+ | 前端（可选，可 Nginx 托管构建产物） |
 | 防火墙 | — | 开放 1883（MQTT）、8080（API）、80/443（前端） |
 
-### 8.2 服务器 Mosquitto 配置
+### 8.2 服务器 MQTT Broker（EMQX）
 
-`/etc/mosquitto/mosquitto.conf`：
+本项目统一使用 Docker Compose 部署 **EMQX 5**（`docker/docker-compose.yml` 中的 `emqx` 服务），不再使用 Mosquitto。默认暴露端口：
 
-```conf
-# 监听所有网络接口
-listener 1883
-allow_anonymous false
-password_file /etc/mosquitto/pwfile
+| 端口 | 用途 |
+|------|------|
+| 1883 | MQTT over TCP（设备连接） |
+| 8083 | MQTT over WebSocket（前端实时消息） |
+| 18083 | EMQX Dashboard（管理后台，初始账号 `admin` / `public`） |
 
-# 可选：开启 WebSocket 端口（用于前端实时消息监控）
-listener 8083
-protocol websockets
-allow_anonymous false
-password_file /etc/mosquitto/pwfile
-```
+> **重要**：EMQX 5 默认**不启用认证**（允许匿名接入）。`MQTT_USERNAME` / `MQTT_PASSWORD`（`admin` / `public`）仅由后端连接时透传，Broker 侧未强制校验。生产环境请登录 Dashboard（`http://<服务器IP>:18083`）→ Access Control → Authentication，启用 **Password-Based**（内置数据库）认证，创建 `admin` 账号，并在 `.env` 中同步 `MQTT_USERNAME` / `MQTT_PASSWORD` 后重启后端。
 
-生成密码文件：
+启动 / 查看 EMQX：
+
 ```bash
-# 添加用户
-sudo mosquitto_passwd -c /etc/mosquitto/pwfile admin
-# 输入密码：public
-```
-
-重启 Mosquitto：
-```bash
-sudo systemctl restart mosquitto
+cd docker
+docker compose up -d emqx
+docker compose logs -f emqx
 ```
 
 ### 8.3 后端配置
@@ -461,6 +457,8 @@ sudo firewall-cmd --add-port=8080/tcp --permanent
 sudo firewall-cmd --add-port=80/tcp --permanent
 sudo firewall-cmd --reload
 ```
+
+> EMQX Dashboard 的 18083 端口**仅用于管理，建议不要对公网开放**；如需远程访问，请通过内网或 SSH 隧道转发，或先在 Dashboard 修改初始密码。
 
 ### 8.6 可选：使用域名 + HTTPS
 
@@ -521,7 +519,7 @@ server {
 | ESP32 和电脑是否同一 WiFi | 确认 |
 | 电脑防火墙是否拦截 | 暂时关闭防火墙测试 |
 | IP 地址是否正确 | `ipconfig` 查看，注意是 IPv4 |
-| Mosquitto 是否监听 0.0.0.0 | 当前配置 `listener 1883` 监听所有接口 |
+| EMQX 是否监听 0.0.0.0 | compose 已将 `1883:1883` 映射到宿主全部接口，`docker compose ps` 确认端口已发布 |
 
 ---
 

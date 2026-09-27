@@ -13,11 +13,13 @@ import org.springframework.http.HttpStatus;
 @Getter
 public class BusinessException extends RuntimeException {
 
+    private final ResultCode resultCode;
     private final Integer code;
     private final HttpStatus httpStatus;
 
     public BusinessException(ResultCode resultCode) {
         super(resultCode.getMessage());
+        this.resultCode = resultCode;
         this.code = resultCode.getCode();
         this.httpStatus = resultCode.getHttpStatus();
     }
@@ -27,6 +29,7 @@ public class BusinessException extends RuntimeException {
      */
     public BusinessException(ResultCode resultCode, String message) {
         super(message);
+        this.resultCode = resultCode;
         this.code = resultCode.getCode();
         this.httpStatus = resultCode.getHttpStatus();
     }

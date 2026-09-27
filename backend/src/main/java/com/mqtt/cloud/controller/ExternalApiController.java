@@ -12,6 +12,9 @@ import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mqtt.MqttClientManager;
 import com.mqtt.cloud.service.ApiKeyService;
 import com.mqtt.cloud.service.DeviceService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,6 +32,7 @@ import java.util.Map;
  * 所有查询与操作都被限制在当前 API Key 所属用户的名下设备范围内。
  */
 @Slf4j
+@Tag(name = "外部API", description = "供第三方系统调用的开放接口，使用 X-API-Key 请求头认证，数据范围限定为密钥所属用户")
 @RestController
 @RequestMapping("/external/v1")
 @RequiredArgsConstructor
@@ -39,8 +43,10 @@ public class ExternalApiController {
     private final DeviceMapper deviceMapper;
     private final MqttClientManager mqttClientManager;
 
+    @Operation(summary = "外部-查询设备列表", description = "返回密钥所属用户的名下设备列表；传入 deviceKey 时精确返回单个设备")
     @GetMapping("/devices")
-    public Result<List<Map<String, Object>>> listDevices(@RequestParam(required = false) String deviceKey) {
+    public Result<List<Map<String, Object>>> listDevices(
+            @Parameter(description = "设备唯一标识，可选，传则精确查询单设备") @RequestParam(required = false) String deviceKey) {
         Long userId = currentUserId();
         if (deviceKey != null && !deviceKey.isBlank()) {
             return Result.success(List.of(toDeviceMap(requireOwnedDevice(deviceKey, userId))));
@@ -52,8 +58,10 @@ public class ExternalApiController {
         return Result.success(devices);
     }
 
+    @Operation(summary = "外部-查询设备详情", description = "按 deviceKey 返回设备完整信息（含 description 与 metadata）")
     @GetMapping("/devices/{deviceKey}")
-    public Result<Map<String, Object>> getDevice(@PathVariable String deviceKey) {
+    public Result<Map<String, Object>> getDevice(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
         Device device = requireOwnedDevice(deviceKey, currentUserId());
 
         Map<String, Object> result = toDeviceMap(device);
@@ -62,8 +70,10 @@ public class ExternalApiController {
         return Result.success(result);
     }
 
+    @Operation(summary = "外部-查询设备状态", description = "返回设备的 status/lastSeen/online 字段")
     @GetMapping("/devices/{deviceKey}/status")
-    public Result<Map<String, Object>> getDeviceStatus(@PathVariable String deviceKey) {
+    public Result<Map<String, Object>> getDeviceStatus(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
         Device device = requireOwnedDevice(deviceKey, currentUserId());
 
         Map<String, Object> result = new HashMap<>();
@@ -74,9 +84,11 @@ public class ExternalApiController {
         return Result.success(result);
     }
 
+    @Operation(summary = "外部-发送设备指令", description = "将设备上行 Topic 的 /data 或 /heartbeat 替换为 /command 后下发消息，发布失败返回 MQTT 错误码")
     @PostMapping("/devices/{deviceKey}/command")
-    public Result<String> sendCommand(@PathVariable String deviceKey,
-                                      @Valid @RequestBody SendCommandRequest request) {
+    public Result<String> sendCommand(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @Valid @RequestBody SendCommandRequest request) {
         Device device = requireOwnedDevice(deviceKey, currentUserId());
         String commandTopic = resolveCommandTopic(device.getTopic());
 
@@ -90,6 +102,7 @@ public class ExternalApiController {
         return Result.success("指令发送成功");
     }
 
+    @Operation(summary = "外部-获取统计信息", description = "返回 totalDevices/onlineDevices/apiKeyName/permissions")
     @GetMapping("/stats")
     public Result<Map<String, Object>> getStats() {
         UserPrincipal principal = SecurityUtils.requirePrincipal();
