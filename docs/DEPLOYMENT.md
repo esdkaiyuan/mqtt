@@ -108,6 +108,8 @@ curl -s http://localhost:8080/api/actuator/prometheus | grep '^mqtt_'
 > 设备凭据（`{productKey}.{deviceKey}` / `deviceSecret`）在创建设备时一次性返回；
 > 存量设备刷机完成后关闭双轨的步骤见 `scripts/migrate-device-secrets.md`。
 
+> **共享订阅（多副本去重）**：上行订阅使用 EMQX 共享订阅 `$share/{MQTT_SHARED_GROUP}/device/+/...`（组名默认 `mqtt-backend`）。多副本部署时各副本必须使用**同一组名**，同组内消息按 `round_robin` 分摊、不会重复落库；单副本同样适用（组内仅一个成员）。共享订阅**不保证同一设备消息跨副本的到达顺序**，设备状态正确性由时间戳守卫兜底（见 `ARCHITECTURE.md` 第 9 节）。EMQX 传给授权回调的是剥离前缀后的真实主题，`AclEvaluator` 无需感知 `$share`。
+
 ### 步骤8：迁移期开关
 
 设备接入改造采用双轨过渡，两个开关控制放宽范围，二者都必须**在存量设备全部刷机完成后**翻转。
