@@ -1,7 +1,7 @@
 package com.mqtt.cloud.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mqtt.cloud.dto.request.WebhookConfigRequest;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.WebhookConfig;

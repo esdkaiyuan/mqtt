@@ -1,6 +1,6 @@
 package com.mqtt.cloud.service;
 
-import com.baomidou.mybatisplus.extension.service.IService;
+import com.baomidou.mybatisplus.spring.service.IService;
 import com.mqtt.cloud.dto.request.ChangePasswordDTO;
 import com.mqtt.cloud.dto.request.RegisterDTO;
 import com.mqtt.cloud.dto.response.LoginResponseDTO;

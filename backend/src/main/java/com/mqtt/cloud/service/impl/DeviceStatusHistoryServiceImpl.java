@@ -1,6 +1,6 @@
 package com.mqtt.cloud.service.impl;
 
-import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mqtt.cloud.entity.DeviceStatus;
 import com.mqtt.cloud.mapper.DeviceStatusHistoryMapper;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;

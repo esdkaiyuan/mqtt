@@ -1,6 +1,6 @@
 package com.mqtt.cloud.service.impl;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.mqtt.cloud.config.AccessControlProperties;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import lombok.extern.slf4j.Slf4j;

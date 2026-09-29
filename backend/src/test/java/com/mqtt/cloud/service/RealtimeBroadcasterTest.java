@@ -1,6 +1,6 @@
 package com.mqtt.cloud.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.mqtt.cloud.config.RealtimeProperties;
 import com.mqtt.cloud.entity.Device;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;

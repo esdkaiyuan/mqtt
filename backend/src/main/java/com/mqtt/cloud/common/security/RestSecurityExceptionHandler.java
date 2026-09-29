@@ -1,6 +1,6 @@
 package com.mqtt.cloud.common.security;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
 import jakarta.servlet.http.HttpServletRequest;

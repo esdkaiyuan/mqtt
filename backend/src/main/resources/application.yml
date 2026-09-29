@@ -63,11 +63,12 @@ spring:
     validate-on-migrate: true
 
   # Jackson配置
+  # 注意：Jackson 3 起 WRITE_DATES_AS_TIMESTAMPS 由 SerializationFeature 迁至 DateTimeFeature，
+  # 且默认值改为 false（日期序列化为 ISO-8601 字符串），故不再需要显式关闭；
+  # 且 spring.jackson.serialization.* 只能绑定 SerializationFeature 枚举，写旧名会导致启动失败。
   jackson:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
-    serialization:
-      WRITE_DATES_AS_TIMESTAMPS: false
 
 # MyBatis Plus配置
 mybatis-plus:
