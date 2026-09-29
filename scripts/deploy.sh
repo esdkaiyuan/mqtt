@@ -60,16 +60,21 @@ echo -e "${GREEN}✓ 环境配置就绪${NC}"
 
 # 3. 构建并启动（前后端均在容器内构建，无需本地 Maven/Node）
 echo -e "\n${YELLOW}[3/6] 构建并启动容器...${NC}"
-$COMPOSE --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build
+# 后端副本数：多副本需各副本 MQTT_SHARED_GROUP 一致（默认 mqtt-backend），
+# 且实时数据跨副本投递需 REALTIME_BROADCAST_ENABLED=true
+BACKEND_REPLICAS="$(grep -E '^BACKEND_REPLICAS=' "$ENV_FILE" | cut -d= -f2 | tr -d '[:space:]')"
+BACKEND_REPLICAS="${BACKEND_REPLICAS:-1}"
+FRONTEND_PORT="$(grep -E '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2 | tr -d '[:space:]')"
+FRONTEND_PORT="${FRONTEND_PORT:-80}"
+echo -e "  后端副本数：${BACKEND_REPLICAS}"
+$COMPOSE --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --build --scale "backend=${BACKEND_REPLICAS}" --remove-orphans
 echo -e "${GREEN}✓ 容器已启动${NC}"
 
-# 4. 等待后端就绪
+# 4. 等待后端就绪（后端不再发布宿主机端口，经 nginx 网关探活）
 echo -e "\n${YELLOW}[4/6] 等待后端就绪...${NC}"
-BACKEND_PORT="$(grep -E '^BACKEND_PORT=' "$ENV_FILE" | cut -d= -f2 | tr -d '[:space:]')"
-BACKEND_PORT="${BACKEND_PORT:-8080}"
 READY=""
 for _ in $(seq 1 60); do
-    if curl -fsS "http://localhost:${BACKEND_PORT}/api/health" >/dev/null 2>&1; then
+    if curl -fsS "http://localhost:${FRONTEND_PORT}/api/health" >/dev/null 2>&1; then
         READY=1
         break
     fi
@@ -87,19 +92,19 @@ echo -e "\n${YELLOW}[5/6] 执行健康检查...${NC}"
 bash "$ROOT_DIR/scripts/health-check.sh"
 
 # 6. 输出访问信息
-FRONTEND_PORT="$(grep -E '^FRONTEND_PORT=' "$ENV_FILE" | cut -d= -f2 | tr -d '[:space:]')"
-FRONTEND_PORT="${FRONTEND_PORT:-80}"
 echo -e "\n${YELLOW}[6/6] 部署信息${NC}"
 echo ""
 echo "=========================================="
 echo -e "${GREEN}  ✓ 部署完成！${NC}"
 echo "=========================================="
 echo "  前端页面：http://localhost:${FRONTEND_PORT}"
-echo "  后端API：  http://localhost:${BACKEND_PORT}/api"
+echo "  后端API：  http://localhost:${FRONTEND_PORT}/api  （经 nginx 网关，后端不直接对外暴露）"
 echo "  EMQX后台： http://localhost:18083"
+echo "  后端副本： ${BACKEND_REPLICAS}"
 echo ""
 echo "  默认账号：admin / admin123"
 echo ""
+echo "  扩容/缩容：$COMPOSE --env-file .env -f docker/docker-compose.yml up -d --scale backend=N"
 echo "  停止服务：$COMPOSE --env-file .env -f docker/docker-compose.yml down"
 echo "  重置数据：$COMPOSE --env-file .env -f docker/docker-compose.yml down -v  # 会清空数据库"
 echo ""

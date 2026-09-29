@@ -21,7 +21,7 @@
 > 导出会**重置每台设备的密钥**（旧密钥立即失效），且明文仅此一次返回，请立刻保存到安全位置。
 
 ```bash
-curl -X POST http://<host>:8080/api/devices/export-credentials \
+curl -X POST http://<host>:80/api/devices/export-credentials \
   -H "Authorization: Bearer <JWT>" \
   -o credentials.json
 ```

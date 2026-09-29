@@ -44,6 +44,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * </pre>
  * 压测走真实设备一机一密凭据（平台账号无 device/{key}/data 发布权限）。
  * <p>
+ * {@code loadtest.baseUrl} 默认指向 nginx 网关（`http://localhost`，由 {@code FRONTEND_PORT} 决定）：
+ * 后端不发布宿主机端口（多副本部署，见 R2-4），REST 调用统一经网关。
+ * <p>
  * 注意 {@code loadtest.brokerUrl} 必须指向 EMQX 实际映射端口（默认 1883，由 .env 的
  * {@code MQTT_PORT} 决定）：若宿主机另有 Broker 占用该端口，用默认值会把消息发进错误的
  * Broker，表现为"发布全部成功、后端零接收"。
@@ -59,7 +62,7 @@ class UploadLoadTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String PRODUCT_KEY = "loadtest";
 
-    private final String baseUrl = System.getProperty("loadtest.baseUrl", "http://localhost:8080");
+    private final String baseUrl = System.getProperty("loadtest.baseUrl", "http://localhost");
     private final String brokerUrl = System.getProperty("loadtest.brokerUrl", "tcp://localhost:1883");
     private final String adminUser = System.getProperty("loadtest.adminUser", "admin");
     private final String adminPassword = System.getProperty("loadtest.adminPassword", "admin123");

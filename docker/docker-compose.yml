@@ -16,6 +16,19 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     networks:
       - mqtt-network
 
@@ -37,6 +50,19 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     networks:
       - mqtt-network
 
@@ -63,6 +89,19 @@ services:
       timeout: 10s
       retries: 10
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     networks:
       - mqtt-network
 
@@ -71,11 +110,27 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.backend
     image: mqtt-cloud-backend:1.0.0
-    container_name: mqtt-backend
     restart: always
     stop_grace_period: 30s
-    ports:
-      - "${BACKEND_PORT:-8080}:8080"
+    # 不设 container_name（会阻止 --scale），也不发布宿主机端口（多副本会端口冲突）；
+    # 统一由 frontend(nginx) 作为唯一入口转发，容器间走 mqtt-network 直连。
+    expose:
+      - "8080"
+    deploy:
+      # 注意：compose 下 --scale backend=N 优先；此处仅为声明期望副本数与资源上限
+      replicas: ${BACKEND_REPLICAS:-1}
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1536M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
@@ -164,6 +219,19 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 64M
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     networks:
       - mqtt-network
     depends_on:

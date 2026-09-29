@@ -20,7 +20,6 @@ read_env() {
 
 DB_ROOT_PASSWORD="$(read_env DB_ROOT_PASSWORD root_password)"
 DB_NAME="$(read_env DB_NAME mqtt_cloud)"
-BACKEND_PORT="$(read_env BACKEND_PORT 8080)"
 FRONTEND_PORT="$(read_env FRONTEND_PORT 80)"
 
 pass() { echo -e "\033[0;32m✓ $1\033[0m"; PASS=$((PASS + 1)); }
@@ -51,7 +50,8 @@ check_http() {
 check_container_health mqtt-mysql
 check_container_health mqtt-redis
 check_container_health mqtt-emqx
-check_http "后端API" "http://localhost:${BACKEND_PORT}/api/health" "200"
+# 后端不发布宿主机端口（多副本），经 nginx 网关探活
+check_http "后端API（经网关）" "http://localhost:${FRONTEND_PORT}/api/health" "200"
 check_http "前端" "http://localhost:${FRONTEND_PORT}/" "200"
 
 REQUIRED_TABLES="sys_user,device,device_status_history,message,history_record,api_key,webhook_config"
@@ -92,7 +92,8 @@ fi
 echo -e "\033[0;31m✗ 存在异常服务，请检查日志\033[0m"
 echo ""
 echo "查看日志："
-for c in mqtt-mysql mqtt-redis mqtt-emqx mqtt-backend mqtt-frontend; do
+for c in mqtt-mysql mqtt-redis mqtt-emqx mqtt-frontend; do
     echo "  docker logs $c"
 done
+echo "  docker compose --env-file .env -f docker/docker-compose.yml logs backend"
 exit 1
