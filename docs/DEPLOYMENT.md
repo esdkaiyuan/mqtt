@@ -73,6 +73,7 @@ bash scripts/health-check.sh
 | `FRONTEND_SECRET` | 迁移期前端直连 Broker 的受限账号密码，配合 `DIRECT_FRONTEND_ENABLED` 使用 | 空 |
 | `ACCESS_CONTROL_ENFORCE_AUTH` | `false`=双轨期，认证/授权回调一律放行（存量设备老账号仍可用）；`true`=仅一机一密凭据可接入 | `false` |
 | `DIRECT_FRONTEND_ENABLED` | 是否保留前端直连 Broker 的受限账号；前端已改用 SSE，确认后可置 `false` | `true` |
+| `ACCESS_CONTROL_CACHE_TTL_SECONDS` | 认证元数据缓存 TTL（秒）；`0` 关闭缓存，认证每次回源查库 | `60` |
 
 `emqx-init` 服务（容器名 `mqtt-emqx-init`，`restart: "no"`）在 `emqx` 与 `backend` 均健康后执行一次，
 通过 EMQX REST API 下发 HTTP 认证源（回调 `/api/internal/emqx/auth`）与 HTTP 授权源
@@ -107,6 +108,19 @@ curl -s http://localhost/api/actuator/prometheus | grep '^mqtt_'
 
 > 设备凭据（`{productKey}.{deviceKey}` / `deviceSecret`）在创建设备时一次性返回；
 > 存量设备刷机完成后关闭双轨的步骤见 `scripts/migrate-device-secrets.md`。
+
+> **认证元数据缓存（R3-1）**：认证热路径每次设备连接原本要查产品、设备两张表。后端现以 Redis 缓存
+> `auth:meta:{productKey}:{deviceKey}`（默认 TTL 60s，`ACCESS_CONTROL_CACHE_TTL_SECONDS` 可调，置 `0` 关闭），
+> 缓存仅存元数据（密钥哈希、设备 `enabled`、产品 `status`），**不存明文密钥、也不存比较结果** ——
+> BCrypt 校验仍逐次计算，即使缓存被读取也无法直接还原凭据。
+>
+> **主动失效**覆盖密钥重置、设备删除、产品删除与产品标识改名：这些操作完成后旧凭据**立即失效**（缓存键被删除）。
+> 失效是"尽力而为"：若 Redis 不可用导致删除失败，则退回 TTL 兜底，**最长 60 秒内旧凭据仍可能通过认证**。
+> 未走上述接口的变更（例如直接改库）同样只能等 TTL 过期，因此生产环境请通过平台接口做凭据与启停操作。
+>
+> 验证缓存生效：连续两次使用同一设备凭据连接，第二次不再触发 `product` / `device` 查询
+> （单测 `EmqxAuthServiceImplTest#authenticate_should_skip_db_when_cache_hits` 断言 `ProductService` / `DeviceService` 零调用）。
+> EMQX 5.0 的 HTTP 认证器不提供认证结果缓存，故缓存落在后端；EMQX 侧版本评估见 R3-3。
 
 > **共享订阅（多副本去重）**：上行订阅使用 EMQX 共享订阅 `$share/{MQTT_SHARED_GROUP}/device/+/...`（组名默认 `mqtt-backend`）。多副本部署时各副本必须使用**同一组名**，同组内消息按 `round_robin` 分摊、不会重复落库；单副本同样适用（组内仅一个成员）。共享订阅**不保证同一设备消息跨副本的到达顺序**，设备状态正确性由时间戳守卫兜底（见 `ARCHITECTURE.md` 第 9 节）。EMQX 传给授权回调的是剥离前缀后的真实主题，`AclEvaluator` 无需感知 `$share`。
 
