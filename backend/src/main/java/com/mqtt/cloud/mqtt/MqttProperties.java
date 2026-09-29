@@ -46,4 +46,7 @@ public class MqttProperties {
 
     /** 最大未确认消息数 */
     private int maxInflight = 100;
+
+    /** 共享订阅组名；多副本部署时各副本使用同一组名以分摊消息，避免重复落库 */
+    private String sharedSubscriptionGroup = "mqtt-backend";
 }

@@ -91,6 +91,8 @@ services:
       MQTT_USERNAME: PLATFORM
       MQTT_PASSWORD: ${PLATFORM_SECRET:?PLATFORM_SECRET 必须在 .env 中配置}
       MQTT_CLIENT_ID: mqtt_backend
+      # 共享订阅组名：多副本必须一致，同一组内分摊消息避免重复落库
+      MQTT_SHARED_GROUP: ${MQTT_SHARED_GROUP:-mqtt-backend}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须在 .env 中配置}
       SERVER_PORT: 8080
       # 激活生产 profile：覆盖 application.yml 中的 DEBUG 日志与全量 SQL 输出

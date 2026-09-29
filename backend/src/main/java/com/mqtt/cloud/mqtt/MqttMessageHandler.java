@@ -45,6 +45,7 @@ public class MqttMessageHandler implements MqttCallback {
     private static final String EVENT_LWT = "device.lwt";
 
     private final MqttClientManager mqttClientManager;
+    private final MqttProperties mqttProperties;
     private final DeviceService deviceService;
     private final MessageService messageService;
     private final WebhookDispatcher webhookDispatcher;
@@ -56,13 +57,18 @@ public class MqttMessageHandler implements MqttCallback {
 
     /**
      * 应用就绪后再连接 Broker，避免阻塞启动流程。
+     * <p>
+     * 订阅使用 EMQX 共享订阅（{@code $share/{group}/{filter}}）：多副本部署时同一组内的副本
+     * 分摊消息，避免每条上行被所有副本重复落库。单副本同样可用（组内仅一个成员），行为一致。
+     * 共享订阅逻辑全在 Broker 侧，MQTT 3.1.1 客户端只需改写订阅主题，无需 MQTT 5。
      */
     @EventListener(ApplicationReadyEvent.class)
     public void subscribe() {
+        String group = mqttProperties.getSharedSubscriptionGroup();
         Map<String, Integer> topics = new LinkedHashMap<>();
-        topics.put("device/+/data", 1);
-        topics.put("device/+/heartbeat", 0);
-        topics.put("device/+/lwt", 1);
+        topics.put("$share/" + group + "/device/+/data", 1);
+        topics.put("$share/" + group + "/device/+/heartbeat", 0);
+        topics.put("$share/" + group + "/device/+/lwt", 1);
         mqttClientManager.register(this, topics);
     }
 
