@@ -34,8 +34,4 @@ public class HistoryRecord {
     /** 数据记录时间 */
     @TableField("timestamp")
     private LocalDateTime timestamp;
-
-    /** 创建时间 */
-    @TableField(value = "created_at", fill = FieldFill.INSERT)
-    private LocalDateTime createdAt;
 }
