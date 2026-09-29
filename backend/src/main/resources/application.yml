@@ -71,7 +71,7 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
     cache-enabled: true
   global-config:
     db-config:
@@ -128,8 +128,8 @@ logging:
 # 依赖：spring-boot-starter-actuator、micrometer-registry-prometheus
 # 访问控制见 SecurityConfig：/actuator/health 与 /actuator/prometheus 公开，
 # 其余 /actuator/**（info、metrics）仅 ADMIN。
-# 注意：show-details=always 会让公开的 /actuator/health 返回依赖组件明细，
-# 与自定义 HealthController（/api/health）行为一致；如需收紧改为 when-authorized。
+# show-details=when-authorized：匿名请求只返回 status，携带 ADMIN 凭证才返回依赖组件明细，
+# 避免公开端点泄露数据库/Redis 连接细节。
 management:
   endpoints:
     web:
@@ -137,4 +137,5 @@ management:
         include: health,info,metrics,prometheus
   endpoint:
     health:
-      show-details: always
+      show-details: when-authorized
+      roles: ADMIN

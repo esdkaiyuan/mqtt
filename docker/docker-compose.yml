@@ -92,6 +92,8 @@ services:
       MQTT_CLIENT_ID: mqtt_backend
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须在 .env 中配置}
       SERVER_PORT: 8080
+      # 激活生产 profile：覆盖 application.yml 中的 DEBUG 日志与全量 SQL 输出
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
       # 接入访问控制（EMQX HTTP 回调）
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN 必须在 .env 中配置}
       PLATFORM_SECRET: ${PLATFORM_SECRET:?PLATFORM_SECRET 必须在 .env 中配置}

@@ -108,6 +108,25 @@ curl -s http://localhost:8080/api/actuator/prometheus | grep '^mqtt_'
 > 设备凭据（`{productKey}.{deviceKey}` / `deviceSecret`）在创建设备时一次性返回；
 > 存量设备刷机完成后关闭双轨的步骤见 `scripts/migrate-device-secrets.md`。
 
+### 步骤8：迁移期开关
+
+设备接入改造采用双轨过渡，两个开关控制放宽范围，二者都必须**在存量设备全部刷机完成后**翻转。
+
+| 变量 | 当前值 | 含义 | 翻转前置条件 | 翻转后验证 |
+|------|--------|------|--------------|------------|
+| `ACCESS_CONTROL_ENFORCE_AUTH` | `false` | `false` 时 EMQX 认证与授权回调一律放行，存量设备老凭据仍可接入 | 存量设备全部刷机为 `{productKey}.{deviceKey}` + 一机一密 | 旧凭据（如 `admin/public`）连接应被拒，设备凭据连接成功 |
+| `DIRECT_FRONTEND_ENABLED` | `true` | 是否保留前端直连 Broker 的受限账号（影响后端 ACL 决策） | 前端已全部切 SSE，确认无直连依赖 | 置 `false` 后前端实时数据仍正常刷新 |
+
+`ACCESS_CONTROL_ENFORCE_AUTH=false` 期间，后端每次启动都会打印迁移期告警，防止长期遗忘：
+
+```bash
+docker logs mqtt-backend 2>&1 | grep "迁移期"
+# 期望：接入访问控制处于迁移期：ACCESS_CONTROL_ENFORCE_AUTH=false，认证与授权回调一律放行。存量设备全部刷机后必须置为 true。
+```
+
+翻转方式：修改 `.env` 中对应变量后 `docker compose -f docker/docker-compose.yml up -d --force-recreate backend`。
+两个开关都由后端进程读取，无需重新执行 `emqx-init`。
+
 ## 3. 手动部署（不推荐，用于理解流程）
 
 > 提示：compose 文件在 `docker/` 子目录、`.env` 在仓库根目录，compose 默认只在 compose 文件所在目录查找 `.env`，因此下面命令统一在**仓库根目录**执行并显式指定 `--env-file .env`。
