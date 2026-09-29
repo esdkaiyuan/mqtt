@@ -26,9 +26,4 @@ public interface AnalyticsMapper {
             + "</script>")
     List<Map<String, Object>> countMessagesByDevices(@Param("days") int days,
                                                     @Param("deviceIds") List<Long> deviceIds);
-
-    @Select("SELECT DATE(sent_at) AS date, COUNT(*) AS count FROM message "
-            + "WHERE sent_at >= DATE_SUB(NOW(), INTERVAL #{days} DAY) "
-            + "GROUP BY DATE(sent_at) ORDER BY date ASC")
-    List<Map<String, Object>> countMessagesByDay(@Param("days") int days);
 }

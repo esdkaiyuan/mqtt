@@ -23,10 +23,13 @@
         LIMIT 100
     </select>
 
-    <select id="findRecentMessages" resultType="com.mqtt.cloud.entity.Message">
-        SELECT <include refid="baseColumns"/>
-        FROM message
-        ORDER BY received_at DESC
+    <select id="findRecentMessagesByOwner" resultType="com.mqtt.cloud.entity.Message">
+        SELECT m.id, m.topic, m.direction, m.payload, m.qos, m.device_id,
+               m.sent_at, m.received_at
+        FROM message m
+        LEFT JOIN device d ON m.device_id = d.id AND d.deleted = 0
+        WHERE (m.device_id IS NULL OR d.owner_id = #{ownerId})
+        ORDER BY m.received_at DESC
         LIMIT #{limit}
     </select>
 

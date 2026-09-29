@@ -17,8 +17,8 @@ public interface MessageService extends IService<Message> {
 
     IPage<Message> getMessages(MessageQueryDTO dto, Long userId);
 
-    /** 最近的实时消息（平台维度，条数由调用方裁剪后传入）。 */
-    List<Message> getRecentMessages(int limit);
+    /** 当前用户名下设备的最近实时消息（平台直发消息一并可见），条数由调用方裁剪后传入。 */
+    List<Message> getRecentMessages(int limit, Long userId);
 
     void saveReceivedMessage(Long deviceId, String topic, String payload, Integer qos);
 }

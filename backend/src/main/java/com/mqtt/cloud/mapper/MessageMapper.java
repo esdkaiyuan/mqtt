@@ -22,7 +22,8 @@ public interface MessageMapper extends BaseMapper<Message> {
 
     List<Message> findByDeviceId(@Param("deviceId") Long deviceId);
 
-    List<Message> findRecentMessages(@Param("limit") int limit);
+    /** 当前用户名下设备的最近消息；平台直发（device_id 为空）消息一并可见，与 /messages 列表口径一致。 */
+    List<Message> findRecentMessagesByOwner(@Param("limit") int limit, @Param("ownerId") Long ownerId);
 
     /** 批量插入上行消息，供摄取管线攒批落库。 */
     int insertBatch(@Param("list") List<Message> messages);

@@ -68,8 +68,8 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
     }
 
     @Override
-    public List<Message> getRecentMessages(int limit) {
-        return this.baseMapper.findRecentMessages(limit);
+    public List<Message> getRecentMessages(int limit, Long userId) {
+        return this.baseMapper.findRecentMessagesByOwner(limit, userId);
     }
 
     @Override

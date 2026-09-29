@@ -47,18 +47,18 @@ public class MessageController {
         return Result.success(messageService.getMessages(dto, SecurityUtils.requireUserId()));
     }
 
-    @Operation(summary = "获取最近消息", description = "返回最近的实时消息，limit 默认 50、最大 100")
+    @Operation(summary = "获取最近消息", description = "返回当前用户设备的最近实时消息，limit 默认 50、最大 100")
     @GetMapping("/recent")
     public Result<List<Message>> getRecentMessages(
             @Parameter(description = "返回条数，默认50，最大100") @RequestParam(defaultValue = "50") Integer limit) {
         int safeLimit = Math.min(Math.max(limit, 1), MAX_RECENT_LIMIT);
-        return Result.success(messageService.getRecentMessages(safeLimit));
+        return Result.success(messageService.getRecentMessages(safeLimit, SecurityUtils.requireUserId()));
     }
 
-    @Operation(summary = "消息趋势统计", description = "按天统计消息量，days 默认 7 天")
+    @Operation(summary = "消息趋势统计", description = "按天统计当前用户设备的消息量，days 默认 7 天")
     @GetMapping("/trend")
     public Result<List<Map<String, Object>>> getMessageTrend(
             @Parameter(description = "统计天数，默认7") @RequestParam(defaultValue = "7") Integer days) {
-        return Result.success(analyticsService.getMessageTrendByDay(days));
+        return Result.success(analyticsService.getMessageTrend(days, SecurityUtils.requireUserId()));
     }
 }
