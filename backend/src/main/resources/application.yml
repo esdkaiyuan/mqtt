@@ -41,7 +41,12 @@ spring:
     clientId: ${MQTT_CLIENT_ID:mqtt_backend}
     timeout: ${MQTT_TIMEOUT:10}
     keepalive: ${MQTT_KEEPALIVE:60}
-    reconnect: true
+    reconnect: ${MQTT_RECONNECT:true}
+    # 连接失败后的指数退避：1s 起，翻倍增长，上限 30s
+    reconnect-initial-delay-ms: ${MQTT_RECONNECT_INITIAL_DELAY_MS:1000}
+    reconnect-max-delay-ms: ${MQTT_RECONNECT_MAX_DELAY_MS:30000}
+    # 已连接时的巡检间隔，用于兜底发现未被回调通知的断连
+    connected-probe-interval-ms: ${MQTT_CONNECTED_PROBE_INTERVAL_MS:30000}
     clean-session: ${MQTT_CLEAN_SESSION:true}
     max-inflight: ${MQTT_MAX_INFLIGHT:100}
 

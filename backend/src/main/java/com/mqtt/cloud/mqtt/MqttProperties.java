@@ -29,8 +29,17 @@ public class MqttProperties {
     /** 心跳间隔（秒） */
     private int keepalive = 60;
 
-    /** 是否自动重连 */
+    /** 是否自动重连，false 时首次连接失败即放弃（仅用于排障） */
     private boolean reconnect = true;
+
+    /** 重连退避初始延迟（毫秒） */
+    private long reconnectInitialDelayMs = 1000;
+
+    /** 重连退避最大延迟（毫秒） */
+    private long reconnectMaxDelayMs = 30000;
+
+    /** 已连接状态下的巡检间隔（毫秒），用于兜底发现未被回调通知的断连 */
+    private long connectedProbeIntervalMs = 30000;
 
     /** 是否清理会话，true 时重连后需要重新订阅 */
     private boolean cleanSession = true;
