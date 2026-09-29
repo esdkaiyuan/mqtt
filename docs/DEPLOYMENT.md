@@ -267,6 +267,8 @@ GET /api/admin/dead-letters?status=PENDING&pageNum=1&pageSize=20   # 需 ADMIN �
 |------|------|------|
 | `STREAM_TIMEOUT_MS` | `1800000` | SSE 连接超时（毫秒，默认 30 分钟）；`0` 表示不超时。用于回收客户端异常掉线后滞留的 emitter |
 | `STREAM_HEARTBEAT_INTERVAL_MS` | `15000` | 服务端心跳间隔（毫秒）；必须**小于**网关空闲超时（nginx 侧为 `1h`），`0` 表示关闭心跳 |
+| `REALTIME_BROADCAST_ENABLED` | `false` | 是否经 Redis Pub/Sub 跨副本广播。**多副本必须为 `true`**；单副本保持 `false`（本地扇出，少一跳） |
+| `REALTIME_BROADCAST_CHANNEL` | `mqtt:realtime:device-data` | 广播频道名，多副本各实例必须一致 |
 
 **验证长连接不断开：**
 
@@ -285,6 +287,46 @@ curl -s http://localhost:8080/api/actuator/prometheus | grep '^realtime_sse_subs
 ```
 
 > 迁移期若仍保留前端直连 Broker（`DIRECT_FRONTEND_ENABLED=true`），前端应已切至 SSE；直连账号仅作过渡。
+
+### 7.1 跨副本广播（Redis Pub/Sub）
+
+多副本部署时，上行消息由任一副本接收，而 SSE 订阅连接分散在各副本上。若只在接收副本内本地扇出，订阅到其他副本的前端将收不到数据。为此引入 Redis Pub/Sub 广播：
+
+- **广播链路**：摄取落库后由 `RealtimeBroadcaster` 把 `{deviceId, deviceKey, ownerId, topic, payload, ts}` 以 JSON 发布到 `app.realtime.broadcast-channel`；每个副本的 `RealtimeChannelSubscriber` 订阅该频道，收到后调用 `publishLocal` 在**本副本**按归属过滤扇出。`ownerId` 必须随消息透传，否则订阅方无法做归属过滤。
+- **不本地直推**：本副本同样是频道订阅者，发布成功后不再直接推送，统一由 Redis 回环投递，避免同副本重复下发（实测 5 条上行恰好收到 5 个事件）。
+- **降级策略**：发布失败（Redis 异常）时退化为本副本推送并记 ERROR；订阅监听断连时记 ERROR。实时链路允许丢（历史以 DB 为准），但**故障必须告警而非静默**。
+
+**Redis 加固（`docker/docker-compose.yml`）：**
+
+- 端口仅绑本机：`127.0.0.1:${REDIS_PORT:-6379}:6379`。Redis 无 TLS，不对外暴露；后端与 `emqx-init` 走容器网络直连。
+- 开启 AOF：`--appendonly yes`，数据落 `redis_data` 卷（`/data/appendonlydir`）。Pub/Sub 消息本身不持久化，AOF 保障的是同一 Redis 承载的其他键。
+
+**观测指标：**
+
+| 指标 | 含义 |
+|------|------|
+| `realtime_broadcast_published_total` | 本副本发布到频道的消息数 |
+| `realtime_broadcast_received_total` | 本副本从频道收到的消息数（含自身发布的回环） |
+| `realtime_broadcast_publish_failures_total` | 发布失败次数（已降级为本地推送） |
+| `realtime_broadcast_parse_failures_total` | 频道消息反序列化失败次数 |
+| `realtime_broadcast_connection_errors_total` | 订阅监听连接异常次数（Redis 断连/超时） |
+
+**验证广播生效：**
+
+```bash
+# 1) 后端日志应出现订阅启用
+docker logs mqtt-backend 2>&1 | grep '跨副本实时广播已启用'
+
+# 2) Redis 侧观察 PUBLISH
+docker exec mqtt-redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning MONITOR | grep PUBLISH
+
+# 3) 端到端：published == received == SSE 收到的事件数（无重复）
+curl -s http://localhost:8080/api/actuator/prometheus | grep '^realtime_broadcast_'
+```
+
+> **生产建议**：单 Redis 为单点，Pub/Sub 期间断连会导致跨副本实时投递中断（历史不受影响）。建议启用 Redis 哨兵或集群，并把 `realtime_broadcast_connection_errors_total` 纳入告警。
+> **扩缩容注意**：`REALTIME_BROADCAST_ENABLED` 必须与副本数一致——多副本置 `false` 会导致订阅在其他副本上的前端收不到数据；单副本置 `true` 仍正确，仅多一次 Redis 回环。
+> **容器重建后 502**：后端容器重建会改变容器 IP，而 nginx 的 `upstream backend` 在启动时解析，会短暂 502，需 `docker restart mqtt-frontend`；运行时 DNS 解析属 R2-4 范围。
 
 ## 8. 遗留表处置计划
 
