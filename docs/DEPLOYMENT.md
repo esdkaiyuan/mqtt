@@ -410,3 +410,42 @@ docker compose -f docker/docker-compose.yml logs backend
 ### 9.6 故障转移
 
 杀掉一个副本后，nginx 在下一次解析（≤10s）内切到存活副本，共享订阅由存活副本接管消息，**无重复、无丢失**。表现为 nginx 错误日志出现一次对已死副本的 `connect() failed (111: Connection refused)`，随后恢复。
+
+---
+
+## 10. 依赖版本与安全扫描
+
+### 10.1 版本基线（R3-3 升级后）
+
+| 组件 | 版本 | 说明 |
+|------|------|------|
+| Spring Boot | **4.1.1** | 3.3.x 的 OSS 支持已于 2025-06-30 结束 |
+| Spring Framework | 7.0.9 | 随 Boot 4 引入 |
+| 嵌入 Tomcat | 11.0.26 | 由 `pom.xml` 属性 `tomcat.version` 覆盖 |
+| Jackson | 3.1.7（Jackson 3）/ 2.21.7（Jackson 2 兼容面） | 由 `jackson-bom.version` / `jackson-2-bom.version` 覆盖 |
+| MyBatis-Plus | 3.5.17 | `mybatis-plus-spring-boot4-starter` + `mybatis-plus-jsqlparser` |
+| SpringDoc OpenAPI | 3.1.1 | 与 Boot 4 兼容分支 |
+| JJWT | 0.12.7 | |
+| Eclipse Paho MQTTv3 | 1.2.5 | **MQTTv3 客户端的最终版本，无后续安全补丁**（Eclipse 官方下载页仅列 1.2.5，无更高 1.2.x）。共享订阅（R2-3）已在 Broker 侧实现，不依赖客户端升级；如需 MQTT 5 能力再评估切换 HiveMQ 客户端 |
+| Java | 17 | |
+
+> Boot 4 的启动器与包变更（`spring-boot-starter-webmvc` / `-jackson` / `-restclient` / `-flyway`、Jackson 3 的 `tools.jackson` 包名、MyBatis-Plus 的 `…spring.service` 包）已在代码中处理，详见 `docs/T-12_架构重构_实施计划.md` 的「R3-3 实施记录」。
+
+### 10.2 安全扫描
+
+`mvn dependency-check:check` 需拉取 NVD 数据、在受限网络中不可用；本项目改用 **Grype** 扫描构建产物镜像（同时覆盖 Alpine OS 包与 JVM 依赖）：
+
+```bash
+docker run --rm -v //var/run/docker.sock:/var/run/docker.sock \
+  anchore/grype:latest mqtt-cloud-backend:1.0.0 -o table
+```
+
+**当前结果（R3-3 后）**：JVM / 应用依赖 **0 条**；仅剩 1 条 High + 16 条 Medium + 11 条 Low，全部为 **Alpine 基础镜像的 OS 包**。
+
+| 组件 | 漏洞 | 级别 | 处置 |
+|------|------|------|------|
+| `zlib 1.3.2-r0` | CVE-2026-85091 | High | **无上游修复版本**（Alpine 3.24 仓库仅 `1.3.2-r0`）。漏洞位于系统 `libz` 的非阻塞 `gzwrite()` / `gzprintf()` 路径，Java 侧走 `java.util.zip` 自有实现、curl 亦不触及该 API，**本部署不可达**；待上游修复后随基础镜像例行刷新收敛 |
+| `coreutils` / `busybox` / `nghttp2-libs` | CVE-2016-2781 等 | Medium | 基础镜像自带，非应用依赖；同上 |
+| `gnupg` 系列 | CVE-2022-3219 | Low | 基础镜像自带 |
+
+> 升级依赖后如发现应用依赖新增高危项，优先在 `pom.xml` 的 `<properties>` 中**同 minor 覆盖补丁版本**（Spring Boot 会读取这些属性作为 BOM 版本），避免直接改依赖声明破坏 BOM 一致性。
