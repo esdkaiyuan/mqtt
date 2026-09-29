@@ -254,7 +254,39 @@ docker logs mqtt-backend 2>&1 | grep "摄取管线"
 GET /api/admin/dead-letters?status=PENDING&pageNum=1&pageSize=20   # 需 ADMIN 角色 JWT
 ```
 
-## 7. 遗留表处置计划
+## 7. 实时通道（SSE）运维
+
+前端实时数据由后端 `GET /api/realtime/stream`（SSE）按「设备归属 + 管理员」过滤推送。该通道是**长连接**，必须保证网关不因空闲而断开：
+
+- **nginx 必须为 SSE 单独开 location**（`docker/nginx.conf` 的 `location = /api/realtime/stream`）：`proxy_buffering off`、`proxy_cache off`、`chunked_transfer_encoding off`、`proxy_read_timeout 1h`。若沿用通用 `location /api`（`proxy_read_timeout 60s`），空闲 60 秒即被网关断开，且无 `proxy_buffering off` 时数据会被缓冲、延迟下发。
+- **服务端心跳**：后端每 `app.realtime.heartbeat-interval-ms` 下发一个 SSE 注释帧（`:hb`），既穿透网关空闲超时，也用于探测并摘除已死连接（发送失败即摘除，无订阅者时停止心跳，避免空转）。
+
+相关可调项（`.env` → 环境变量 → `application.yml` 的 `app.realtime`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `STREAM_TIMEOUT_MS` | `1800000` | SSE 连接超时（毫秒，默认 30 分钟）；`0` 表示不超时。用于回收客户端异常掉线后滞留的 emitter |
+| `STREAM_HEARTBEAT_INTERVAL_MS` | `15000` | 服务端心跳间隔（毫秒）；必须**小于**网关空闲超时（nginx 侧为 `1h`），`0` 表示关闭心跳 |
+
+**验证长连接不断开：**
+
+```bash
+# 保持空闲 5 分钟，连接应存活并持续收到 :hb 注释帧（15s 一个，约 19~20 个）
+TOKEN=$(curl -s -X POST http://localhost/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin123"}' | jq -r .data.token)
+curl -s -N --max-time 330 -H "Authorization: Bearer $TOKEN" http://localhost/api/realtime/stream
+```
+
+**订阅数观测：** Gauge `realtime_sse_subscribers` 暴露当前订阅连接数（含同一用户的多标签/多端连接），用于确认「断开后订阅数回落」：
+
+```bash
+curl -s http://localhost:8080/api/actuator/prometheus | grep '^realtime_sse_subscribers'
+# 空闲 0.0；打开 N 个标签页应为 N.0；关闭标签页后在一个心跳周期内回落
+```
+
+> 迁移期若仍保留前端直连 Broker（`DIRECT_FRONTEND_ENABLED=true`），前端应已切至 SSE；直连账号仅作过渡。
+
+## 8. 遗留表处置计划
 
 - **`history_record`**：已停止写入（历史查询改由 `message` 表承载，条件 `direction='SUBSCRIBE' AND topic LIKE '%/data'`），当前保留只读。计划在 T-12 上线后一个版本周期（约 30 天）后，通过新增迁移脚本删除该表；删除前需确认：
   1. 历史查询功能完全切换至 `message` 表，无功能回归
