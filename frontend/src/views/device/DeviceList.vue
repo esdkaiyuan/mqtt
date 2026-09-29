@@ -128,6 +128,26 @@
     >
       <form @submit.prevent="handleCreate" class="dialog-form">
         <div class="form-group">
+          <label class="form-label">所属产品 <span class="required">*</span></label>
+          <select
+            v-model="createForm.productId"
+            class="form-input"
+            :disabled="productsLoading"
+          >
+            <option value="">{{ productsLoading ? '加载中...' : '请选择产品' }}</option>
+            <option
+              v-for="product in products"
+              :key="product.id"
+              :value="product.id"
+            >
+              {{ product.productName }}（{{ product.productKey }}）
+            </option>
+          </select>
+          <p v-if="!productsLoading && products.length === 0" class="form-hint">
+            暂无可用产品，请先通过 POST /api/products 创建并启用产品
+          </p>
+        </div>
+        <div class="form-group">
           <label class="form-label">设备名称 <span class="required">*</span></label>
           <input
             v-model="createForm.deviceName"
@@ -217,6 +237,40 @@
         </div>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="showCredentialDialog"
+      title="设备凭据（仅显示一次）"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <div class="credential-tip">
+        以下凭据仅在本次创建时返回，平台不提供二次查询，请立即复制并妥善保存。
+      </div>
+      <div class="credential-row">
+        <span class="credential-label">MQTT 用户名</span>
+        <div class="credential-value">
+          <code>{{ createdCredential.username }}</code>
+          <button type="button" class="btn-link" @click="copyText(createdCredential.username)">
+            复制
+          </button>
+        </div>
+      </div>
+      <div class="credential-row">
+        <span class="credential-label">设备密钥</span>
+        <div class="credential-value">
+          <code>{{ createdCredential.deviceSecret }}</code>
+          <button type="button" class="btn-link" @click="copyText(createdCredential.deviceSecret)">
+            复制
+          </button>
+        </div>
+      </div>
+      <template #footer>
+        <div class="dialog-footer">
+          <button class="btn-primary" @click="showCredentialDialog = false">我已保存</button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -224,6 +278,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
+import { productApi } from '@/api/product'
 import SvgIcon from '@/components/Icon.vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -243,13 +298,19 @@ const devices = computed(() => deviceStore.devices)
 
 const showCreateDialog = ref(false)
 const createLoading = ref(false)
+const products = ref([])
+const productsLoading = ref(false)
 const createForm = reactive({
+  productId: '',
   deviceName: '',
   deviceKey: '',
   deviceType: '',
   topic: '',
   description: ''
 })
+
+const showCredentialDialog = ref(false)
+const createdCredential = ref({ username: '', deviceSecret: '' })
 
 const showEditDialog = ref(false)
 const editLoading = ref(false)
@@ -289,26 +350,57 @@ function goToPage(page) {
   }
 }
 
+async function loadProducts() {
+  productsLoading.value = true
+  try {
+    const result = await productApi.getList()
+    const list = result.data || result || []
+    products.value = list.filter(product => product.status === 'ENABLED')
+  } catch (error) {
+    products.value = []
+  } finally {
+    productsLoading.value = false
+  }
+}
+
 function openCreateDialog() {
   Object.keys(createForm).forEach(key => {
     createForm[key] = ''
   })
   showCreateDialog.value = true
+  loadProducts()
 }
 
 async function handleCreate() {
-  if (!createForm.deviceName || !createForm.deviceKey || !createForm.deviceType || !createForm.topic) {
+  if (!createForm.productId || !createForm.deviceName || !createForm.deviceKey || !createForm.deviceType || !createForm.topic) {
     ElMessage.warning('请填写所有必填项')
     return
   }
 
   createLoading.value = true
   try {
-    await deviceStore.createDevice(createForm)
+    const created = await deviceStore.createDevice({ ...createForm })
     showCreateDialog.value = false
+    await loadDevices(currentPage.value)
+
+    createdCredential.value = {
+      username: created?.username || '',
+      deviceSecret: created?.deviceSecret || ''
+    }
+    showCredentialDialog.value = true
   } catch (error) {
   } finally {
     createLoading.value = false
+  }
+}
+
+async function copyText(text) {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch (error) {
+    ElMessage.warning('复制失败，请手动选择文本复制')
   }
 }
 
@@ -605,6 +697,58 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm);
+}
+
+.form-hint {
+  margin-top: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-gray-text);
+}
+
+.credential-tip {
+  padding: 10px 12px;
+  margin-bottom: var(--spacing-md);
+  background: #FFF7E6;
+  border: 1px solid #FFD591;
+  border-radius: var(--border-radius-sm);
+  color: #AD6800;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.credential-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: 6px 0;
+}
+
+.credential-label {
+  width: 90px;
+  flex-shrink: 0;
+  color: var(--color-gray-text);
+  font-size: var(--font-size-sm);
+}
+
+.credential-value {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  padding: 6px 10px;
+  background: var(--color-gray-light);
+  border-radius: var(--border-radius-sm);
+  min-width: 0;
+}
+
+.credential-value code {
+  font-family: 'Courier New', monospace;
+  font-size: var(--font-size-sm);
+  color: var(--color-gray-dark);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty-state {

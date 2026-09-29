@@ -42,6 +42,28 @@ public class OpenApiConfig {
     }
 
     /**
+     * 产品管理API分组（设备类型模板）
+     */
+    @Bean
+    public GroupedOpenApi productApi() {
+        return GroupedOpenApi.builder()
+                .group("产品管理")
+                .pathsToMatch("/api/products", "/api/products/**")
+                .build();
+    }
+
+    /**
+     * 实时数据API分组（SSE）
+     */
+    @Bean
+    public GroupedOpenApi realtimeApi() {
+        return GroupedOpenApi.builder()
+                .group("实时数据")
+                .pathsToMatch("/api/realtime/**")
+                .build();
+    }
+
+    /**
      * 设备管理API分组
      */
     @Bean

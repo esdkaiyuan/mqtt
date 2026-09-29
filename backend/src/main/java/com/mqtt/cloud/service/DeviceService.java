@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
+import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
 
 import java.util.List;
@@ -14,7 +15,12 @@ import java.util.List;
  */
 public interface DeviceService extends IService<Device> {
 
-    Device createDevice(Long userId, CreateDeviceDTO dto);
+    /**
+     * 创建设备并签发一机一密凭据。
+     *
+     * @return 含一次性明文密钥的创建结果，明文仅此一次返回
+     */
+    DeviceCreatedDTO createDevice(Long userId, CreateDeviceDTO dto);
 
     Device updateDevice(Long deviceId, UpdateDeviceDTO dto);
 

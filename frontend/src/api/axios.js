@@ -61,4 +61,12 @@ api.interceptors.response.use(
   }
 )
 
+/**
+ * 读取本地保存的登录令牌。
+ * 供 fetch/EventSource 等无法走 axios 拦截器的场景使用。
+ */
+export function getToken() {
+  return localStorage.getItem('token') || ''
+}
+
 export default api

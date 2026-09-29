@@ -25,7 +25,7 @@
 
       <div :class="['connection-status', mqttConnected ? 'connected' : 'disconnected']">
         <span class="status-dot"></span>
-        <span>{{ mqttConnected ? '已连接' : '未连接' }}</span>
+        <span>{{ mqttConnected ? '实时数据流已连接' : '实时数据流未连接' }}</span>
       </div>
 
       <div ref="messageContainer" class="message-list">
@@ -97,7 +97,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import mqtt from 'mqtt'
+import { subscribeRealtime } from '@/api/realtime'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api/axios'
 import SvgIcon from '@/components/Icon.vue'
@@ -106,7 +106,7 @@ import { ElMessage } from 'element-plus'
 const authStore = useAuthStore()
 
 const mqttConnected = ref(false)
-let mqttClient = null
+let realtimeClient = null
 
 const messages = ref([])
 const messageContainer = ref(null)
@@ -119,51 +119,21 @@ const publishForm = ref({
 })
 const publishLoading = ref(false)
 
-// MQTT配置：优先使用环境变量，回退到开发环境默认值
-const MQTT_URL = import.meta.env.VITE_MQTT_URL || 'ws://localhost:8083/mqtt'
-const MQTT_USERNAME = import.meta.env.VITE_MQTT_USERNAME || 'admin'
-const MQTT_PASSWORD = import.meta.env.VITE_MQTT_PASSWORD || 'public'
-const MQTT_OPTIONS = {
-  clientId: 'frontend_' + Date.now(),
-  username: MQTT_USERNAME,
-  password: MQTT_PASSWORD,
-  clean: true,
-  connectTimeout: 4000,
-  reconnectPeriod: 5000
-}
-
+// 实时数据由后端按当前用户权限过滤后经 SSE 推送，前端不再直连 Broker。
 function initMqtt() {
-  try {
-    mqttClient = mqtt.connect(MQTT_URL, MQTT_OPTIONS)
-
-    mqttClient.on('connect', () => {
+  realtimeClient = subscribeRealtime({
+    onOpen: () => {
       mqttConnected.value = true
-      console.log('MQTT连接成功')
-
-      mqttClient.subscribe('device/+/data', { qos: 0 }, (err) => {
-        if (err) {
-          console.error('订阅失败:', err)
-        } else {
-          console.log('订阅成功: device/+/data')
-        }
-      })
-
-      mqttClient.subscribe('device/+/status', { qos: 0 })
-    })
-
-    mqttClient.on('message', (topic, message) => {
-      const payload = message.toString()
-      console.log('收到消息:', topic, payload)
-
-      const deviceKey = topic.split('/')[1]
-
+    },
+    onEvent: (event) => {
       messages.value.push({
         id: Date.now() + Math.random(),
-        topic,
-        payload,
+        topic: event.topic,
+        payload: event.payload,
+        deviceKey: event.deviceKey,
         direction: 'SUBSCRIBE',
         qos: 0,
-        receivedAt: new Date().toISOString()
+        receivedAt: event.ts || new Date().toISOString()
       })
 
       if (messages.value.length > 200) {
@@ -171,26 +141,12 @@ function initMqtt() {
       }
 
       scrollToBottom()
-    })
-
-    mqttClient.on('error', (err) => {
-      console.error('MQTT错误:', err)
+    },
+    onError: (error) => {
+      console.error('实时通道错误:', error)
       mqttConnected.value = false
-    })
-
-    mqttClient.on('offline', () => {
-      mqttConnected.value = false
-    })
-
-    mqttClient.on('reconnect', () => {
-      console.log('MQTT重连中...')
-      mqttConnected.value = false
-    })
-
-  } catch (error) {
-    console.error('MQTT连接失败:', error)
-    mqttConnected.value = false
-  }
+    }
+  })
 }
 
 function scrollToBottom() {
@@ -269,9 +225,9 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (mqttClient) {
-    mqttClient.end()
-    mqttClient = null
+  if (realtimeClient) {
+    realtimeClient.close()
+    realtimeClient = null
   }
 })
 </script>

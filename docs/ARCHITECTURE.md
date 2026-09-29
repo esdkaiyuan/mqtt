@@ -1,6 +1,6 @@
 # MQTT云平台 - 系统架构文档
 
-> 版本：v1.1　最后更新：2026-09-28
+> 版本：v1.2　最后更新：2026-09-28
 > 适用范围：`MQTT自建站点` 主项目（Spring Boot + Vue 3 + EMQX + MySQL + Redis）
 
 ---
@@ -29,11 +29,12 @@ flowchart TB
     end
 
     subgraph Edge["接入层"]
-        Nginx["Nginx（前端静态资源 + /api 反向代理）"]
+        Nginx["Nginx（静态资源 + /api 反代，拒绝 /api/internal/*）"]
     end
 
     subgraph App["应用层"]
         Backend["Spring Boot 后端（context-path: /api）"]
+        Init["emqx-init（一次性：下发认证/授权源）"]
     end
 
     subgraph Broker["消息层"]
@@ -41,16 +42,20 @@ flowchart TB
     end
 
     subgraph Data["数据层"]
-        MySQL[("MySQL 8")]
+        MySQL[("MySQL 8（Flyway 迁移）")]
         Redis[("Redis 7")]
     end
 
     Browser -->|"HTTP :80"| Nginx
     Nginx -->|"/api → backend:8080"| Backend
-    Browser -.->|"MQTT over WebSocket ws://host:8083/mqtt"| EMQX
-    Device -->|"MQTT over TCP :1883"| EMQX
+    Device -->|"MQTT over TCP :1883（一机一密）"| EMQX
 
-    Backend -->|"TCP :1883 订阅/发布"| EMQX
+    EMQX -->|"HTTP 认证回调 /api/internal/emqx/auth"| Backend
+    EMQX -->|"HTTP 授权回调 /api/internal/emqx/acl"| Backend
+    Init -->|"REST API 下发认证/授权源"| EMQX
+
+    Backend -->|"TCP :1883 平台账号订阅/发布"| EMQX
+    Backend -->|"SSE /api/realtime/stream（按归属过滤）"| Browser
     Backend --> MySQL
     Backend --> Redis
     Backend -->|"Webhook 回调（HTTP）"| Third
@@ -58,9 +63,9 @@ flowchart TB
 
 要点：
 
-- **两条实时通道**：后端以 TCP 客户端身份订阅 Broker（用于落库、状态判定、Webhook 分发）；浏览器以 WebSocket 客户端身份直连 Broker（用于实时消息流展示），互不阻塞。
-- **Nginx 只代理 `/api`**：前端静态资源与 SPA 回退由 Nginx 承担，MQTT 的 WebSocket 不走 Nginx（由前端按 `VITE_MQTT_URL` 直连 EMQX）。
-- **无独立 WebSocket 服务端**：实时性完全由 MQTT 提供，后端不额外暴露 WebSocket 端点。
+- **实时通道收敛到后端**：浏览器不再直连 Broker，改为订阅后端 SSE（`GET /api/realtime/stream`），由后端按设备归属与角色过滤后推送，前端不再持有任何 Broker 凭据。
+- **EMQX 认证与授权外置到后端**：设备连接触发 `/api/internal/emqx/auth`，主题读写触发 `/api/internal/emqx/acl`，由后端按「产品 → 设备 → 一机一密」规则裁决；`emqx-init` 服务负责把这两个回调源写入 EMQX（幂等，可重复执行）。
+- **Nginx 只代理 `/api`**：前端静态资源与 SPA 回退由 Nginx 承担；`/api/internal/*` 在网关层直接返回 403，仅允许容器网络内的 EMQX 直连后端。
 
 ---
 
@@ -68,14 +73,15 @@ flowchart TB
 
 | 服务 | 镜像 | 容器名 | 宿主端口 | 说明 |
 |------|------|--------|----------|------|
-| MySQL | `mysql:8.0` | `mqtt-mysql` | 3306 | 业务数据；`scripts/init-mysql.sql` 首次启动初始化 |
+| MySQL | `mysql:8.0` | `mqtt-mysql` | 3306 | 业务数据；schema 由 Flyway 迁移管理（`db/migration/V*.sql`） |
 | Redis | `redis:7-alpine` | `mqtt-redis` | 6379 | Token 黑名单、设备在线状态缓存 |
 | EMQX | `emqx/emqx:5.0` | `mqtt-emqx` | 1883 / 8083 / 18083 | MQTT TCP / MQTT WebSocket / 管理后台 |
+| EMQX 初始化 | `curlimages/curl:8.8.0` | `mqtt-emqx-init` | — | 一次性：通过 REST API 下发 HTTP 认证与授权源（`restart: "no"`） |
 | 后端 | `mqtt-cloud-backend:1.0.0` | `mqtt-backend` | 8080 | Spring Boot，健康检查 `/api/health` |
 | 前端 | `mqtt-cloud-frontend:1.0.0` | `mqtt-frontend` | 80 | Nginx 托管 SPA，健康检查 `/health` |
 
 - 编排文件：`docker/docker-compose.yml`；网络：`mqtt-network`（bridge）；命名卷：`mysql_data` / `redis_data` / `emqx_data` / `emqx_log`。
-- 启动依赖：`backend` 依赖 `mysql`/`redis`/`emqx` 均为 `service_healthy`；`frontend` 依赖 `backend` 为 `service_healthy`。
+- 启动依赖：`backend` 依赖 `mysql`/`redis`/`emqx` 均为 `service_healthy`；`emqx-init` 依赖 `emqx` 与 `backend` 为 `service_healthy`；`frontend` 依赖 `backend` 为 `service_healthy`。
 - **环境变量注意**：compose 文件位于 `docker/`，而 `.env` 位于仓库根目录，执行时需显式 `--env-file .env`（详见 `docs/DEPLOYMENT.md`）。
 
 ---
@@ -86,16 +92,16 @@ flowchart TB
 
 ```
 com.mqtt.cloud
-├── controller/     # 9 个控制器，仅做参数校验与编排，统一返回 Result<T>
+├── controller/     # 13 个控制器（含 internal/ 的 EMQX 回调），仅做参数校验与编排，统一返回 Result<T>
 ├── service/        # 业务接口 + impl/ 实现，事务边界所在
 ├── mapper/         # MyBatis-Plus Mapper（注解 SQL + Wrapper）
-├── entity/         # 与表一一对应的实体
+├── entity/         # 与表一一对应的实体（含 Product、Device）
 ├── dto/
 │   ├── request/    # 入参对象（@Valid 校验）
-│   └── response/   # 出参对象（不直接暴露 entity）
+│   └── response/   # 出参对象（不直接暴露 entity；DeviceCreatedDTO 承载一次性明文密钥）
 ├── mqtt/           # MqttClientManager / MqttMessageHandler / MqttProperties
-├── filter/         # JwtAuthenticationFilter / ApiKeyAuthFilter / UserPrincipal
-├── config/         # Security / Redis / MyBatis-Plus / OpenAPI / Async / Schedule / RestTemplate
+├── filter/         # JwtAuthenticationFilter / ApiKeyAuthFilter / InternalTokenFilter / UserPrincipal
+├── config/         # Security / Redis / MyBatis-Plus / OpenAPI / Async / Schedule / RestTemplate / AccessControl / Realtime
 ├── common/         # Result / ResultCode / exception / security / constant
 └── util/           # JwtUtil / ApiKeyGenerator
 ```
@@ -113,8 +119,12 @@ com.mqtt.cloud
 | `WebhookController` | `/webhooks` | Webhook 配置 CRUD |
 | `ExternalApiController` | `/external/v1` | 面向第三方的 API Key 鉴权接口 |
 | `HealthController` | `/health` | 健康检查 |
+| `ProductController` | `/products` | 产品（设备类型模板）CRUD；删除时校验产品下是否仍有设备 |
+| `RealtimeController` | `/realtime` | SSE 实时数据流（按设备归属与角色过滤） |
+| `EmqxAuthController` | `/internal/emqx` | EMQX HTTP 认证回调（内部，须 `X-Internal-Token`） |
+| `EmqxAclController` | `/internal/emqx` | EMQX HTTP 授权回调（内部，须 `X-Internal-Token`） |
 
-Swagger 分组共 9 组，与上表一一对应，访问 `/api/swagger-ui.html`。
+Swagger 分组共 11 组（认证 / 产品 / 设备 / 消息 / 历史 / 统计 / API密钥 / Webhook / 外部API / 实时数据 / 健康检查），访问 `/api/swagger-ui.html`；`/internal/**` 为容器内部回调，不纳入 Swagger。
 
 ### 4.3 关键组件
 
@@ -124,6 +134,11 @@ Swagger 分组共 9 组，与上表一一对应，访问 `/api/swagger-ui.html`�
 - **`WebhookDispatcher`**：基于 `RestTemplate`（`RestTemplateConfig`）向已配置 URL 推送事件。
 - **`TokenBlacklistService`**：登出后把 Token 写入 Redis 黑名单，`JwtAuthenticationFilter` 据此拒绝已登出 Token。
 - **`AsyncConfig`**：为落库/通知等旁路逻辑提供线程池，避免阻塞 MQTT 回调线程。
+- **`DeviceSecretService`**：一机一密凭据的生成 / 哈希 / 校验（BCrypt），并负责 `{productKey}.{deviceKey}` 用户名的拼装解析与平台账号 `PLATFORM` 的识别。
+- **`EmqxAuthService`**：EMQX 连接认证裁决——产品须为 `ENABLED`、设备须归属该产品且 `enabled=1`、密钥哈希匹配；`ACCESS_CONTROL_ENFORCE_AUTH=false` 时一律放行（迁移期双轨）。
+- **`AclEvaluator`**：主题级授权裁决——设备只能读写自己 `device/{deviceKey}/**` 且禁止发布到自身 `cmd/`；平台账号可订阅全部设备主题、仅可发布 `cmd/`；未匹配默认拒绝。
+- **`RealtimeStreamService`**：维护 SSE 订阅者，按设备 `ownerId` 与用户角色过滤后推送，替代前端直连 Broker。
+- **`InternalTokenFilter`**：校验 `/internal/**` 的 `X-Internal-Token` 请求头，防止 EMQX 回调接口被外部调用（用 `getServletPath()` 判断，避免 context-path 干扰）。
 
 ---
 
@@ -145,14 +160,16 @@ frontend/src
 ### 5.2 数据流
 
 - **请求类**：组件 → `api/*.js` → `api/axios.js`（统一 baseURL `/api`、注入 `Authorization`、统一错误提示）→ 后端。
-- **实时类**：`views/message/MessageMonitor.vue` 通过 `mqtt.js` 直连 EMQX（`VITE_MQTT_URL`，默认 `ws://localhost:8083/mqtt`）订阅 Topic，实时渲染消息流并显示连接状态。
+- **实时类**：`views/message/MessageMonitor.vue` 调用 `api/realtime.js` 的 `subscribeRealtime()`，以 `fetch` 流式读取 `GET /api/realtime/stream`（SSE，携带 `Authorization`），解析 `data:` 帧后渲染；卸载时通过 `AbortController` 释放连接。
 - **图表类**：`utils/echarts.js` 按需引入 ECharts，用于统计页。
+
+> 前端不再依赖 `mqtt.js`，也不再持有任何 Broker 账号：实时数据一律经后端 SSE 通道下发。
 
 ### 5.3 构建优化
 
 - Element Plus 按需引入 + 图标 tree-shaking，样式按需拆分。
 - `manualChunks` 拆分 vendor，入口 chunk 已从 1.25MB 降至约 63KB。
-- 构建期通过 `VITE_MQTT_*` 注入运行时配置（Vite 仅暴露 `VITE_` 前缀变量）。
+- 运行时配置通过 `VITE_` 前缀变量在构建期注入（Vite 仅暴露该前缀变量）。
 
 ---
 
@@ -161,14 +178,17 @@ frontend/src
 | 表 | 说明 |
 |----|------|
 | `sys_user` | 用户与角色（ADMIN/OPERATOR/VIEWER）、BCrypt 密码 |
-| `device` | 设备档案（名称、Topic、所属用户、最近心跳） |
+| `product` | 产品（设备类型模板）：`product_key`、认证方式、Topic 模板、载荷格式、状态 |
+| `device` | 设备档案（所属产品、名称、Topic、所属用户、一机一密密钥哈希、连接许可 `enabled`、最近心跳） |
 | `device_status_history` | 设备在线状态变更流水 |
 | `message` | 设备上报/平台发布的消息 |
 | `history_record` | 历史查询用归档记录 |
 | `api_key` | 第三方接入密钥（哈希存储） |
 | `webhook_config` | Webhook 目标地址与事件订阅 |
 
-初始化脚本：`scripts/init-mysql.sql`（幂等，含默认管理员 `admin / admin123`）。字段级设计与索引见 `docs/T-01_数据库设计与Schema初始化_开发文档.md`。
+三层关系：**产品（模板）→ 设备（实例，`deviceKey` 在产品内唯一）→ 凭据（`deviceSecret` 仅存 BCrypt 哈希于 `device`）**。
+
+Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__baseline.sql`（基线）与 `V2__product_and_device_identity.sql`（产品表 + 设备表改造）。存量库通过 `baseline-on-migrate` 记为 V1 后仅执行 V2+。字段级设计与索引见 `docs/T-01_数据库设计与Schema初始化_开发文档.md`。
 
 ---
 
@@ -177,10 +197,15 @@ frontend/src
 - **认证方式**
   - 管理面：JWT（`JwtUtil` 签发，`JwtAuthenticationFilter` 校验），登出走 Redis 黑名单。
   - 开放面：API Key（`ApiKeyAuthFilter` 校验，`ApiKeyGenerator` 生成），仅放行 `/api/external/v1/**`。
-- **授权模型**：基于角色的 RBAC，`SecurityConfig` 声明各路径所需角色，`@PreAuthorize` 做方法级细化。
+  - 设备面：一机一密。设备以 `{productKey}.{deviceKey}` 为用户名、`deviceSecret` 为密码连接 EMQX，EMQX 回调 `/api/internal/emqx/auth` 由后端裁决；密钥仅存 BCrypt 哈希，明文只在创建设备/重置密钥时返回一次。
+- **授权模型**
+  - 管理面：基于角色的 RBAC，`SecurityConfig` 声明各路径所需角色，`@PreAuthorize` 做方法级细化（`@EnableMethodSecurity`）。
+  - 设备面：主题级 ACL，EMQX 回调 `/api/internal/emqx/acl`，由 `AclEvaluator` 按「设备只能读写自身 `device/{deviceKey}/**`、平台账号可订阅全量且仅可发布 `cmd/`」裁决，未匹配默认拒绝。
+- **内部接口防护**：`/internal/**` 在 Spring Security 放行后由 `InternalTokenFilter` 校验 `X-Internal-Token`；网关侧 Nginx 对 `/api/internal/` 直接返回 403，仅容器网络内的 EMQX 可直连后端。
+- **实时数据隔离**：SSE 通道按设备 `ownerId` 与用户角色过滤，前端不再持有 Broker 凭据，避免越权订阅全量 Topic。
 - **错误码精确化**：过滤器把具体失败原因（如 Token 失效 / Token 过期 / API Key 无效）写入请求属性，由 `RestSecurityExceptionHandler` 映射为对应 `ResultCode`，避免一律返回笼统 401。
 - **统一出口**：`GlobalExceptionHandler` 收敛 `BusinessException` 与参数校验异常，统一为 `Result<T>` 结构。
-- **密钥管理**：`JWT_SECRET` 必须由 `.env` 提供（compose 使用 `:?` 强校验），`.env` 与 `*.pem/*.key` 已在 `.dockerignore` 中排除，避免进入镜像。
+- **密钥管理**：`JWT_SECRET` / `INTERNAL_TOKEN` / `PLATFORM_SECRET` 均由 `.env` 提供（compose 使用 `:?` 强校验），`scripts/deploy.sh` 会在缺失或仍为占位值时自动生成；`.env` 与 `*.pem/*.key` 已在 `.dockerignore` 中排除，避免进入镜像。
 
 ---
 
@@ -190,10 +215,11 @@ frontend/src
 |------|-------------------|--------|
 | MySQL | `DB_HOST`/`DB_PORT`/`DB_USERNAME`/`DB_PASSWORD`/`DB_NAME` | localhost:3306 / root / root_password / mqtt_cloud |
 | Redis | `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD` | localhost:6379 |
-| EMQX | `MQTT_HOST`（须为 `tcp://host:port`）/`MQTT_USERNAME`/`MQTT_PASSWORD` | tcp://localhost:1883 / admin / public |
+| EMQX | `MQTT_HOST`（须为 `tcp://host:port`）/`MQTT_USERNAME`（固定 `PLATFORM`）/`MQTT_PASSWORD`（取 `PLATFORM_SECRET`） | tcp://localhost:1883 / PLATFORM / 无默认 |
+| 接入访问控制 | `INTERNAL_TOKEN` / `PLATFORM_SECRET` / `FRONTEND_SECRET` | 无默认，必须显式配置（`deploy.sh` 自动生成） |
+| 迁移期开关 | `ACCESS_CONTROL_ENFORCE_AUTH`（false=双轨放行）/ `DIRECT_FRONTEND_ENABLED` / `STREAM_TIMEOUT_MS` | false / true / 0 |
 | 服务 | `SERVER_PORT` | 8080 |
 | 安全 | `JWT_SECRET` | 无默认，必须显式配置 |
-| 前端 | `VITE_MQTT_URL`/`VITE_MQTT_USERNAME`/`VITE_MQTT_PASSWORD` | ws://localhost:8083/mqtt / admin / public |
 
 配置集中定义于 `backend/src/main/resources/application.yml` 与根目录 `.env.example`。
 

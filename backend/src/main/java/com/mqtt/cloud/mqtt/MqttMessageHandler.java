@@ -6,6 +6,7 @@ import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.HistoryService;
 import com.mqtt.cloud.service.MessageService;
+import com.mqtt.cloud.service.RealtimeStreamService;
 import com.mqtt.cloud.service.WebhookDispatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,7 @@ public class MqttMessageHandler implements MqttCallback {
     private final MessageService messageService;
     private final HistoryService historyService;
     private final WebhookDispatcher webhookDispatcher;
+    private final RealtimeStreamService realtimeStreamService;
 
     /**
      * 应用就绪后再连接 Broker，避免阻塞启动流程。
@@ -86,6 +88,13 @@ public class MqttMessageHandler implements MqttCallback {
             webhookDispatcher.dispatch(device.getId(), resolveEventType(messageType), device, payload);
         } catch (Exception e) {
             log.error("处理 MQTT 消息失败: topic={}", topic, e);
+        }
+
+        // 实时通道推送与主处理链路隔离：单个 SSE 订阅者异常不得影响 MQTT 消息处理
+        try {
+            realtimeStreamService.publish(device, topic, payload);
+        } catch (Exception e) {
+            log.warn("推送实时数据失败: topic={}", topic, e);
         }
     }
 

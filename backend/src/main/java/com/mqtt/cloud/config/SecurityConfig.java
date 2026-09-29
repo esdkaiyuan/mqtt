@@ -2,10 +2,12 @@ package com.mqtt.cloud.config;
 
 import com.mqtt.cloud.common.security.RestSecurityExceptionHandler;
 import com.mqtt.cloud.filter.ApiKeyAuthFilter;
+import com.mqtt.cloud.filter.InternalTokenFilter;
 import com.mqtt.cloud.filter.JwtAuthenticationFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -28,6 +30,7 @@ import java.util.List;
  */
 @Configuration
 @EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
     /**
@@ -52,9 +55,12 @@ public class SecurityConfig {
     };
 
     private final RestSecurityExceptionHandler securityExceptionHandler;
+    private final InternalTokenFilter internalTokenFilter;
 
-    public SecurityConfig(RestSecurityExceptionHandler securityExceptionHandler) {
+    public SecurityConfig(RestSecurityExceptionHandler securityExceptionHandler,
+                          InternalTokenFilter internalTokenFilter) {
         this.securityExceptionHandler = securityExceptionHandler;
+        this.internalTokenFilter = internalTokenFilter;
     }
 
     @Value("${app.cors.allowed-origins:http://localhost:3000,http://localhost:8080}")
@@ -83,7 +89,8 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                     JwtAuthenticationFilter jwtFilter,
-                                                    ApiKeyAuthFilter apiKeyFilter) throws Exception {
+                                                    ApiKeyAuthFilter apiKeyFilter,
+                                                    InternalTokenFilter internalTokenFilter) throws Exception {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
@@ -93,6 +100,8 @@ public class SecurityConfig {
                     .accessDeniedHandler(securityExceptionHandler))
             .authorizeHttpRequests(auth -> auth
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                    // 内部回调：不参与 JWT 鉴权，由 InternalTokenFilter 校验共享令牌
+                    .requestMatchers("/internal/**").permitAll()
                     .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                     // 开放接口：必须携带合法 API Key（由 ApiKeyAuthFilter 注入 EXTERNAL 角色）
                     .requestMatchers("/external/v1/**").hasRole("EXTERNAL")
@@ -105,7 +114,10 @@ public class SecurityConfig {
                     .anyRequest().authenticated()
             )
             .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
+            // 注意顺序：internalTokenFilter 以 JwtAuthenticationFilter 为锚点，
+            // 必须在其之前完成 jwtFilter 的注册，否则锚点无已知顺序会抛 IllegalStateException
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class)
             .formLogin(form -> form.disable())
             .httpBasic(basic -> basic.disable())
             .logout(logout -> logout.disable());

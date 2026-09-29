@@ -67,6 +67,23 @@ public class Device {
     @TableField("deleted")
     private Integer deleted;
 
+    /** 所属产品ID */
+    @TableField("product_id")
+    private Long productId;
+
+    /** 一机一密密钥哈希（BCrypt），永不对外序列化 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @TableField("device_secret_hash")
+    private String deviceSecretHash;
+
+    /** 密钥重置时间 */
+    @TableField("secret_updated_at")
+    private LocalDateTime secretUpdatedAt;
+
+    /** 连接许可：1=允许，0=禁止（与运行态 status 语义分离） */
+    @TableField("enabled")
+    private Integer enabled;
+
     // 以下字段用于DTO映射，不映射到数据库
     @TableField(exist = false)
     private String ownerUsername;

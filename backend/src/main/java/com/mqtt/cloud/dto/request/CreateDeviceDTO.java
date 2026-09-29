@@ -1,6 +1,7 @@
 package com.mqtt.cloud.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -9,6 +10,9 @@ import lombok.Data;
  */
 @Data
 public class CreateDeviceDTO {
+
+    @NotNull(message = "产品ID不能为空")
+    private Long productId;
 
     @NotBlank(message = "设备名称不能为空")
     @Size(max = 100, message = "设备名称长度不能超过100个字符")

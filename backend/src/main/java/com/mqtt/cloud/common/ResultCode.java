@@ -39,7 +39,14 @@ public enum ResultCode {
 
     MQTT_PUBLISH_FAILED(4001, "消息发送失败", HttpStatus.SERVICE_UNAVAILABLE),
 
-    WEBHOOK_TEST_FAILED(5001, "Webhook 测试失败", HttpStatus.BAD_GATEWAY);
+    WEBHOOK_TEST_FAILED(5001, "Webhook 测试失败", HttpStatus.BAD_GATEWAY),
+
+    PRODUCT_KEY_EXISTS(6001, "产品标识已存在", HttpStatus.CONFLICT),
+    PRODUCT_NOT_FOUND(6002, "产品不存在", HttpStatus.NOT_FOUND),
+    PRODUCT_HAS_DEVICES(6003, "该产品下存在设备，无法删除", HttpStatus.CONFLICT),
+    PRODUCT_DISABLED(6004, "产品已停用", HttpStatus.CONFLICT),
+    DEVICE_DISABLED(6005, "设备已被禁用", HttpStatus.FORBIDDEN),
+    INTERNAL_TOKEN_INVALID(6006, "内部调用令牌无效", HttpStatus.UNAUTHORIZED);
 
     private final Integer code;
     private final String message;

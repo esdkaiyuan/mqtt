@@ -1,6 +1,6 @@
 # ESP32 接入 MQTT 云平台 - 接入手册
 
-> 版本：v1.1 | 日期：2026-09-28
+> 版本：v1.2 | 日期：2026-09-28
 
 ---
 
@@ -12,18 +12,19 @@
 | MQTT TCP 端口 | 1883 | 设备通过此端口连接 |
 | MQTT WebSocket 端口 | 8083 | 前端实时消息监控使用（设备无需关心） |
 | EMQX Dashboard | 18083 | 管理后台，查看连接/启用认证 |
-| MQTT 用户名 | `admin` | 后端连接透传；EMQX 5 默认不校验（见 8.2） |
-| MQTT 密码 | `public` | 后端连接透传；EMQX 5 默认不校验（见 8.2） |
+| MQTT 用户名 | `{产品标识}.{设备标识}` | 例：`esp32-fall.sensor-livingroom-01`，见 4.4 |
+| MQTT 密码 | 设备密钥 `deviceSecret` | 创建设备时一次性返回，平台不提供二次查询 |
 | 后端服务 | http://localhost:8080/api | 负责接收并持久化设备消息 |
-| 前端管理页 | http://localhost:3000 | 创建设备、查看数据（Docker 部署为 80 端口） |
-| 设备注册方式 | 前端页面手动创建 | ESP32 须先在前端注册才能发消息 |
+| 前端管理页 | http://localhost:3000 | 创建产品与设备、查看数据（Docker 部署为 80 端口） |
+| 设备注册方式 | 前端页面创建产品 + 设备 | ESP32 须先在前端注册才能发消息 |
+| 产品（productKey） | 设备类型模板 | 创建设备前必须先有产品，用户名与 Topic 都由它参与拼接 |
 
 ---
 
 ## 2. 接入流程（共 4 步）
 
 ```
-Step 1: 在前端页面创建设备
+Step 1: 在前端页面创建产品与设备（拿到 username / deviceSecret）
        ↓
 Step 2: ESP32 连接 MQTT Broker
        ↓
@@ -40,17 +41,30 @@ ESP32 发送的每条 MQTT 消息都需要关联到一个已注册的设备。�
 
 **操作路径：** 打开 http://localhost:3000 → 登录 → 左侧「设备管理」→ 点击「创建设备」
 
+> 创建设备前必须先有**产品**（设备类型模板）。若下拉框为空，先用 admin 账号通过
+> `POST /api/products` 创建产品，或由管理员在控制台创建。
+
 **必填字段：**
 
 | 字段 | 说明 | 示例 |
 |------|------|------|
+| 所属产品 | 设备类型模板，决定 `productKey` | esp32-fall |
 | 设备名称 | 自定义，方便识别 | 客厅温湿度传感器 |
-| 设备标识（device_key） | **全局唯一**，ESP32 的 Client ID 和 Topic 都用它 | sensor-livingroom-01 |
+| 设备标识（device_key） | **同一产品内唯一**，ESP32 的 Client ID 和 Topic 都用它 | sensor-livingroom-01 |
 | 设备类型 | sensor / gateway / actuator | sensor |
 | MQTT Topic | 消息发布的 Topic 路径 | device/sensor-livingroom-01/data |
 | 描述 | 选填 | 温湿度传感器，DHT11 |
 
-创建成功后记下 `设备标识`（即 `device_key`），后续代码要用。
+创建成功后，平台会弹窗返回**一次性凭据**，请立即保存：
+
+| 凭据 | 用途 |
+|------|------|
+| MQTT 用户名 | `{productKey}.{deviceKey}`，如 `esp32-fall.sensor-livingroom-01` |
+| 设备密钥（deviceSecret） | MQTT 密码 |
+
+> **密钥仅在下发与重置时返回一次**，平台不提供二次查询。丢失只能通过
+> `POST /api/devices/{id}/reset-secret` 重置（旧密钥立即失效），或由管理员执行
+> `POST /api/devices/export-credentials` 批量重置导出。
 
 ---
 
@@ -67,8 +81,8 @@ const char* WIFI_PASSWORD = "你的WiFi密码";
 // 查看方法：Windows 命令行执行 ipconfig，找 IPv4 地址
 const char* MQTT_SERVER   = "192.168.1.57";  // ← 替换为你的电脑 IP
 const int   MQTT_PORT     = 1883;
-const char* MQTT_USER     = "admin";
-const char* MQTT_PASS     = "public";
+const char* MQTT_USER     = "esp32-fall.sensor-livingroom-01";  // {productKey}.{deviceKey}
+const char* MQTT_PASS     = "创建设备时返回的 deviceSecret";
 ```
 
 ### 4.2 部署到服务器（ESP32  anywhere）
@@ -121,8 +135,8 @@ const char* WIFI_PASSWORD = "你的WiFi密码";
 // 部署到服务器：填服务器公网 IP 或域名
 const char* MQTT_SERVER   = "192.168.1.57";
 const int   MQTT_PORT     = 1883;
-const char* MQTT_USER     = "admin";
-const char* MQTT_PASS     = "public";
+const char* MQTT_USER     = "esp32-fall.sensor-livingroom-01";  // {productKey}.{deviceKey}
+const char* MQTT_PASS     = "创建设备时返回的 deviceSecret";
 
 // ==================== 设备信息 ====================
 // 必须与前端创建设备时的 device_key 完全一致
@@ -293,6 +307,15 @@ void loop() {
 }
 ```
 
+### 4.4 凭据来源与校验规则
+
+- MQTT 用户名固定为 `{productKey}.{deviceKey}`，密码为该设备的 `deviceSecret`
+- 设备接入由 EMQX 回调后端 `/api/internal/emqx/auth` 校验：产品须为 `ENABLED`、设备须属于该产品且 `enabled=1`、密码哈希匹配
+- 主题授权由 `/api/internal/emqx/acl` 裁决：设备只能发布/订阅自己 `device/{deviceKey}/**` 下的主题，且不能发布到自己的 `cmd/`（防止伪造下行指令）
+- 双轨期（`ACCESS_CONTROL_ENFORCE_AUTH=false`）回调一律放行，存量设备仍可用老账号接入；
+  全部设备刷机完成后须置为 `true`，操作见《存量设备凭据迁移手册》（`scripts/migrate-device-secrets.md`）
+- 后端自身连接 Broker 使用平台账号：用户名固定 `PLATFORM`，密码为 `.env` 中的 `PLATFORM_SECRET`
+
 ---
 
 ## 5. Topic 规范
@@ -359,18 +382,21 @@ MQTT Broker：localhost:1883
 1. 打开 http://localhost:3000，登录（admin / admin123）
 2. 点击左侧「设备管理」→「创建设备」
 3. 填写：
+   - 所属产品：`esp32-fall`（若无产品，先用 admin 调 `POST /api/products` 创建）
    - 设备名称：客厅温湿度
    - 设备标识：`sensor-livingroom-01`
    - 设备类型：sensor
    - Topic：`device/sensor-livingroom-01/data`
-4. 点击「创建设备」
+4. 点击「创建设备」，弹窗会显示一次性凭据
+5. 复制保存 `MQTT 用户名` 与 `设备密钥`（关闭弹窗后无法再次查看）
 
 ### 7.3 烧录 ESP32
 
 1. 将第 4 节代码中的 WiFi 和 MQTT_SERVER 修改为你实际的网络 IP
 2. 将 `DEVICE_KEY` 改为与前端一致的 `sensor-livingroom-01`
-3. 编译烧录到 ESP32
-4. 打开串口监视器（115200 波特率），观察连接日志
+3. 将 `MQTT_USER` / `MQTT_PASS` 改为上一步保存的凭据
+4. 编译烧录到 ESP32
+5. 打开串口监视器（115200 波特率），观察连接日志
 
 ### 7.4 验证数据
 
@@ -406,7 +432,14 @@ MQTT Broker：localhost:1883
 | 8083 | MQTT over WebSocket（前端实时消息） |
 | 18083 | EMQX Dashboard（管理后台，初始账号 `admin` / `public`） |
 
-> **重要**：EMQX 5 默认**不启用认证**（允许匿名接入）。`MQTT_USERNAME` / `MQTT_PASSWORD`（`admin` / `public`）仅由后端连接时透传，Broker 侧未强制校验。生产环境请登录 Dashboard（`http://<服务器IP>:18083`）→ Access Control → Authentication，启用 **Password-Based**（内置数据库）认证，创建 `admin` 账号，并在 `.env` 中同步 `MQTT_USERNAME` / `MQTT_PASSWORD` 后重启后端。
+> **重要**：EMQX 5 默认**不启用认证**（允许匿名接入），但本项目的认证与授权由 `emqx-init` 服务自动下发：
+> 它通过 EMQX REST API 配置 HTTP 认证源（回调后端 `/api/internal/emqx/auth`）与 HTTP 授权源
+> （回调 `/api/internal/emqx/acl`），并把未匹配时的默认策略设为 `deny`。
+>
+> - 后端自身连接 Broker 使用平台账号：用户名固定 `PLATFORM`，密码为 `.env` 的 `PLATFORM_SECRET`
+> - 设备使用一机一密账号：`{productKey}.{deviceKey}` / `deviceSecret`
+> - 迁移期由 `.env` 的 `ACCESS_CONTROL_ENFORCE_AUTH=false` 放行全部回调，切换步骤见《存量设备凭据迁移手册》
+> - 确认回调已生效：`docker logs mqtt-emqx-init` 应输出「EMQX 认证与授权配置完成」
 
 启动 / 查看 EMQX：
 
@@ -499,7 +532,7 @@ server {
 |--------|------|
 | WiFi 是否连接 | 串口监视器查看 IP 地址 |
 | Broker 地址是否正确 | 用电脑 `telnet <IP> 1883` 测试端口通断 |
-| 用户名密码是否正确 | 确认是 `admin` / `public` |
+| 用户名密码是否正确 | 用创建设备时返回的 `{productKey}.{deviceKey}` / `deviceSecret`；老账号 `admin`/`public` 仅在双轨期可用 |
 | device_key 是否已注册 | 前端「设备管理」查看 |
 | 防火墙是否放行 | 服务器 `ufw status` 或 `iptables -L` |
 
