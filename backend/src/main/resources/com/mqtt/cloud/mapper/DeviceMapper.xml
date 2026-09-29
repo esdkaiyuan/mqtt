@@ -15,6 +15,45 @@
           AND deleted = 0
     </select>
 
+    <select id="findByDeviceKeys" resultType="com.mqtt.cloud.entity.Device">
+        SELECT id, product_id, device_name, device_key, device_type, topic, description,
+               owner_id, status, last_seen, enabled, metadata, created_at, updated_at, deleted
+        FROM device
+        WHERE deleted = 0
+          AND device_key IN
+        <foreach collection="keys" item="key" open="(" separator="," close=")">
+            #{key}
+        </foreach>
+    </select>
+
+    <!-- 摄取管线按批聚合后一次提交：CASE 分支逐行赋值，避免每设备一条 UPDATE。
+         updated_at 由表的 ON UPDATE CURRENT_TIMESTAMP 维护，此处不显式赋值。 -->
+    <update id="updateStatusBatch">
+        UPDATE device
+        SET status = CASE id
+            <foreach collection="list" item="d">WHEN #{d.id} THEN #{d.status,jdbcType=VARCHAR}</foreach>
+            END,
+            last_seen = CASE id
+            <foreach collection="list" item="d">WHEN #{d.id} THEN #{d.lastSeen,jdbcType=TIMESTAMP}</foreach>
+            END
+        WHERE deleted = 0
+          AND id IN
+        <foreach collection="list" item="d" open="(" separator="," close=")">#{d.id}</foreach>
+    </update>
+
+    <!-- 时间戳守卫：仅当现有 last_seen 不晚于本次事件时间才更新，
+         避免共享订阅跨副本乱序时旧事件覆盖新状态。返回 0 表示事件已过期，调用方丢弃。
+         updated_at 由表的 ON UPDATE CURRENT_TIMESTAMP 维护，此处不显式赋值。 -->
+    <update id="updateStatusGuarded">
+        UPDATE device
+        SET status = #{status},
+            last_seen = CASE WHEN #{status} = 'ONLINE' THEN #{eventTime}
+                             ELSE last_seen END
+        WHERE id = #{deviceId}
+          AND deleted = 0
+          AND (last_seen IS NULL OR last_seen &lt;= #{eventTime})
+    </update>
+
     <select id="findByOwnerId" resultType="com.mqtt.cloud.entity.Device">
         SELECT <include refid="baseColumns"/>
         FROM device

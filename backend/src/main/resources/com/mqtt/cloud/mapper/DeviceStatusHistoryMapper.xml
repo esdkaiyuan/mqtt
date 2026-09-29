@@ -24,4 +24,13 @@
         ORDER BY timestamp DESC
     </select>
 
+    <!-- 状态变更历史的批量写入：仅状态真正变化时由摄取管线调用 -->
+    <insert id="insertBatch">
+        INSERT INTO device_status_history (device_id, status, timestamp)
+        VALUES
+        <foreach collection="list" item="s" separator=",">
+            (#{s.deviceId}, #{s.status}, #{s.timestamp,jdbcType=TIMESTAMP})
+        </foreach>
+    </insert>
+
 </mapper>

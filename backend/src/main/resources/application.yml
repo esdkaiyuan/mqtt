@@ -112,6 +112,25 @@ app:
     direct-frontend-enabled: ${DIRECT_FRONTEND_ENABLED:false}
     # SSE 连接超时（毫秒），0 表示不超时
     stream-timeout-ms: ${STREAM_TIMEOUT_MS:0}
+  # 上行摄取管线：回调线程只入队，落库与下游分发在 worker 线程完成
+  ingest:
+    # false 时回退为回调线程同步落库（仅用于故障回滚）
+    enabled: ${INGEST_ENABLED:true}
+    # 单批最大条数
+    batch-size: ${INGEST_BATCH_SIZE:500}
+    # 攒批最长等待（毫秒），与 batch-size 先到者触发 flush
+    flush-interval-ms: ${INGEST_FLUSH_INTERVAL_MS:200}
+    # 单 worker 队列容量，总容量 = queue-capacity * worker-count
+    queue-capacity: ${INGEST_QUEUE_CAPACITY:20000}
+    # worker 数，同时决定 deviceKey 的路由分片数
+    worker-count: ${INGEST_WORKER_COUNT:4}
+    # 入队等待上限（毫秒），超时视为溢出
+    offer-timeout-ms: ${INGEST_OFFER_TIMEOUT_MS:50}
+    # 落库失败重试次数与退避基数（毫秒）
+    max-attempts: ${INGEST_MAX_ATTEMPTS:3}
+    retry-backoff-ms: ${INGEST_RETRY_BACKOFF_MS:500}
+    # 停机时排空队列的最长等待（毫秒）
+    shutdown-drain-timeout-ms: ${INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS:10000}
 
 # 日志配置
 logging:

@@ -3,7 +3,9 @@ package com.mqtt.cloud.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.mqtt.cloud.dto.request.HistoryQueryDTO;
 import com.mqtt.cloud.dto.request.MessageQueryDTO;
+import com.mqtt.cloud.entity.HistoryRecord;
 import com.mqtt.cloud.entity.Message;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -22,5 +24,13 @@ public interface MessageMapper extends BaseMapper<Message> {
 
     List<Message> findRecentMessages(@Param("limit") int limit);
 
+    /** 批量插入上行消息，供摄取管线攒批落库。 */
+    int insertBatch(@Param("list") List<Message> messages);
+
     IPage<Message> pageQuery(Page<Message> page, @Param("dto") MessageQueryDTO dto, @Param("userId") Long userId);
+
+    /** 历史查询改由 message 承载，签名与原 history_record 查询保持一致。 */
+    IPage<HistoryRecord> pageHistoryQuery(Page<HistoryRecord> page,
+                                          @Param("dto") HistoryQueryDTO dto,
+                                          @Param("userId") Long userId);
 }
