@@ -110,8 +110,10 @@ app:
   realtime:
     # true 时保留 EMQX 直连受限账号供未升级前端过渡
     direct-frontend-enabled: ${DIRECT_FRONTEND_ENABLED:false}
-    # SSE 连接超时（毫秒），0 表示不超时
-    stream-timeout-ms: ${STREAM_TIMEOUT_MS:0}
+    # SSE 连接超时（毫秒），0 表示不超时；默认 30 分钟，避免异常掉线的连接长期滞留
+    stream-timeout-ms: ${STREAM_TIMEOUT_MS:1800000}
+    # 服务端心跳间隔（毫秒），以注释帧穿透网关空闲超时并探测死连接；必须小于网关 proxy_read_timeout
+    heartbeat-interval-ms: ${STREAM_HEARTBEAT_INTERVAL_MS:15000}
   # 上行摄取管线：回调线程只入队，落库与下游分发在 worker 线程完成
   ingest:
     # false 时回退为回调线程同步落库（仅用于故障回滚）
