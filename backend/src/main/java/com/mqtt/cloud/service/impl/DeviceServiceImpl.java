@@ -161,6 +161,16 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     }
 
     @Override
+    public List<Device> getDevicesByOwner(Long ownerId) {
+        return this.baseMapper.findByOwnerId(ownerId);
+    }
+
+    @Override
+    public List<Device> findTimeoutDevices(int timeoutMinutes) {
+        return this.baseMapper.findTimeoutDevices(timeoutMinutes);
+    }
+
+    @Override
     public List<Device> getOnlineDevices(Long ownerId) {
         return this.baseMapper.findOnlineDevices(ownerId);
     }

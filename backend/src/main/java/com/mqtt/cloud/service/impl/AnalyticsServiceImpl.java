@@ -62,6 +62,11 @@ public class AnalyticsServiceImpl implements AnalyticsService {
     }
 
     @Override
+    public List<Map<String, Object>> getMessageTrendByDay(int days) {
+        return analyticsMapper.countMessagesByDay(days);
+    }
+
+    @Override
     public Map<String, Object> getOverviewStats(Long userId) {
         List<Device> devices = deviceMapper.findByOwnerId(userId);
 

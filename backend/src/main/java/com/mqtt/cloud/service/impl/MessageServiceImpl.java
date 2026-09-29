@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 消息服务实现类
@@ -64,6 +65,11 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
     public IPage<Message> getMessages(MessageQueryDTO dto, Long userId) {
         Page<Message> page = new Page<>(dto.getPageNum(), dto.getPageSize());
         return this.baseMapper.pageQuery(page, dto, userId);
+    }
+
+    @Override
+    public List<Message> getRecentMessages(int limit) {
+        return this.baseMapper.findRecentMessages(limit);
     }
 
     @Override

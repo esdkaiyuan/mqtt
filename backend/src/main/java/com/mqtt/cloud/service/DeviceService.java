@@ -33,6 +33,12 @@ public interface DeviceService extends IService<Device> {
 
     Device getDeviceByKey(String deviceKey);
 
+    /** 某用户名下的全部设备（不做分页，供统计与开放 API 使用）。 */
+    List<Device> getDevicesByOwner(Long ownerId);
+
+    /** 巡检用：最近心跳早于 {@code timeoutMinutes} 分钟的在线设备。 */
+    List<Device> findTimeoutDevices(int timeoutMinutes);
+
     List<Device> getOnlineDevices();
 
     List<Device> getOnlineDevices(Long ownerId);

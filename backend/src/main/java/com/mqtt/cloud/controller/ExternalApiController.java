@@ -8,7 +8,6 @@ import com.mqtt.cloud.dto.request.SendCommandRequest;
 import com.mqtt.cloud.entity.ApiKey;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.filter.UserPrincipal;
-import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mqtt.MqttClientManager;
 import com.mqtt.cloud.service.ApiKeyService;
 import com.mqtt.cloud.service.DeviceService;
@@ -40,7 +39,6 @@ public class ExternalApiController {
 
     private final ApiKeyService apiKeyService;
     private final DeviceService deviceService;
-    private final DeviceMapper deviceMapper;
     private final MqttClientManager mqttClientManager;
 
     @Operation(summary = "外部-查询设备列表", description = "返回密钥所属用户的名下设备列表；传入 deviceKey 时精确返回单个设备")
@@ -52,7 +50,7 @@ public class ExternalApiController {
             return Result.success(List.of(toDeviceMap(requireOwnedDevice(deviceKey, userId))));
         }
 
-        List<Map<String, Object>> devices = deviceMapper.findByOwnerId(userId).stream()
+        List<Map<String, Object>> devices = deviceService.getDevicesByOwner(userId).stream()
                 .map(this::toDeviceMap)
                 .toList();
         return Result.success(devices);
@@ -106,7 +104,7 @@ public class ExternalApiController {
     @GetMapping("/stats")
     public Result<Map<String, Object>> getStats() {
         UserPrincipal principal = SecurityUtils.requirePrincipal();
-        List<Device> devices = deviceMapper.findByOwnerId(principal.getUserId());
+        List<Device> devices = deviceService.getDevicesByOwner(principal.getUserId());
         long onlineDevices = devices.stream().filter(d -> "ONLINE".equals(d.getStatus())).count();
 
         ApiKey apiKey = principal.getApiKeyId() != null ? apiKeyService.getById(principal.getApiKeyId()) : null;

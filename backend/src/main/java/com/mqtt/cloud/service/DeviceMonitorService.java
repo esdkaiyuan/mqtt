@@ -2,7 +2,6 @@ package com.mqtt.cloud.service;
 
 import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.entity.Device;
-import com.mqtt.cloud.mapper.DeviceMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,8 +30,7 @@ public class DeviceMonitorService {
     @Scheduled(fixedRateString = "${app.device.status-check-interval:60000}")
     public void checkDeviceOnlineStatus() {
         int timeoutMinutes = Math.max(1, (int) Math.ceil(statusTimeoutMillis / 60000.0));
-        List<Device> timeoutDevices = ((DeviceMapper) deviceService.getBaseMapper())
-                .findTimeoutDevices(timeoutMinutes);
+        List<Device> timeoutDevices = deviceService.findTimeoutDevices(timeoutMinutes);
 
         for (Device device : timeoutDevices) {
             deviceService.updateDeviceStatus(device.getId(), DeviceStatusValue.OFFLINE);

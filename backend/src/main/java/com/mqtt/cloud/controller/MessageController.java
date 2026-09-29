@@ -6,8 +6,7 @@ import com.mqtt.cloud.common.security.SecurityUtils;
 import com.mqtt.cloud.dto.request.MessageQueryDTO;
 import com.mqtt.cloud.dto.request.PublishMessageDTO;
 import com.mqtt.cloud.entity.Message;
-import com.mqtt.cloud.mapper.AnalyticsMapper;
-import com.mqtt.cloud.mapper.MessageMapper;
+import com.mqtt.cloud.service.AnalyticsService;
 import com.mqtt.cloud.service.MessageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -29,15 +28,11 @@ public class MessageController {
     private static final int MAX_RECENT_LIMIT = 100;
 
     private final MessageService messageService;
-    private final MessageMapper messageMapper;
-    private final AnalyticsMapper analyticsMapper;
+    private final AnalyticsService analyticsService;
 
-    public MessageController(MessageService messageService,
-                             MessageMapper messageMapper,
-                             AnalyticsMapper analyticsMapper) {
+    public MessageController(MessageService messageService, AnalyticsService analyticsService) {
         this.messageService = messageService;
-        this.messageMapper = messageMapper;
-        this.analyticsMapper = analyticsMapper;
+        this.analyticsService = analyticsService;
     }
 
     @Operation(summary = "发布消息", description = "向指定 Topic 发布 MQTT 消息并落库，发布失败返回 MQTT 相关错误码")
@@ -57,13 +52,13 @@ public class MessageController {
     public Result<List<Message>> getRecentMessages(
             @Parameter(description = "返回条数，默认50，最大100") @RequestParam(defaultValue = "50") Integer limit) {
         int safeLimit = Math.min(Math.max(limit, 1), MAX_RECENT_LIMIT);
-        return Result.success(messageMapper.findRecentMessages(safeLimit));
+        return Result.success(messageService.getRecentMessages(safeLimit));
     }
 
     @Operation(summary = "消息趋势统计", description = "按天统计消息量，days 默认 7 天")
     @GetMapping("/trend")
     public Result<List<Map<String, Object>>> getMessageTrend(
             @Parameter(description = "统计天数，默认7") @RequestParam(defaultValue = "7") Integer days) {
-        return Result.success(analyticsMapper.countMessagesByDay(days));
+        return Result.success(analyticsService.getMessageTrendByDay(days));
     }
 }
