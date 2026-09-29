@@ -19,6 +19,8 @@
     <properties>
         <java.version>17</java.version>
         <mybatis-plus.version>3.5.7</mybatis-plus.version>
+        <!-- 默认排除压测用例；执行压测时用 -Dloadtest.excludedGroups=none 打开 -->
+        <loadtest.excludedGroups>loadtest</loadtest.excludedGroups>
     </properties>
 
     <dependencies>
@@ -123,7 +125,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <excludedGroups>loadtest</excludedGroups>
+                    <excludedGroups>${loadtest.excludedGroups}</excludedGroups>
                 </configuration>
             </plugin>
             <plugin>

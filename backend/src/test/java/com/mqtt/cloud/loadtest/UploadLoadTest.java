@@ -36,12 +36,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 上行链路压测工具（默认不执行，surefire 已排除 loadtest 标签）。
  * <p>
- * 运行方式：
+ * 运行方式（surefire 默认排除 loadtest 组，需显式关闭排除）：
  * <pre>
- * mvn -B test -Dtest=UploadLoadTest -Dgroups=loadtest \
+ * mvn -B test -Dtest=UploadLoadTest -Dloadtest.excludedGroups=none \
+ *     -Dloadtest.brokerUrl=tcp://localhost:1883 \
  *     -Dloadtest.devices=100 -Dloadtest.messagesPerDevice=100
  * </pre>
- * 压测走真实设备一机一密凭据（平台账号无 device/{key}/data 发布权限），因此同时覆盖认证路径。
+ * 压测走真实设备一机一密凭据（平台账号无 device/{key}/data 发布权限）。
+ * <p>
+ * 注意 {@code loadtest.brokerUrl} 必须指向 EMQX 实际映射端口（默认 1883，由 .env 的
+ * {@code MQTT_PORT} 决定）：若宿主机另有 Broker 占用该端口，用默认值会把消息发进错误的
+ * Broker，表现为"发布全部成功、后端零接收"。
+ * <p>
+ * 批量应小于 EMQX 订阅端 {@code mqueue} 上限（默认 1000），否则超出部分会在 Broker 侧被静默丢弃。
+ * <p>
+ * 覆盖范围取决于 EMQX 是否已下发 HTTP 认证源：已下发时同时压测认证回调，未下发（如
+ * {@code emqx-init} 未执行）则认证链路不被触发。
  */
 @Tag("loadtest")
 class UploadLoadTest {
@@ -57,6 +67,8 @@ class UploadLoadTest {
     private final int messagesPerDevice = Integer.getInteger("loadtest.messagesPerDevice", 100);
     private final int publishers = Integer.getInteger("loadtest.publishers", 16);
     private final int payloadBytes = Integer.getInteger("loadtest.payloadBytes", 256);
+    /** 发布结束后等待后端排空消息再清理设备；否则设备先被逻辑删除，在途消息会因“未注册设备”被丢弃 */
+    private final int drainWaitMs = Integer.getInteger("loadtest.drainWaitMs", 30000);
 
     private final RestTemplate rest = new RestTemplate();
 
@@ -103,6 +115,9 @@ class UploadLoadTest {
         double p99Ms = latencies.isEmpty() ? 0.0 : percentile(latencies, 0.99) / 1_000_000.0;
         double avgMs = latencies.isEmpty() ? 0.0
                 : latencies.stream().mapToLong(Long::longValue).average().orElse(0.0) / 1_000_000.0;
+
+        System.out.printf("等待后端排空在途消息 %d ms 后再清理设备...%n", drainWaitMs);
+        Thread.sleep(drainWaitMs);
 
         cleanup(token, devices);
 
@@ -230,11 +245,18 @@ class UploadLoadTest {
 
     private byte[] buildPayload() {
         Random random = new Random(42L);
-        StringBuilder sb = new StringBuilder(payloadBytes);
         String alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        for (int i = 0; i < payloadBytes; i++) {
+        // 真实设备按产品 payload_format=JSON 上报，且 history_record.payload 为 JSON 列：
+        // 载荷必须是合法 JSON，否则历史留存会以 Invalid JSON text 失败
+        String prefix = "{\"data\":\"";
+        String suffix = "\"}";
+        int dataLength = Math.max(1, payloadBytes - prefix.length() - suffix.length());
+        StringBuilder sb = new StringBuilder(payloadBytes);
+        sb.append(prefix);
+        for (int i = 0; i < dataLength; i++) {
             sb.append(alphabet.charAt(random.nextInt(alphabet.length())));
         }
+        sb.append(suffix);
         return sb.toString().getBytes(StandardCharsets.UTF_8);
     }
 
