@@ -25,6 +25,12 @@ public class AccessControlProperties {
     private String frontendSecret;
 
     /**
+     * 认证元数据缓存 TTL（秒）。0 表示关闭缓存，认证每次回源查库。
+     * <p>只缓存元数据、不缓存明文与比较结果，BCrypt 校验仍逐次计算。
+     */
+    private long cacheTtlSeconds = 60;
+
+    /**
      * 迁移期双轨运行会放宽认证与授权，必须在启动日志中显式提示，避免长期遗忘。
      */
     @PostConstruct

@@ -15,12 +15,14 @@ import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.DeviceMapper;
+import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
 import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -28,6 +30,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> implements DeviceService {
@@ -36,6 +39,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     private final DeviceCredentialService deviceCredentialService;
     private final DeviceSecretService deviceSecretService;
     private final ProductService productService;
+    private final DeviceAuthCacheService authCacheService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -108,6 +112,20 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
                .set(Device::getDeleted, 1)
                .set(Device::getStatus, DeviceStatusValue.OFFLINE);
         this.baseMapper.update(null, wrapper);
+        evictAuthCache(device);
+    }
+
+    /**
+     * 设备被删除后其认证元数据不再有效，主动失效避免 TTL 内旧记录继续放行。
+     * 失效失败不应影响删除本身：捕获异常并依赖 TTL 自然过期。
+     */
+    private void evictAuthCache(Device device) {
+        try {
+            Product product = productService.requireById(device.getProductId());
+            authCacheService.evict(product.getProductKey(), device.getDeviceKey());
+        } catch (Exception e) {
+            log.warn("删除设备后失效认证缓存失败，将依赖 TTL 自然过期: deviceId={}", device.getId(), e);
+        }
     }
 
     @Override

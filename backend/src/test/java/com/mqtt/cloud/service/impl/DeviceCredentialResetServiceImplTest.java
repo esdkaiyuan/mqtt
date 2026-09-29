@@ -4,6 +4,7 @@ import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.DeviceMapper;
+import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.ProductService;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,8 @@ class DeviceCredentialResetServiceImplTest {
     private DeviceMapper deviceMapper;
     @Mock
     private ProductService productService;
+    @Mock
+    private DeviceAuthCacheService authCacheService;
 
     private final DeviceSecretService deviceSecretService = new DeviceSecretServiceImpl();
 
@@ -34,16 +37,17 @@ class DeviceCredentialResetServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new DeviceCredentialResetServiceImpl(deviceMapper, productService, deviceSecretService);
+        service = new DeviceCredentialResetServiceImpl(deviceMapper, productService, deviceSecretService, authCacheService);
     }
 
     @Test
-    void resetSecret_should_store_hash_and_return_plaintext_once() {
+    void resetSecret_should_store_hash_return_plaintext_once_and_evict_cache() {
         Device device = new Device();
         device.setId(1L);
         device.setDeviceKey("sensor-01");
         device.setProductId(10L);
         when(deviceMapper.selectById(1L)).thenReturn(device);
+        when(productService.requireById(10L)).thenReturn(product("esp32-fall"));
 
         String plaintext = service.resetSecret(1L);
 
@@ -54,6 +58,8 @@ class DeviceCredentialResetServiceImplTest {
         assertThat(saved.getDeviceSecretHash()).startsWith("$2");
         assertThat(saved.getSecretUpdatedAt()).isNotNull();
         assertThat(deviceSecretService.matches(plaintext, saved.getDeviceSecretHash())).isTrue();
+        // 轮换后必须立即失效，避免旧哈希在 TTL 内继续放行
+        verify(authCacheService).evict("esp32-fall", "sensor-01");
     }
 
     @Test
@@ -70,7 +76,6 @@ class DeviceCredentialResetServiceImplTest {
         device.setId(7L);
         device.setDeviceKey("sensor-01");
         device.setProductId(10L);
-        when(deviceMapper.selectById(7L)).thenReturn(device);
         when(productService.requireById(10L)).thenReturn(product("esp32-fall"));
 
         List<String[]> rows = service.resetPage(List.of(device));
@@ -81,6 +86,7 @@ class DeviceCredentialResetServiceImplTest {
         assertThat(rows.get(0)[1]).isEqualTo("sensor-01");
         assertThat(rows.get(0)[2]).isEqualTo("esp32-fall.sensor-01");
         assertThat(rows.get(0)[3]).hasSize(32);
+        verify(authCacheService).evict("esp32-fall", "sensor-01");
     }
 
     private Product product(String key) {

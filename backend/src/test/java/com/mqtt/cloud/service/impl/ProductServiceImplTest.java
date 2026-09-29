@@ -4,6 +4,7 @@ import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.dto.request.ProductRequest;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.ProductMapper;
+import com.mqtt.cloud.service.DeviceAuthCacheService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -13,6 +14,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -23,6 +25,9 @@ class ProductServiceImplTest {
 
     @org.mockito.Mock
     private com.mqtt.cloud.mapper.DeviceMapper deviceMapper;
+
+    @Mock
+    private DeviceAuthCacheService authCacheService;
 
     @InjectMocks
     private ProductServiceImpl productService;
@@ -70,5 +75,31 @@ class ProductServiceImplTest {
         assertThatThrownBy(() -> productService.delete(9L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("该产品下存在设备");
+    }
+
+    @Test
+    void delete_should_evict_product_auth_cache() {
+        Product existing = new Product();
+        existing.setId(9L);
+        existing.setProductKey("esp32-fall");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(deviceMapper.selectCount(any())).thenReturn(0L);
+
+        productService.delete(9L);
+
+        verify(authCacheService).evictProduct("esp32-fall");
+    }
+
+    @Test
+    void update_should_evict_old_product_key_when_key_changes() {
+        Product existing = new Product();
+        existing.setId(9L);
+        existing.setProductKey("old-key");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(productMapper.selectCount(any())).thenReturn(0L);
+
+        productService.update(9L, request("new-key"));
+
+        verify(authCacheService).evictProduct("old-key");
     }
 }

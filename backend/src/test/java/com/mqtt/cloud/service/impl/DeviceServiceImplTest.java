@@ -1,12 +1,17 @@
 package com.mqtt.cloud.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.DeviceMapper;
+import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
 import com.mqtt.cloud.service.ProductService;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,14 +42,35 @@ class DeviceServiceImplTest {
     private ProductService productService;
     @Mock
     private DeviceMapper deviceMapper;
+    @Mock
+    private DeviceAuthCacheService authCacheService;
 
     private DeviceServiceImpl service;
 
     @BeforeEach
     void setUp() {
+        // LambdaUpdateWrapper 需要实体的 TableInfo；纯单测无 MyBatis 上下文，手动初始化
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Device.class);
         service = new DeviceServiceImpl(deviceStatusHistoryService, deviceCredentialService,
-                deviceSecretService, productService);
+                deviceSecretService, productService, authCacheService);
         ReflectionTestUtils.setField(service, "baseMapper", deviceMapper);
+    }
+
+    @Test
+    void deleteDevice_should_evict_auth_cache() {
+        Device device = new Device();
+        device.setId(1L);
+        device.setDeviceKey("sensor-01");
+        device.setProductId(10L);
+        when(deviceMapper.selectById(1L)).thenReturn(device);
+        Product product = new Product();
+        product.setId(10L);
+        product.setProductKey("esp32-fall");
+        when(productService.requireById(10L)).thenReturn(product);
+
+        service.deleteDevice(1L);
+
+        verify(authCacheService).evict("esp32-fall", "sensor-01");
     }
 
     @Test

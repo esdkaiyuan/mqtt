@@ -109,6 +109,8 @@ app:
     platform-secret: ${PLATFORM_SECRET:}
     # 迁移期前端直连 Broker 的受限账号密码（配合 realtime.direct-frontend-enabled）
     frontend-secret: ${FRONTEND_SECRET:}
+    # 认证元数据缓存 TTL（秒）；0 关闭缓存。主动失效未覆盖时，密钥重置后最长该时长内旧凭据仍可能通过认证
+    cache-ttl-seconds: ${ACCESS_CONTROL_CACHE_TTL_SECONDS:60}
   realtime:
     # true 时保留 EMQX 直连受限账号供未升级前端过渡
     direct-frontend-enabled: ${DIRECT_FRONTEND_ENABLED:false}

@@ -7,6 +7,7 @@ import com.mqtt.cloud.dto.request.ProductRequest;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.ProductMapper;
+import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,8 @@ public class ProductServiceImpl implements ProductService {
     private final ProductMapper productMapper;
 
     private final DeviceMapper deviceMapper;
+
+    private final DeviceAuthCacheService authCacheService;
 
     @Override
     @Transactional
@@ -67,6 +70,7 @@ public class ProductServiceImpl implements ProductService {
         if (existsByKey(request.getProductKey(), id)) {
             throw new BusinessException(ResultCode.PRODUCT_KEY_EXISTS);
         }
+        String previousKey = existing.getProductKey();
         existing.setProductKey(request.getProductKey());
         existing.setProductName(request.getProductName());
         existing.setDescription(request.getDescription());
@@ -78,13 +82,17 @@ public class ProductServiceImpl implements ProductService {
         }
         existing.setMetadataSchema(request.getMetadataSchema());
         productMapper.updateById(existing);
+        // 产品标识变更会改变用户名与缓存键，旧键下的元数据不再可达，主动清理
+        if (!previousKey.equals(existing.getProductKey())) {
+            authCacheService.evictProduct(previousKey);
+        }
         return existing;
     }
 
     @Override
     @Transactional
     public void delete(Long id) {
-        requireById(id);
+        Product product = requireById(id);
         long deviceCount = deviceMapper.selectCount(
                 Wrappers.<com.mqtt.cloud.entity.Device>lambdaQuery()
                         .eq(com.mqtt.cloud.entity.Device::getProductId, id));
@@ -92,6 +100,8 @@ public class ProductServiceImpl implements ProductService {
             throw new BusinessException(ResultCode.PRODUCT_HAS_DEVICES);
         }
         productMapper.deleteById(id);
+        // 产品停用/删除后其下设备不应再通过认证；停用走状态变更时同样需要失效
+        authCacheService.evictProduct(product.getProductKey());
     }
 
     @Override
