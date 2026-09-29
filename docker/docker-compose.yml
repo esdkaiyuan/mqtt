@@ -23,11 +23,12 @@ services:
     image: redis:7-alpine
     container_name: mqtt-redis
     restart: always
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}"]
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:-}", "--appendonly", "yes"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      # 仅绑本机：Redis 无 TLS，不对外暴露；后端与 emqx-init 走容器网络直连
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -102,6 +103,9 @@ services:
       DIRECT_FRONTEND_ENABLED: ${DIRECT_FRONTEND_ENABLED:-true}
       STREAM_TIMEOUT_MS: ${STREAM_TIMEOUT_MS:-1800000}
       STREAM_HEARTBEAT_INTERVAL_MS: ${STREAM_HEARTBEAT_INTERVAL_MS:-15000}
+      # 实时通道跨副本广播：多副本必须置 true；单副本保持 false（本地扇出）
+      REALTIME_BROADCAST_ENABLED: ${REALTIME_BROADCAST_ENABLED:-false}
+      REALTIME_BROADCAST_CHANNEL: ${REALTIME_BROADCAST_CHANNEL:-mqtt:realtime:device-data}
       # 上行摄取管线开关；置 false 回退到同步处理（仅用于故障回滚，非长期运行形态）
       INGEST_ENABLED: ${INGEST_ENABLED:-true}
       # 停机排空摄取队列的最长等待（毫秒）。必须小于 stop_grace_period(30s)，

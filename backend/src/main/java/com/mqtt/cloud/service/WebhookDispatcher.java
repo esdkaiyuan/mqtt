@@ -52,7 +52,13 @@ public class WebhookDispatcher {
      * 将设备事件异步分发给所有订阅了该事件的 Webhook。
      */
     public void dispatch(Long deviceId, String eventType, Device device, String payload) {
-        List<WebhookConfig> webhooks = webhookConfigService.getActiveWebhooksForDevice(device.getOwnerId(), deviceId);
+        dispatch(webhookConfigService.getActiveWebhooksForDevice(device.getOwnerId(), deviceId), eventType, device, payload);
+    }
+
+    /**
+     * 用调用方预先批量取好的 Webhook 列表分发，避免逐事件查询配置。
+     */
+    public void dispatch(List<WebhookConfig> webhooks, String eventType, Device device, String payload) {
         if (webhooks.isEmpty()) {
             return;
         }

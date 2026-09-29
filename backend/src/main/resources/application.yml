@@ -114,6 +114,9 @@ app:
     stream-timeout-ms: ${STREAM_TIMEOUT_MS:1800000}
     # 服务端心跳间隔（毫秒），以注释帧穿透网关空闲超时并探测死连接；必须小于网关 proxy_read_timeout
     heartbeat-interval-ms: ${STREAM_HEARTBEAT_INTERVAL_MS:15000}
+    # true：经 Redis Pub/Sub 跨副本广播（多副本必须为 true）；false：仅本副本内推送（单副本回退）
+    broadcast-enabled: ${REALTIME_BROADCAST_ENABLED:false}
+    broadcast-channel: ${REALTIME_BROADCAST_CHANNEL:mqtt:realtime:device-data}
   # 上行摄取管线：回调线程只入队，落库与下游分发在 worker 线程完成
   ingest:
     # false 时回退为回调线程同步落库（仅用于故障回滚）

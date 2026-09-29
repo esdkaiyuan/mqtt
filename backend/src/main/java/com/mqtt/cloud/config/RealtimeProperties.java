@@ -17,4 +17,10 @@ public class RealtimeProperties {
 
     /** 服务端心跳间隔（毫秒），以 SSE 注释帧穿透网关空闲超时并探测死连接；0 表示关闭心跳 */
     private long heartbeatIntervalMs = 15_000L;
+
+    /** 是否经 Redis Pub/Sub 跨副本广播：多副本必须为 true；false 时仅本副本内推送（单副本回退） */
+    private boolean broadcastEnabled = false;
+
+    /** 跨副本广播的 Redis 频道名 */
+    private String broadcastChannel = "mqtt:realtime:device-data";
 }
