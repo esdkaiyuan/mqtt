@@ -4,6 +4,7 @@ import com.mqtt.cloud.common.security.RestSecurityExceptionHandler;
 import com.mqtt.cloud.filter.ApiKeyAuthFilter;
 import com.mqtt.cloud.filter.InternalTokenFilter;
 import com.mqtt.cloud.filter.JwtAuthenticationFilter;
+import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -99,6 +100,11 @@ public class SecurityConfig {
                     .authenticationEntryPoint(securityExceptionHandler)
                     .accessDeniedHandler(securityExceptionHandler))
             .authorizeHttpRequests(auth -> auth
+                    // SSE 等异步请求在完成/超时/客户端断开时会发生 ASYNC 二次派发，
+                    // 而 JWT 过滤器不处理 ASYNC 派发，此时 SecurityContext 为空，
+                    // 若不放行会抛 AccessDeniedException，并在已提交的响应上写错误响应而刷 ERROR 日志。
+                    // 安全性不受影响：首次 REQUEST 派发已按下列规则完成鉴权。
+                    .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                     // 内部回调：不参与 JWT 鉴权，由 InternalTokenFilter 校验共享令牌
                     .requestMatchers("/internal/**").permitAll()
