@@ -58,4 +58,42 @@
         ORDER BY m.sent_at DESC
     </select>
 
+    <!-- 历史查询：由 message 承载（direction=SUBSCRIBE 且 topic 以 /data 结尾），
+         对应原 history_record 的写入语义；sent_at 别名 timestamp、received_at 别名 created_at -->
+    <select id="pageHistoryQuery" resultType="com.mqtt.cloud.entity.HistoryRecord">
+        SELECT m.id, m.device_id, m.topic, m.payload,
+               m.sent_at   AS timestamp,
+               m.received_at AS created_at,
+               d.device_name AS device_name
+        FROM message m
+        LEFT JOIN device d ON m.device_id = d.id AND d.deleted = 0
+        WHERE m.direction = 'SUBSCRIBE'
+          AND m.topic LIKE '%/data'
+          <if test="dto.deviceId != null">
+            AND m.device_id = #{dto.deviceId}
+          </if>
+          <if test="dto.topic != null and dto.topic != ''">
+            AND m.topic LIKE CONCAT('%', #{dto.topic}, '%')
+          </if>
+          <if test="dto.startTime != null and dto.startTime != ''">
+            AND m.sent_at &gt;= #{dto.startTime}
+          </if>
+          <if test="dto.endTime != null and dto.endTime != ''">
+            AND m.sent_at &lt;= #{dto.endTime}
+          </if>
+          <if test="userId != null">
+            AND d.owner_id = #{userId}
+          </if>
+        ORDER BY m.sent_at DESC
+    </select>
+
+    <!-- 摄取管线批量落库；received_at 依赖表的 DEFAULT CURRENT_TIMESTAMP，sent_at 取消息到达时刻 -->
+    <insert id="insertBatch">
+        INSERT INTO message (topic, direction, payload, qos, device_id, sent_at)
+        VALUES
+        <foreach collection="list" item="m" separator=",">
+            (#{m.topic}, #{m.direction}, #{m.payload}, #{m.qos}, #{m.deviceId}, #{m.sentAt,jdbcType=TIMESTAMP})
+        </foreach>
+    </insert>
+
 </mapper>

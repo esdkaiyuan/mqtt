@@ -3,8 +3,10 @@ package com.mqtt.cloud.mqtt;
 import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.ingest.IngestPipeline;
+import com.mqtt.cloud.ingest.IngestProperties;
+import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.service.DeviceService;
-import com.mqtt.cloud.service.HistoryService;
 import com.mqtt.cloud.service.MessageService;
 import com.mqtt.cloud.service.RealtimeStreamService;
 import com.mqtt.cloud.service.WebhookDispatcher;
@@ -18,13 +20,16 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * MQTT 消息处理器
  * <p>
- * 订阅设备上行 Topic，完成设备状态刷新、消息落库、历史留存与 Webhook 事件分发。
+ * 默认路径只做「解析 Topic + 构造 {@link IngestRecord} + 入队」，DB 与 HTTP 操作全部交给
+ * {@link IngestPipeline} 的 worker 线程；{@code app.ingest.enabled=false} 时回退为同步处理。
  */
 @Slf4j
 @Component
@@ -42,9 +47,12 @@ public class MqttMessageHandler implements MqttCallback {
     private final MqttClientManager mqttClientManager;
     private final DeviceService deviceService;
     private final MessageService messageService;
-    private final HistoryService historyService;
     private final WebhookDispatcher webhookDispatcher;
     private final RealtimeStreamService realtimeStreamService;
+    private final IngestPipeline ingestPipeline;
+    private final IngestProperties ingestProperties;
+
+    private final AtomicBoolean legacyPathWarned = new AtomicBoolean(false);
 
     /**
      * 应用就绪后再连接 Broker，避免阻塞启动流程。
@@ -61,40 +69,52 @@ public class MqttMessageHandler implements MqttCallback {
     @Override
     public void messageArrived(String topic, MqttMessage mqttMessage) {
         String payload = new String(mqttMessage.getPayload(), StandardCharsets.UTF_8);
-        log.debug("收到 MQTT 消息: topic={}, payload={}", topic, payload);
-
         String[] parts = topic.split("/");
         if (parts.length < 3) {
             log.warn("忽略格式不正确的 Topic: {}", topic);
             return;
         }
-        String deviceKey = parts[1];
-        String messageType = parts[2];
+
+        IngestRecord record = new IngestRecord(
+                parts[1], topic, parts[2], payload, mqttMessage.getQos(), LocalDateTime.now());
+
+        if (!ingestProperties.isEnabled()) {
+            legacySyncHandle(record);
+            return;
+        }
+        ingestPipeline.submit(record);
+    }
+
+    /**
+     * 回退路径：同步处理，供 R1 出问题时即时回滚，仅当 {@code app.ingest.enabled=false} 时使用。
+     * 历史写入已在 R1-4 收敛到 {@code message} 表，此处不再写 {@code history_record}。
+     */
+    private void legacySyncHandle(IngestRecord record) {
+        if (legacyPathWarned.compareAndSet(false, true)) {
+            log.warn("app.ingest.enabled=false，上行消息走同步回退路径，仅用于故障回滚");
+        }
 
         Device device;
         try {
-            device = deviceService.getDeviceByKey(deviceKey);
+            device = deviceService.getDeviceByKey(record.deviceKey());
         } catch (BusinessException e) {
-            log.warn("收到未注册设备的消息: deviceKey={}, topic={}", deviceKey, topic);
+            log.warn("收到未注册设备的消息: deviceKey={}, topic={}", record.deviceKey(), record.topic());
             return;
         }
 
         try {
-            refreshDeviceStatus(device.getId(), messageType);
-            messageService.saveReceivedMessage(device.getId(), topic, payload, mqttMessage.getQos());
-            if (TOPIC_DATA.equals(messageType)) {
-                historyService.saveHistoryRecord(device.getId(), topic, payload);
-            }
-            webhookDispatcher.dispatch(device.getId(), resolveEventType(messageType), device, payload);
+            refreshDeviceStatus(device.getId(), record.messageType());
+            messageService.saveReceivedMessage(device.getId(), record.topic(), record.payload(), record.qos());
+            webhookDispatcher.dispatch(device.getId(), resolveEventType(record.messageType()), device, record.payload());
         } catch (Exception e) {
-            log.error("处理 MQTT 消息失败: topic={}", topic, e);
+            log.error("处理 MQTT 消息失败: topic={}", record.topic(), e);
         }
 
         // 实时通道推送与主处理链路隔离：单个 SSE 订阅者异常不得影响 MQTT 消息处理
         try {
-            realtimeStreamService.publish(device, topic, payload);
+            realtimeStreamService.publish(device, record.topic(), record.payload());
         } catch (Exception e) {
-            log.warn("推送实时数据失败: topic={}", topic, e);
+            log.warn("推送实时数据失败: topic={}", record.topic(), e);
         }
     }
 

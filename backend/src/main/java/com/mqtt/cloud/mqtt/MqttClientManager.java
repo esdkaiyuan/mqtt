@@ -1,10 +1,12 @@
 package com.mqtt.cloud.mqtt;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallback;
-import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.MqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
@@ -16,14 +18,17 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 /**
  * MQTT 客户端管理器
  * <p>
- * 全局只维护一个 MqttClient，发布与订阅共用同一连接：
+ * 全局只维护一个 MqttClient，发布与订阅共用同一连接。连接由后台监督线程负责建立与恢复：
  * <ul>
  *     <li>连接按需建立，Broker 不可用时不会阻断应用启动</li>
- *     <li>断线由 Paho 自动重连，重连成功后自动恢复订阅</li>
+ *     <li>连接失败按指数退避重试，直到成功（Paho 的 automaticReconnect 只覆盖“连上后断开”，
+ *         不覆盖首次连接失败，故此处自行监督）</li>
+ *     <li>连接丢失由回调立即唤醒监督线程，无需等待退避超时</li>
  *     <li>应用关闭时优雅断开并释放连接</li>
  * </ul>
  */
@@ -33,28 +38,38 @@ public class MqttClientManager {
 
     private final MqttProperties properties;
     private final Object lock = new Object();
+    private final Object reconnectSignal = new Object();
+
+    private final Counter connectAttempts;
+    private final Counter connectFailures;
 
     private MqttClient client;
     private volatile MqttCallback businessCallback;
     private volatile Map<String, Integer> subscriptions = Map.of();
     private volatile boolean shuttingDown = false;
+    private volatile Thread supervisor;
 
-    public MqttClientManager(MqttProperties properties) {
+    public MqttClientManager(MqttProperties properties, MeterRegistry meterRegistry) {
         this.properties = properties;
+        Gauge.builder("mqtt_connected", this, manager -> manager.isConnected() ? 1 : 0)
+                .description("MQTT 是否已连接：1 已连接 / 0 未连接")
+                .register(meterRegistry);
+        this.connectAttempts = Counter.builder("mqtt_connect_attempt_total")
+                .description("MQTT 连接尝试次数（含首次与重连）")
+                .register(meterRegistry);
+        this.connectFailures = Counter.builder("mqtt_connect_failure_total")
+                .description("MQTT 连接失败次数")
+                .register(meterRegistry);
     }
 
     /**
-     * 注册业务回调与订阅关系，并尝试建立连接。
-     * 连接失败只记录日志，后续发布或订阅时会自动重试。
+     * 注册业务回调与订阅关系，并启动连接监督线程。
+     * 连接失败只记录日志，监督线程会持续重试。
      */
     public void register(MqttCallback callback, Map<String, Integer> topicQos) {
         this.businessCallback = callback;
         this.subscriptions = Map.copyOf(new LinkedHashMap<>(topicQos));
-        try {
-            ensureConnected();
-        } catch (MqttException e) {
-            log.error("MQTT 初始连接失败，后续操作将自动重试: {}", e.getMessage());
-        }
+        startSupervisor();
     }
 
     public void publish(String topic, String payload, int qos) throws MqttException {
@@ -69,6 +84,70 @@ public class MqttClientManager {
     public boolean isConnected() {
         MqttClient current = this.client;
         return current != null && current.isConnected();
+    }
+
+    private void startSupervisor() {
+        synchronized (lock) {
+            if (shuttingDown || supervisor != null) {
+                return;
+            }
+            Thread thread = new Thread(this::supervise, "mqtt-connector");
+            thread.setDaemon(true);
+            supervisor = thread;
+            thread.start();
+        }
+    }
+
+    /**
+     * 连接监督：未连接时按指数退避重试，已连接时低频率巡检兜底。
+     */
+    private void supervise() {
+        int attempt = 0;
+        long delay = properties.getReconnectInitialDelayMs();
+        while (!shuttingDown) {
+            if (isConnected()) {
+                attempt = 0;
+                delay = properties.getReconnectInitialDelayMs();
+                awaitReconnectSignal(properties.getConnectedProbeIntervalMs());
+                continue;
+            }
+            attempt++;
+            try {
+                connectAttempts.increment();
+                ensureConnected();
+                log.info("MQTT 连接就绪: serverURI={}, 第 {} 次尝试", properties.getHost(), attempt);
+                attempt = 0;
+                delay = properties.getReconnectInitialDelayMs();
+            } catch (Exception e) {
+                connectFailures.increment();
+                if (!properties.isReconnect()) {
+                    log.error("MQTT 连接失败且 spring.mqtt.reconnect=false，放弃重连: {}", e.getMessage());
+                    return;
+                }
+                log.warn("MQTT 连接失败（第 {} 次尝试），{} ms 后重试: {}", attempt, delay, e.getMessage());
+                awaitReconnectSignal(delay);
+                delay = Math.min(delay * 2, properties.getReconnectMaxDelayMs());
+            }
+        }
+    }
+
+    private void awaitReconnectSignal(long millis) {
+        synchronized (reconnectSignal) {
+            if (shuttingDown) {
+                return;
+            }
+            try {
+                reconnectSignal.wait(millis);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void signalReconnect() {
+        synchronized (reconnectSignal) {
+            reconnectSignal.notifyAll();
+        }
     }
 
     private MqttClient ensureConnected() throws MqttException {
@@ -89,24 +168,13 @@ public class MqttClientManager {
 
     private MqttClient createClient() throws MqttException {
         String clientId = properties.getClientId() + "_" + UUID.randomUUID().toString().substring(0, 8);
-        MqttClient created = new MqttClient(properties.getHost(), clientId, new MemoryPersistence());
-        created.setCallback(new MqttCallbackExtended() {
-
-            @Override
-            public void connectComplete(boolean reconnect, String serverURI) {
-                log.info("MQTT 连接就绪: serverURI={}, reconnect={}", serverURI, reconnect);
-                if (reconnect) {
-                    try {
-                        subscribeAll(created);
-                    } catch (MqttException e) {
-                        log.error("MQTT 重连后恢复订阅失败", e);
-                    }
-                }
-            }
+        MqttClient created = newClient(clientId);
+        created.setCallback(new MqttCallback() {
 
             @Override
             public void connectionLost(Throwable cause) {
                 log.warn("MQTT 连接丢失: {}", cause == null ? "unknown" : cause.getMessage());
+                signalReconnect();
                 MqttCallback callback = businessCallback;
                 if (callback != null) {
                     callback.connectionLost(cause);
@@ -132,12 +200,18 @@ public class MqttClientManager {
         return created;
     }
 
+    /** 客户端实例化入口，便于单元测试注入替身。 */
+    protected MqttClient newClient(String clientId) throws MqttException {
+        return new MqttClient(properties.getHost(), clientId, new MemoryPersistence());
+    }
+
     private MqttConnectOptions buildOptions() {
         MqttConnectOptions options = new MqttConnectOptions();
         options.setUserName(properties.getUsername());
         options.setPassword(properties.getPassword().toCharArray());
         options.setCleanSession(properties.isCleanSession());
-        options.setAutomaticReconnect(properties.isReconnect());
+        // 重连由本类的监督线程统一负责，避免与 Paho 的自动重连相互竞争
+        options.setAutomaticReconnect(false);
         options.setConnectionTimeout(properties.getTimeout());
         options.setKeepAliveInterval(properties.getKeepalive());
         options.setMaxInflight(properties.getMaxInflight());
@@ -153,8 +227,18 @@ public class MqttClientManager {
 
     @PreDestroy
     public void shutdown() {
+        shuttingDown = true;
+        signalReconnect();
+        Thread thread = supervisor;
+        if (thread != null) {
+            try {
+                // 等待监督线程退出，避免它与随后的 disconnect/close 争用同一个客户端
+                thread.join(TimeUnit.SECONDS.toMillis(properties.getTimeout() + 5L));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         synchronized (lock) {
-            shuttingDown = true;
             if (client == null) {
                 return;
             }

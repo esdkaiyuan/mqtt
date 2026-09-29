@@ -8,6 +8,7 @@ import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -37,6 +38,12 @@ public interface DeviceService extends IService<Device> {
     List<Device> getOnlineDevices(Long ownerId);
 
     void updateDeviceStatus(Long deviceId, String status);
+
+    /**
+     * 带事件时间的状态更新：仅当事件时间不早于库内 {@code last_seen} 时才落库，
+     * 乱序到达的旧事件被丢弃（不覆盖新状态、不写状态历史）。
+     */
+    void updateDeviceStatus(Long deviceId, String status, LocalDateTime eventTime);
 
     void updateDeviceStatusByKey(String deviceKey, String status);
 }

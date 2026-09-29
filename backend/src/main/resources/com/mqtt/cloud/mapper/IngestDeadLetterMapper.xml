@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.IngestDeadLetterMapper">
+
+    <!-- created_at 交由表默认值 CURRENT_TIMESTAMP 维护，批量插入不显式赋值 -->
+    <insert id="insertBatch">
+        INSERT INTO ingest_dead_letter
+            (device_key, topic, message_type, payload, qos, received_at, reason, attempts, error_message, status)
+        VALUES
+        <foreach collection="list" item="d" separator=",">
+            (#{d.deviceKey}, #{d.topic}, #{d.messageType}, #{d.payload}, #{d.qos},
+             #{d.receivedAt,jdbcType=TIMESTAMP}, #{d.reason}, #{d.attempts}, #{d.errorMessage}, #{d.status})
+        </foreach>
+    </insert>
+
+</mapper>

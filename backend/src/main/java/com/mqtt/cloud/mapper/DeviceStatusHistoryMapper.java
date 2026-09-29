@@ -19,4 +19,7 @@ public interface DeviceStatusHistoryMapper extends BaseMapper<DeviceStatus> {
             @Param("deviceId") Long deviceId,
             @Param("startTime") String startTime,
             @Param("endTime") String endTime);
+
+    /** 批量写入状态变更历史，供摄取管线一次提交。 */
+    int insertBatch(@Param("list") List<DeviceStatus> statuses);
 }

@@ -3,7 +3,7 @@ spring:
     activate:
       on-profile: prod
   datasource:
-    url: jdbc:mysql://${DB_HOST:mysql}:${DB_PORT:3306}/mqtt_cloud?useUnicode=true&characterEncoding=utf8mb4&useSSL=true&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://${DB_HOST:mysql}:${DB_PORT:3306}/mqtt_cloud?useUnicode=true&characterEncoding=UTF-8&useSSL=true&serverTimezone=Asia/Shanghai
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     hikari:
@@ -19,3 +19,5 @@ logging:
   level:
     com.mqtt.cloud: INFO
     com.baomidou.mybatisplus: WARN
+    # mapper 日志器不在 com.baomidou 下，需单独收敛，否则生产环境仍会输出 SQL
+    com.mqtt.cloud.mapper: WARN

@@ -46,8 +46,4 @@ public class Message {
     /** 消息接收时间 */
     @TableField(value = "received_at", fill = FieldFill.INSERT)
     private LocalDateTime receivedAt;
-
-    /** 创建时间 */
-    @TableField(value = "created_at", fill = FieldFill.INSERT)
-    private LocalDateTime createdAt;
 }
