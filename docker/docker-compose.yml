@@ -49,6 +49,10 @@ services:
       - "${MQTT_PORT:-1883}:1883"
       - "${MQTT_WS_PORT:-8083}:8083"
       - "${EMQX_DASHBOARD_PORT:-18083}:18083"
+    environment:
+      # 必须与 emqx-init 登录所用凭据一致，否则初始化脚本会 401。
+      # EMQX 仅在 mnesia 为空（首次初始化）时应用该默认密码；已有数据卷不会被改写。
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
     volumes:
       - emqx_data:/opt/emqx/data
       - emqx_log:/opt/emqx/log
