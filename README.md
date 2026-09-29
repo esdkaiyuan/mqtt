@@ -5,7 +5,7 @@
 ## 技术栈
 
 - **前端：** Vue.js 3 + Vite + Element Plus + SVG图标
-- **后端：** Spring Boot 3.x + MQTT Broker (EMQX) + MyBatis Plus
+- **后端：** Spring Boot 4.1.x + MQTT Broker (EMQX) + MyBatis Plus
 - **数据库：** MySQL 8
 - **消息中间件：** MQTT over TCP (EMQX作为Broker)
 - **缓存：** Redis (会话/设备在线状态)
