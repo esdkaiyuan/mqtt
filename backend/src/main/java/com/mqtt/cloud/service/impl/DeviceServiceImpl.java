@@ -150,27 +150,27 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateDeviceStatus(Long deviceId, String status) {
+        updateDeviceStatus(deviceId, status, LocalDateTime.now());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateDeviceStatus(Long deviceId, String status, LocalDateTime eventTime) {
         Device device = this.getById(deviceId);
         if (device == null) {
             return;
         }
 
-        String oldStatus = device.getStatus();
-        boolean statusChanged = !Objects.equals(oldStatus, status);
+        boolean statusChanged = !Objects.equals(device.getStatus(), status);
 
+        // 守卫在 SQL 层裁决乱序：受影响行数为 0 说明库内 last_seen 已更晚，本次旧事件应整体丢弃
+        int affected = this.baseMapper.updateStatusGuarded(deviceId, status, eventTime);
+        if (affected == 0) {
+            return;
+        }
+        // 状态历史只在状态真正变化时写入，与改造前语义一致
         if (statusChanged) {
-            device.setStatus(status);
-            if (DeviceStatusValue.ONLINE.equals(status)) {
-                device.setLastSeen(LocalDateTime.now());
-            }
-            this.updateById(device);
             deviceStatusHistoryService.recordStatusChange(deviceId, status);
-        } else if (DeviceStatusValue.ONLINE.equals(status)) {
-            // 状态未变化但设备仍在上报：仅刷新 lastSeen，避免被离线巡检误判
-            LambdaUpdateWrapper<Device> wrapper = new LambdaUpdateWrapper<>();
-            wrapper.eq(Device::getId, deviceId)
-                   .set(Device::getLastSeen, LocalDateTime.now());
-            this.baseMapper.update(null, wrapper);
         }
     }
 

@@ -12,6 +12,7 @@ import com.mqtt.cloud.entity.Message;
 import com.mqtt.cloud.mapper.MessageMapper;
 import com.mqtt.cloud.mqtt.MqttClientManager;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.MessageRecordService;
 import com.mqtt.cloud.service.MessageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,9 +32,13 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
 
     private final DeviceService deviceService;
     private final MqttClientManager mqttClientManager;
+    private final MessageRecordService messageRecordService;
 
+    /**
+     * 先落库（独立短事务），再发布。禁止在事务内做网络 I/O：
+     * MQTT 发布不可回滚，事务与网络往返混合会产生「伪事务」。
+     */
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Message publishMessage(PublishMessageDTO dto, Long userId) {
         if (dto.getDeviceId() != null) {
             Device device = deviceService.getDeviceById(dto.getDeviceId());
@@ -42,21 +47,15 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
             }
         }
 
+        Message message = messageRecordService.savePublishRecord(dto);
+
         try {
             mqttClientManager.publish(dto.getTopic(), dto.getPayload(), dto.getQos());
         } catch (MqttException e) {
-            log.error("MQTT 发布失败: topic={}", dto.getTopic(), e);
+            log.error("MQTT 发布失败，回滚消息记录: topic={}", dto.getTopic(), e);
+            messageRecordService.deleteRecord(message.getId());
             throw new BusinessException(ResultCode.MQTT_PUBLISH_FAILED);
         }
-
-        Message message = new Message();
-        message.setTopic(dto.getTopic());
-        message.setDirection("PUBLISH");
-        message.setPayload(dto.getPayload());
-        message.setQos(dto.getQos());
-        message.setDeviceId(dto.getDeviceId());
-        message.setSentAt(LocalDateTime.now());
-        this.save(message);
 
         return message;
     }
