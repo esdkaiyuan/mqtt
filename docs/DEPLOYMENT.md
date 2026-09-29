@@ -21,7 +21,7 @@
 | EMQX | 1883 | MQTT协议 | 是（.env中MQTT_PORT） |
 | EMQX WebSocket | 8083 | WebSocket连接 | 是 |
 | EMQX Dashboard | 18083 | EMQX管理后台 | 是 |
-| 后端API | 8080 | HTTP服务 | 是（.env中BACKEND_PORT） |
+| 后端API | 8080 | HTTP服务 | 否（仅容器网络暴露，统一经 nginx 网关访问 `/api`） |
 | 前端 | 80 | HTTP服务 | 是（.env中FRONTEND_PORT） |
 
 ## 2. 快速部署（推荐）
@@ -51,13 +51,13 @@ bash scripts/health-check.sh
 
 ### 步骤5：访问系统
 - 前端：http://localhost
-- API文档：http://localhost:8080/api/swagger-ui.html
+- API文档：http://localhost/api/swagger-ui.html
 - EMQX后台：http://localhost:18083
 - 默认账号：admin / admin123
 
 ### 步骤6：可观测端点（Actuator）
-- 应用健康：`http://localhost:8080/api/actuator/health`（公开）
-- Prometheus 指标：`http://localhost:8080/api/actuator/prometheus`（公开，供抓取）
+- 应用健康：`http://localhost/api/actuator/health`（公开）
+- Prometheus 指标：`http://localhost/api/actuator/prometheus`（公开，供抓取）
 - `info` / `metrics` 需 ADMIN 角色 JWT 访问
 
 > 指标由 `spring-boot-starter-actuator` + `micrometer-registry-prometheus` 提供；暴露范围与鉴权见 `application.yml` 的 `management.*` 与 `SecurityConfig`。
@@ -98,10 +98,10 @@ docker logs mqtt-emqx-init --tail 20
 
 ```bash
 # 期望：mqtt_connected 1.0（已连接）；attempt_total 与 failure_total 可对账重连过程
-curl -s http://localhost:8080/api/actuator/prometheus | grep '^mqtt_'
+curl -s http://localhost/api/actuator/prometheus | grep '^mqtt_'
 ```
 
-> `docker restart mqtt-backend` 后无需人工干预即自动恢复订阅。恢复通常需约 60s：EMQX 认证连接器在后端停机期间
+> `docker compose -f docker/docker-compose.yml restart backend` 后无需人工干预即自动恢复订阅（该命令会重启**全部**副本）。恢复通常需约 60s：EMQX 认证连接器在后端停机期间
 > 进入 alarm，需等其健康检查恢复后才重新发起认证回调，期间日志会连续出现 `Not authorized to connect`，
 > 这是预期现象而非配置错误（连接成功后 `mqtt_connected` 回到 1.0）。
 
@@ -122,7 +122,7 @@ curl -s http://localhost:8080/api/actuator/prometheus | grep '^mqtt_'
 `ACCESS_CONTROL_ENFORCE_AUTH=false` 期间，后端每次启动都会打印迁移期告警，防止长期遗忘：
 
 ```bash
-docker logs mqtt-backend 2>&1 | grep "迁移期"
+docker compose -f docker/docker-compose.yml logs backend 2>&1 | grep "迁移期"
 # 期望：接入访问控制处于迁移期：ACCESS_CONTROL_ENFORCE_AUTH=false，认证与授权回调一律放行。存量设备全部刷机后必须置为 true。
 ```
 
@@ -198,7 +198,7 @@ A: 不是。它是**一次性初始化任务**（`restart: "no"`），执行完�
 A: 依次排查：1) `docker logs mqtt-emqx-init` 确认认证/授权源已下发；2) 用户名是否为 `{productKey}.{deviceKey}`、密码是否为该设备的 `deviceSecret`；3) 产品是否为 `ENABLED`、设备的 `enabled` 是否为 1；4) 双轨期确认 `ACCESS_CONTROL_ENFORCE_AUTH=false`，一旦置为 `true`，老账号 `admin` / `public` 将不再可用。密钥丢失可用 `POST /api/devices/{id}/reset-secret` 重置（旧密钥立即失效）。
 
 ### Q11: 重启后端后日志刷 `Not authorized to connect`，且设备连不上？
-A: 这是 EMQX 认证连接器进入 alarm 的预期现象，非配置错误。后端停机期间 EMQX 回调失败 → 连接器 alarm → alarm 期间 EMQX 直接拒绝所有连接、不发起回调。后端 `mqtt-connector` 会按指数退避持续重试，约 60s 后（连接器健康检查恢复）自动连上，订阅随之恢复，无需人工干预。确认方式：`curl -s http://localhost:8080/api/actuator/prometheus | grep '^mqtt_'`，`mqtt_connected` 回到 `1.0` 即恢复完成；若长时间仍为 `0.0`，再按 Q10 排查。
+A: 这是 EMQX 认证连接器进入 alarm 的预期现象，非配置错误。后端停机期间 EMQX 回调失败 → 连接器 alarm → alarm 期间 EMQX 直接拒绝所有连接、不发起回调。后端 `mqtt-connector` 会按指数退避持续重试，约 60s 后（连接器健康检查恢复）自动连上，订阅随之恢复，无需人工干预。确认方式：`curl -s http://localhost/api/actuator/prometheus | grep '^mqtt_'`，`mqtt_connected` 回到 `1.0` 即恢复完成；若长时间仍为 `0.0`，再按 Q10 排查。
 
 ### Q12: 导出设备凭据（`POST /api/devices/export-credentials`）有什么风险？
 A: **高危运维操作。** 该接口会**重置全部设备的密钥**并返回一次性明文，调用成功的那一刻，所有存量设备的旧凭据立即失效，未刷入新密钥的设备将无法接入。执行前务必确认已具备下发新凭据的通道，并做好备份。该操作已按页（500 条）独立事务处理，避免全表长事务；后续计划改为「生成待生效密钥 + 二次确认」，不再直接作废在用凭据。
@@ -210,7 +210,7 @@ A: **高危运维操作。** 该接口会**重置全部设备的密钥**并返�
 3. **配置防火墙：** 仅开放必要端口（80/443）
 4. **设置日志轮转：** 配置Docker日志大小限制
 5. **定期备份：** 设置自动备份脚本
-6. **监控告警：** 后端已内置 Actuator + Micrometer，可直接由 Prometheus 抓取 `http://<host>:8080/api/actuator/prometheus`，再接入 Grafana 展示
+6. **监控告警：** 后端已内置 Actuator + Micrometer，可直接由 Prometheus 抓取 `http://<host>/api/actuator/prometheus`，再接入 Grafana 展示
 7. **开启设备接入强校验：** 全部设备刷机完成后，将 `ACCESS_CONTROL_ENFORCE_AUTH` 置为 `true`、`DIRECT_FRONTEND_ENABLED` 置为 `false` 并重建 backend 与 emqx-init（见 `scripts/migrate-device-secrets.md`）
 8. **保护内部回调接口：** `INTERNAL_TOKEN` / `PLATFORM_SECRET` 必须为强随机值（`scripts/deploy.sh` 会自动生成）；`/api/internal/*` 已由 Nginx 拒绝外部访问，请勿在网关层放开
 
@@ -231,7 +231,7 @@ A: **高危运维操作。** 该接口会**重置全部设备的密钥**并返�
 **停机排空约束：** `INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS` 必须**小于** compose 中 `backend` 的 `stop_grace_period`（当前 `30s`）。否则容器会被强杀，未排空的消息来不及转死信。停机日志：
 
 ```bash
-docker logs mqtt-backend 2>&1 | grep "摄取管线"
+docker compose -f docker/docker-compose.yml logs backend 2>&1 | grep "摄取管线"
 # 期望：摄取管线已停止: 待排空 N 条，已排空 N 条，转死信 0 条
 # 「转死信」非 0 说明排空超时，应调大 INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS（仍须 < stop_grace_period）
 ```
@@ -284,7 +284,7 @@ curl -s -N --max-time 330 -H "Authorization: Bearer $TOKEN" http://localhost/api
 **订阅数观测：** Gauge `realtime_sse_subscribers` 暴露当前订阅连接数（含同一用户的多标签/多端连接），用于确认「断开后订阅数回落」：
 
 ```bash
-curl -s http://localhost:8080/api/actuator/prometheus | grep '^realtime_sse_subscribers'
+curl -s http://localhost/api/actuator/prometheus | grep '^realtime_sse_subscribers'
 # 空闲 0.0；打开 N 个标签页应为 N.0；关闭标签页后在一个心跳周期内回落
 ```
 
@@ -317,18 +317,18 @@ curl -s http://localhost:8080/api/actuator/prometheus | grep '^realtime_sse_subs
 
 ```bash
 # 1) 后端日志应出现订阅启用
-docker logs mqtt-backend 2>&1 | grep '跨副本实时广播已启用'
+docker compose -f docker/docker-compose.yml logs backend 2>&1 | grep '跨副本实时广播已启用'
 
 # 2) Redis 侧观察 PUBLISH
 docker exec mqtt-redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning MONITOR | grep PUBLISH
 
 # 3) 端到端：published == received == SSE 收到的事件数（无重复）
-curl -s http://localhost:8080/api/actuator/prometheus | grep '^realtime_broadcast_'
+curl -s http://localhost/api/actuator/prometheus | grep '^realtime_broadcast_'
 ```
 
 > **生产建议**：单 Redis 为单点，Pub/Sub 期间断连会导致跨副本实时投递中断（历史不受影响）。建议启用 Redis 哨兵或集群，并把 `realtime_broadcast_connection_errors_total` 纳入告警。
 > **扩缩容注意**：`REALTIME_BROADCAST_ENABLED` 必须与副本数一致——多副本置 `false` 会导致订阅在其他副本上的前端收不到数据；单副本置 `true` 仍正确，仅多一次 Redis 回环。
-> **容器重建后 502**：后端容器重建会改变容器 IP，而 nginx 的 `upstream backend` 在启动时解析，会短暂 502，需 `docker restart mqtt-frontend`；运行时 DNS 解析属 R2-4 范围。
+> **容器重建后 502（R2-4 已消除）**：R2-4 起 nginx 用 `resolver 127.0.0.11 valid=10s` + 变量式 `proxy_pass` 做运行时解析，后端副本重建/扩缩容后**无需重启 nginx**（详见第 9 节）。
 
 ## 8. 遗留表处置计划
 
@@ -336,3 +336,63 @@ curl -s http://localhost:8080/api/actuator/prometheus | grep '^realtime_broadcas
   1. 历史查询功能完全切换至 `message` 表，无功能回归
   2. 数据备份已完成
   3. 无其他进程仍写入该表（`SELECT COUNT(*)` 在业务高峰前后不再增长）
+
+## 9. 多副本部署与资源治理
+
+后端支持水平扩展（`--scale backend=N`），由 nginx 作为唯一入口统一转发。
+
+### 9.1 副本数与入口
+
+- 后端**不发布宿主机端口**（多副本会端口冲突），仅 `expose: ["8080"]` 供容器网络访问；外部一律经 nginx 网关 `http://<host>:${FRONTEND_PORT}/api` 访问。
+- 后端**不设 `container_name`**（会阻止 `--scale`），compose 自动命名为 `docker-backend-1/2/...`。
+- 副本数由 `.env` 的 `BACKEND_REPLICAS` 决定，`scripts/deploy.sh` 以 `--scale backend=N` 起服务；手工扩缩容：
+
+```bash
+# 扩容到 3 副本（缩容同理，N 改小即可）
+docker compose --env-file .env -f docker/docker-compose.yml up -d --scale backend=3
+```
+
+> `deploy.replicas` 在非 swarm 的 `docker compose up` 下会被忽略，实际扩缩容以 `--scale` 为准。
+
+### 9.2 多副本必须一致/开启的配置
+
+| 变量 | 多副本取值 | 原因 |
+|------|-----------|------|
+| `MQTT_SHARED_GROUP` | 各副本**必须一致** | 同组共享订阅分摊消息，避免重复落库 |
+| `REALTIME_BROADCAST_ENABLED` | **必须 `true`** | 否则订阅在其他副本的前端收不到实时数据 |
+| `REALTIME_BROADCAST_CHANNEL` | 各副本**必须一致** | 广播频道名 |
+| `BACKEND_REPLICAS` | `N > 1` | 期望副本数（声明值） |
+
+### 9.3 运行时 DNS 解析（避免 502）
+
+nginx 默认只在启动时解析 `backend` 的 IP；扩容/缩容/重建后 IP 变化会导致 502。故 `docker/nginx.conf` 在 `http` 块加了 `resolver 127.0.0.11 valid=10s ipv6=off;`（Docker 内嵌 DNS，10s 内发现副本增删），并把 `/api` 与 `/api/realtime/stream` 改为变量式 `proxy_pass`（`set $backend_upstream http://backend:8080; proxy_pass $backend_upstream;`），强制运行时重新解析。**副本增删后无需重启 nginx。**
+
+### 9.4 资源限制与日志轮转
+
+各服务在 `docker-compose.yml` 配置 `deploy.resources.limits` 与 `logging`（`json-file`，`max-size=20m` / `max-file=5`），避免单服务耗尽资源或日志占满磁盘：
+
+| 服务 | CPU limit | 内存 limit |
+|------|-----------|-----------|
+| backend | 2.0 | 1536M |
+| mysql | 2.0 | 1024M |
+| emqx | 2.0 | 1024M |
+| redis | 1.0 | 512M |
+| frontend | 1.0 | 256M |
+
+```bash
+docker stats --no-stream
+docker inspect docker-backend-1 --format '{{json .HostConfig.LogConfig}}'
+# 期望：{"Type":"json-file","Config":{"max-file":"5","max-size":"20m"}}
+```
+
+### 9.5 健康检查与日志
+
+后端无宿主机端口，`scripts/health-check.sh` 与 `deploy.sh` 的就绪检查均经网关探活 `http://localhost:${FRONTEND_PORT}/api/health`；查看后端日志用 compose 聚合全部副本：
+
+```bash
+docker compose -f docker/docker-compose.yml logs backend
+```
+
+### 9.6 故障转移
+
+杀掉一个副本后，nginx 在下一次解析（≤10s）内切到存活副本，共享订阅由存活副本接管消息，**无重复、无丢失**。表现为 nginx 错误日志出现一次对已死副本的 `connect() failed (111: Connection refused)`，随后恢复。
