@@ -198,6 +198,9 @@ A: 依次排查：1) `docker logs mqtt-emqx-init` 确认认证/授权源已下�
 ### Q11: 重启后端后日志刷 `Not authorized to connect`，且设备连不上？
 A: 这是 EMQX 认证连接器进入 alarm 的预期现象，非配置错误。后端停机期间 EMQX 回调失败 → 连接器 alarm → alarm 期间 EMQX 直接拒绝所有连接、不发起回调。后端 `mqtt-connector` 会按指数退避持续重试，约 60s 后（连接器健康检查恢复）自动连上，订阅随之恢复，无需人工干预。确认方式：`curl -s http://localhost:8080/api/actuator/prometheus | grep '^mqtt_'`，`mqtt_connected` 回到 `1.0` 即恢复完成；若长时间仍为 `0.0`，再按 Q10 排查。
 
+### Q12: 导出设备凭据（`POST /api/devices/export-credentials`）有什么风险？
+A: **高危运维操作。** 该接口会**重置全部设备的密钥**并返回一次性明文，调用成功的那一刻，所有存量设备的旧凭据立即失效，未刷入新密钥的设备将无法接入。执行前务必确认已具备下发新凭据的通道，并做好备份。该操作已按页（500 条）独立事务处理，避免全表长事务；后续计划改为「生成待生效密钥 + 二次确认」，不再直接作废在用凭据。
+
 ## 5. 生产环境建议
 
 1. **更换JWT密钥：** 修改`.env`中的`JWT_SECRET`为强随机字符串
@@ -208,3 +211,52 @@ A: 这是 EMQX 认证连接器进入 alarm 的预期现象，非配置错误。�
 6. **监控告警：** 后端已内置 Actuator + Micrometer，可直接由 Prometheus 抓取 `http://<host>:8080/api/actuator/prometheus`，再接入 Grafana 展示
 7. **开启设备接入强校验：** 全部设备刷机完成后，将 `ACCESS_CONTROL_ENFORCE_AUTH` 置为 `true`、`DIRECT_FRONTEND_ENABLED` 置为 `false` 并重建 backend 与 emqx-init（见 `scripts/migrate-device-secrets.md`）
 8. **保护内部回调接口：** `INTERNAL_TOKEN` / `PLATFORM_SECRET` 必须为强随机值（`scripts/deploy.sh` 会自动生成）；`/api/internal/*` 已由 Nginx 拒绝外部访问，请勿在网关层放开
+
+## 6. 摄取管线运维
+
+上行消息不再由 MQTT 回调线程直接落库，而是「回调线程入队 → worker 批量落库」。相关可调项（`.env` → 环境变量 → `application.yml` 的 `app.ingest`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `INGEST_ENABLED` | `true` | `false` 时回退为回调线程同步落库，**仅用于故障回滚** |
+| `INGEST_BATCH_SIZE` | `500` | 单批最大条数 |
+| `INGEST_FLUSH_INTERVAL_MS` | `200` | 攒批最长等待（毫秒） |
+| `INGEST_QUEUE_CAPACITY` | `20000` | 单 worker 队列容量（总容量 = 该值 × worker 数） |
+| `INGEST_WORKER_COUNT` | `4` | worker 数，同时决定 deviceKey 的路由分片数 |
+| `INGEST_MAX_ATTEMPTS` | `3` | 落库失败重试次数 |
+| `INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS` | `10000` | 停机排空队列的最长等待（毫秒） |
+
+**停机排空约束：** `INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS` 必须**小于** compose 中 `backend` 的 `stop_grace_period`（当前 `30s`）。否则容器会被强杀，未排空的消息来不及转死信。停机日志：
+
+```bash
+docker logs mqtt-backend 2>&1 | grep "摄取管线"
+# 期望：摄取管线已停止: 待排空 N 条，已排空 N 条，转死信 0 条
+# 「转死信」非 0 说明排空超时，应调大 INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS（仍须 < stop_grace_period）
+```
+
+**指标：** 由 `GET /api/actuator/prometheus` 暴露（公开抓取），关键项：
+
+| 指标 | 含义 |
+|------|------|
+| `ingest_submitted_total` | 入队消息数 |
+| `ingest_persisted_total` | 成功落库消息数 |
+| `ingest_dropped_total{reason}` | 丢弃数（`queue_full` / `unknown_device`） |
+| `ingest_deadletter_total{reason}` | 转死信数（`queue_full` / `persist_failed`） |
+| `ingest_batch_failures_total` | 重试耗尽失败的批次数 |
+| `ingest_persist_duration_seconds` | 单批落库耗时 |
+| `ingest_queue_depth{worker}` | 各 worker 队列当前深度 |
+
+健康判据：稳态下 `ingest_submitted_total ≈ ingest_persisted_total`，`ingest_dropped_total` 与 `ingest_deadletter_total` 保持为 0；`ingest_queue_depth` 不应持续接近 `INGEST_QUEUE_CAPACITY`。
+
+**死信处置：** 队列溢出或落库重试耗尽的消息落入 `ingest_dead_letter` 表（`status=PENDING`），由管理员查询：
+
+```bash
+GET /api/admin/dead-letters?status=PENDING&pageNum=1&pageSize=20   # 需 ADMIN 角色 JWT
+```
+
+## 7. 遗留表处置计划
+
+- **`history_record`**：已停止写入（历史查询改由 `message` 表承载，条件 `direction='SUBSCRIBE' AND topic LIKE '%/data'`），当前保留只读。计划在 T-12 上线后一个版本周期（约 30 天）后，通过新增迁移脚本删除该表；删除前需确认：
+  1. 历史查询功能完全切换至 `message` 表，无功能回归
+  2. 数据备份已完成
+  3. 无其他进程仍写入该表（`SELECT COUNT(*)` 在业务高峰前后不再增长）
