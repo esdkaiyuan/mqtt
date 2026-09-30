@@ -43,5 +43,12 @@ export default [
       'vue/html-closing-bracket-newline': 'off',
       'no-unused-vars': ['error', { argsIgnorePattern: '^_', caughtErrors: 'none' }]
     }
+  },
+  {
+    // 测试文件使用 Vitest 全局 API（describe / it / expect / vi 等）
+    files: ['src/**/__tests__/**/*.js', 'src/test/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.vitest }
+    }
   }
 ]
