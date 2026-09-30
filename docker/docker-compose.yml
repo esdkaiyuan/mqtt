@@ -198,6 +198,8 @@ services:
       INTERNAL_TOKEN: ${INTERNAL_TOKEN:?INTERNAL_TOKEN 必须在 .env 中配置}
       EMQX_DASHBOARD_USER: ${EMQX_DASHBOARD_USER:-admin}
       EMQX_DASHBOARD_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
+      # 授权结果缓存 TTL：决定禁用/停用后已连接会话收发被拒的最长收敛窗口
+      ACL_CACHE_TTL: ${ACL_CACHE_TTL:-10s}
     depends_on:
       emqx:
         condition: service_healthy

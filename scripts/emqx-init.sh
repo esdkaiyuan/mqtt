@@ -16,6 +16,11 @@ DASH_USER="${EMQX_DASHBOARD_USER:-admin}"
 DASH_PASS="${EMQX_DASHBOARD_PASSWORD:-public}"
 INTERNAL="${INTERNAL_TOKEN:?INTERNAL_TOKEN 必须配置}"
 
+# 授权结果缓存 TTL。EMQX 默认 1m，会在设备禁用/产品停用后继续放行已连接会话的收发
+# 最长 1m（缓存不随后端主动失效而清除）。收紧到 10s，把「禁用生效」的收敛窗口压到秒级；
+# 代价是后端 ACL 回调次数相应增加（该路径只做一次 Redis 读，成本低）。
+ACL_CACHE_TTL="${ACL_CACHE_TTL:-10s}"
+
 # 后端 context-path 为 /api，内部接口实际路径为 /api/internal/**
 BACKEND_AUTH_URL="${BACKEND_AUTH_URL:-http://backend:8080/api/internal/emqx/auth}"
 BACKEND_ACL_URL="${BACKEND_ACL_URL:-http://backend:8080/api/internal/emqx/acl}"
@@ -116,10 +121,10 @@ api -X PUT "$EMQX_API/authorization/sources/file" \
   -d "{\"type\":\"file\",\"enable\":false,\"rules\":\"$FILE_DISABLED_RULES\"}"
 
 # EMQX 5.0 该接口要求 settings 对象字段齐全（no_match / deny_action / cache 缺一即 400）
-echo "设置授权未匹配时默认拒绝..."
+echo "设置授权未匹配时默认拒绝，并收紧授权缓存 TTL..."
 api -X PUT "$EMQX_API/authorization/settings" \
   -H 'Content-Type: application/json' \
-  -d '{"no_match":"deny","deny_action":"ignore","cache":{"enable":true,"max_size":32,"ttl":"1m"}}'
+  -d "{\"no_match\":\"deny\",\"deny_action\":\"ignore\",\"cache\":{\"enable\":true,\"max_size\":32,\"ttl\":\"$ACL_CACHE_TTL\"}}"
 
 echo "回读校验配置是否真正生效..."
 
@@ -156,6 +161,13 @@ api -X GET "$EMQX_API/authorization/settings" -o "$SETTINGS_RESP"
 NO_MATCH=$(json_str "$SETTINGS_RESP" no_match)
 if [ "$NO_MATCH" != "deny" ]; then
   echo "授权设置未生效：no_match=$NO_MATCH（预期 deny）" >&2
+  exit 1
+fi
+
+# 5) 授权缓存 TTL 必须已收紧，否则禁用/停用后的收发会在缓存窗口内继续放行
+CACHE_TTL=$(json_str "$SETTINGS_RESP" ttl)
+if [ "$CACHE_TTL" != "$ACL_CACHE_TTL" ]; then
+  echo "授权缓存 TTL 未生效：ttl=$CACHE_TTL（预期 $ACL_CACHE_TTL）" >&2
   exit 1
 fi
 
