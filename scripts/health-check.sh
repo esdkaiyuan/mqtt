@@ -54,14 +54,20 @@ check_container_health mqtt-emqx
 check_http "后端API（经网关）" "http://localhost:${FRONTEND_PORT}/api/health" "200"
 check_http "前端" "http://localhost:${FRONTEND_PORT}/" "200"
 
-REQUIRED_TABLES="sys_user,device,device_status_history,message,history_record,api_key,webhook_config"
+# 表名必须逐个加单引号：写成裸标识符时 MySQL 会把它们当列名解析，
+# 报 ERROR 1054 Unknown column（错误被 2>/dev/null 吞掉后恒判为 0/7）。
+REQUIRED_TABLES="'sys_user','device','device_status_history','message','history_record','api_key','webhook_config'"
 REQUIRED_COUNT=7
 
 echo -n "检查数据库表 ... "
 TABLE_COUNT="$(docker exec mqtt-mysql mysql -u root -p"$DB_ROOT_PASSWORD" -N -B -e \
     "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}' AND table_name IN (${REQUIRED_TABLES});" \
     2>/dev/null | tr -d '[:space:]')"
-if [ "${TABLE_COUNT:-0}" = "$REQUIRED_COUNT" ]; then
+
+# 查询失败（TABLE_COUNT 为空）与真查不到表必须区分，否则会掩盖脚本自身缺陷。
+if [ -z "$TABLE_COUNT" ]; then
+    fail "异常（查询失败，非表缺失）"
+elif [ "$TABLE_COUNT" = "$REQUIRED_COUNT" ]; then
     pass "正常（${TABLE_COUNT}/${REQUIRED_COUNT} 张核心表）"
 else
     fail "异常（${TABLE_COUNT:-0}/${REQUIRED_COUNT} 张核心表）"
