@@ -25,12 +25,13 @@ import java.util.function.BooleanSupplier;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 现场复核「设备禁用 / 产品停用的生效时机」。
+ * 现场复核「设备禁用 / 产品停用与凭据轮换的生效时机」。
  * <p>
  * 前提（需先就绪）：
  * <ul>
@@ -196,6 +197,45 @@ class DeviceDisableLiveTest {
 
         device.disconnect();
         observer.disconnect();
+        cleanup();
+    }
+
+    /**
+     * 现场复核凭据轮换的生效时机：密钥重置后旧凭据**立即失效**、新凭据可用。
+     * <p>
+     * 验收门槛为「60 秒内旧凭据失效」；后端在轮换事务内主动删除认证缓存键，且 EMQX 5.0 的
+     * HTTP 认证器无结果缓存，故实测为**即时**（无需等待 TTL）。
+     */
+    @Test
+    void verifyOldSecretRejectedImmediatelyAfterReset() throws Exception {
+        token = login();
+        createProductAndDevice();
+
+        // 轮换前：旧凭据可连接
+        MqttClient before = connect(deviceUsername, deviceSecret);
+        assertTrue(before.isConnected(), "轮换前旧凭据应可连接");
+        before.disconnect();
+        System.out.println("[RESET-1] 轮换前旧凭据可连接");
+
+        // 重置密钥：一次性返回新明文
+        ResponseEntity<String> resp = rest.exchange(
+                baseUrl + "/devices/" + deviceId + "/reset-secret", HttpMethod.POST,
+                authEntity(token), String.class);
+        assertEquals(200, resp.getStatusCode().value(), "重置密钥失败：" + resp.getBody());
+        String newSecret = MAPPER.readTree(resp.getBody()).path("data").asText();
+        assertFalse(newSecret.isBlank(), "未返回新明文密钥");
+        assertNotEquals(deviceSecret, newSecret, "新密钥不应与旧密钥相同");
+
+        // 旧凭据立即被拒（不等 TTL）
+        assertRejectedByAuth("轮换后旧凭据", deviceUsername, deviceSecret);
+        System.out.println("[RESET-2] 旧凭据立即被拒");
+
+        // 新凭据可用
+        MqttClient after = connect(deviceUsername, newSecret);
+        assertTrue(after.isConnected(), "轮换后新凭据应可连接");
+        after.disconnect();
+        System.out.println("[RESET-3] 新凭据可连接");
+
         cleanup();
     }
 
