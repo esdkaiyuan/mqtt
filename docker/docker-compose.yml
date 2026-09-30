@@ -69,7 +69,9 @@ services:
   # 说明：EMQX 5 默认不启用认证，认证与授权由 emqx-init 服务通过 REST API 下发：
   # 认证/授权均回调后端 /api/internal/emqx/**，由后端按产品-设备-一机一密规则裁决。
   emqx:
-    image: emqx/emqx:5.0
+    # 必须写完整补丁号：Docker Hub 上不存在 `emqx/emqx:5.0` 这个 tag（只有 5.0.0~5.0.26），
+    # 写成 5.0 时本地因已有回填镜像可跑通，但 CI/新机器 pull 会 404（R4-5 首次远程运行发现）。
+    image: emqx/emqx:5.0.26
     container_name: mqtt-emqx
     restart: always
     ports:
