@@ -123,6 +123,10 @@ curl -s http://localhost/api/actuator/prometheus | grep '^mqtt_'
 > 验证缓存生效：连续两次使用同一设备凭据连接，第二次不再触发 `product` / `device` 查询
 > （单测 `EmqxAuthServiceImplTest#authenticate_should_skip_db_when_cache_hits` 断言 `ProductService` / `DeviceService` 零调用）。
 > EMQX 5.0 的 HTTP 认证器不提供认证结果缓存，故缓存落在后端；EMQX 侧版本评估见 R3-3。
+>
+> **实测（2026-09-30，2000 请求 / 8 并发 / 后端限 2 CPU）**：缓存命中时认证回调 DB 查询从 **2.15 次/请求降至 0.023 次/请求**；
+> P99 **514.15 → 497.86 ms**（**持平、不劣化**）。P99 由 BCrypt（strength=10，逐次计算约 80 ms、不可缓存）主导，缓存仅消除约 12~18 ms 的 DB 往返，
+> 故不应预期 P99 大幅下降 —— 该哈希成本是有意保留的安全约束。若需进一步压低 P99，方向为提升后端 CPU 配额或引入连接级会话复用。
 
 > **设备禁用 / 产品停用的生效语义（R3-4 / R3-5）**：禁用设备（`device.enabled=0`）与停用产品（`product.status=DISABLED`）
 > 对**连接**与**收发**两个环节同时生效，两处判定共用 `DeviceAccessGuard`，避免"认证拒绝、授权放行"的语义分叉。
