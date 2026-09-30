@@ -23,9 +23,9 @@
         </div>
       </div>
 
-      <div :class="['connection-status', mqttConnected ? 'connected' : 'disconnected']">
+      <div :class="['connection-status', connectionState]">
         <span class="status-dot"></span>
-        <span>{{ mqttConnected ? '实时数据流已连接' : '实时数据流未连接' }}</span>
+        <span>{{ connectionStatusText }}</span>
       </div>
 
       <div ref="messageContainer" class="message-list">
@@ -96,7 +96,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { subscribeRealtime } from '@/api/realtime'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api/axios'
@@ -104,7 +104,17 @@ import SvgIcon from '@/components/Icon.vue'
 
 const authStore = useAuthStore()
 
-const mqttConnected = ref(false)
+// 连接状态四态：connecting / open / reconnecting / closed
+const connectionState = ref('connecting')
+const CONNECTION_STATUS_TEXT = {
+  connecting: '实时数据流连接中...',
+  open: '实时数据流已连接',
+  reconnecting: '实时数据流重连中...',
+  closed: '实时数据流已断开'
+}
+const connectionStatusText = computed(
+  () => CONNECTION_STATUS_TEXT[connectionState.value] || '实时数据流未连接'
+)
 let realtimeClient = null
 
 const messages = ref([])
@@ -119,10 +129,11 @@ const publishForm = ref({
 const publishLoading = ref(false)
 
 // 实时数据由后端按当前用户权限过滤后经 SSE 推送，前端不再直连 Broker。
+// 断线由 subscribeRealtime 内部按指数退避自动重连，此处仅同步展示连接状态。
 function initMqtt() {
   realtimeClient = subscribeRealtime({
-    onOpen: () => {
-      mqttConnected.value = true
+    onStatus: (status) => {
+      connectionState.value = status
     },
     onEvent: (event) => {
       messages.value.push({
@@ -143,7 +154,6 @@ function initMqtt() {
     },
     onError: (error) => {
       console.error('实时通道错误:', error)
-      mqttConnected.value = false
     }
   })
 }
@@ -293,14 +303,36 @@ onUnmounted(() => {
   margin-bottom: var(--spacing-md);
 }
 
-.connection-status.connected {
+.connection-status.connecting,
+.connection-status.reconnecting {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
+.connection-status.open {
   background: var(--color-success-light);
   color: var(--color-success);
 }
 
-.connection-status.disconnected {
+.connection-status.closed {
   background: var(--color-danger-light);
   color: var(--color-danger);
+}
+
+/* connecting / reconnecting 状态下让圆点呼吸，提示正在建立连接 */
+.connection-status.connecting .status-dot,
+.connection-status.reconnecting .status-dot {
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 .status-dot {
