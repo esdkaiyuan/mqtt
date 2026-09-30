@@ -13,16 +13,30 @@
 .PARAMETER Base
     后端 API 基地址，默认 http://127.0.0.1:18080/api
 
+.PARAMETER BehindGateway
+    当 -Base 指向 nginx 网关（而非直连后端）时置位。
+    网关对 /internal/emqx/* 使用 deny all，无令牌请求在网关层即返回 403、
+    不会到达后端，故 P8/P9 的期望放宽为 401/403。
+
+.PARAMETER SelfBase
+    Webhook 正向投递的目标基地址，必须由「后端进程自身」可达，默认取 -Base。
+    经网关执行时后端在容器内，须显式指定后端自身地址（如 http://localhost:8080/api），
+    否则目标 http://127.0.0.1/api/auth/logout 在容器内指向容器自身而非网关。
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File scripts/api-test.ps1
     powershell -ExecutionPolicy Bypass -File scripts/api-test.ps1 -Base http://127.0.0.1:8080/api
+    pwsh -File scripts/api-test.ps1 -Base http://127.0.0.1/api -BehindGateway -SelfBase http://localhost:8080/api
 #>
 param(
-    [string]$Base = 'http://127.0.0.1:18080/api'
+    [string]$Base = 'http://127.0.0.1:18080/api',
+    [switch]$BehindGateway,
+    [string]$SelfBase = ''
 )
 
 $ErrorActionPreference = 'Continue'
 $BASE = $Base.TrimEnd('/')
+$SELF_BASE = $(if ($SelfBase) { $SelfBase.TrimEnd('/') } else { $BASE })
 
 $TMPDIR = Join-Path ([System.IO.Path]::GetTempPath()) 'mqtt-cloud-api-test'
 New-Item -ItemType Directory -Force -Path $TMPDIR | Out-Null
@@ -83,18 +97,18 @@ function Check {
         [string]$Id,
         [string]$Desc,
         $Result,
-        [int]$ExpectHttp,
+        [int[]]$ExpectHttp,
         [string]$ExpectCode = $null
     )
     $code = $null
     if ($Result.body) {
         try { $code = ($Result.body | ConvertFrom-Json).code } catch { }
     }
-    $ok = ($Result.http -eq $ExpectHttp)
+    $ok = ($ExpectHttp -contains $Result.http)
     if ($ExpectCode -and "$code" -ne "$ExpectCode") { $ok = $false }
     if ($ok) { $script:PASS++ } else { $script:FAIL++ }
     $script:ROWS += [pscustomobject]@{
-        Id = $Id; Desc = $Desc; Http = $Result.http; ExpHttp = $ExpectHttp
+        Id = $Id; Desc = $Desc; Http = $Result.http; ExpHttp = ($ExpectHttp -join '/')
         Code = $code; ExpCode = $ExpectCode
         Result = $(if ($ok) { 'PASS' } else { 'FAIL' })
     }
@@ -167,8 +181,12 @@ $r = Check 'D9' 'POST /products/{id}/enable' (Call -Method POST -Path "/products
 $r = Check 'P5' 'DELETE /products/{id} with devices -> 409/6003' (Call -Method DELETE -Path "/products/$prodId" -Token $TOKEN) 409 6003
 $r = Check 'P6' 'POST /devices/{id}/reset-secret' (Call -Method POST -Path "/devices/$devId/reset-secret" -Token $TOKEN) 200 200
 $r = Check 'P7' 'POST /devices/export-credentials' (Call -Method POST -Path '/devices/export-credentials' -Token $TOKEN) 200 200
-$r = Check 'P8' 'POST /internal/emqx/auth without token -> 401' (Call -Method POST -Path '/internal/emqx/auth' -Body @{ username = 'x'; password = 'y' }) 401
-$r = Check 'P9' 'POST /internal/emqx/acl without token -> 401' (Call -Method POST -Path '/internal/emqx/acl' -Body @{ username = 'x'; action = 'publish'; topic = 'device/x/data' }) 401
+# 无令牌访问内部回调：直连后端时由内部令牌过滤器返回 401；经 nginx 网关时由
+# `location /api/internal/ { deny all; return 403; }` 在网关层返回 403、请求不到达后端。
+# 两者都表示「外部无凭据不可用」，故经网关执行时接受 401/403。
+$internalExpect = $(if ($BehindGateway) { @(401, 403) } else { @(401) })
+$r = Check 'P8' "POST /internal/emqx/auth without token -> $($internalExpect -join '/')" (Call -Method POST -Path '/internal/emqx/auth' -Body @{ username = 'x'; password = 'y' }) $internalExpect
+$r = Check 'P9' "POST /internal/emqx/acl without token -> $($internalExpect -join '/')" (Call -Method POST -Path '/internal/emqx/acl' -Body @{ username = 'x'; action = 'publish'; topic = 'device/x/data' }) $internalExpect
 
 # ---------- 消息 ----------
 $r = Check '13' 'POST /messages/publish' (Call -Method POST -Path '/messages/publish' -Body @{ topic = "device/$dk/data"; payload = '{"temp":26.5}'; qos = 1 } -Token $TOKEN) 200 200
@@ -222,9 +240,11 @@ $r = Check '32' 'DELETE /webhooks/{id}' (Call -Method DELETE -Path "/webhooks/$h
 
 # Webhook 正向投递：以本服务 /auth/logout 作为可达且返回 2xx 的 POST 目标，
 # 通过自定义请求头带上一个专用 Token（登出只会失效该 Token，不影响 $TOKEN）。
+# 目标必须由「后端进程自身」可达：直连时即 $BASE；经网关时后端在容器内，
+# 需用 $SELF_BASE（见 -SelfBase 参数说明）。
 $hookToken = (J (Call -Method POST -Path '/auth/login' -Body @{ username = 'admin'; password = 'admin123' })).data.token
 $hookHeaders = @{ Authorization = "Bearer $hookToken" } | ConvertTo-Json -Compress
-$r = Check '33a' 'POST /webhooks (reachable 2xx target)' (Call -Method POST -Path '/webhooks' -Body @{ name = "t09-hook-ok-$suffix"; url = "$BASE/auth/logout"; events = '["device.data"]'; headers = $hookHeaders } -Token $TOKEN) 200 200
+$r = Check '33a' 'POST /webhooks (reachable 2xx target)' (Call -Method POST -Path '/webhooks' -Body @{ name = "t09-hook-ok-$suffix"; url = "$SELF_BASE/auth/logout"; events = '["device.data"]'; headers = $hookHeaders } -Token $TOKEN) 200 200
 $hookOkId = (J $r).data.id
 $r = Check '33b' 'POST /webhooks/{id}/test (2xx -> 200)' (Call -Method POST -Path "/webhooks/$hookOkId/test" -Token $TOKEN) 200 200
 $r = Check '33c' 'DELETE /webhooks/{id} (reachable target)' (Call -Method DELETE -Path "/webhooks/$hookOkId" -Token $TOKEN) 200 200
