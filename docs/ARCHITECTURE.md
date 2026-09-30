@@ -114,7 +114,7 @@ com.mqtt.cloud
 | 控制器 | 前缀 | 职责 |
 |--------|------|------|
 | `AuthController` | `/auth` | 注册、登录、登出、当前用户、修改密码 |
-| `DeviceController` | `/devices` | 设备 CRUD、状态查询、在线列表、下发指令 |
+| `DeviceController` | `/devices` | 设备 CRUD、状态查询、在线列表、禁用/启用（`enabled`，归属校验）、下发指令 |
 | `MessageController` | `/messages` | 发布消息、最近消息 |
 | `HistoryController` | `/history` | 按设备/时间/Topic 分页查询历史 |
 | `AnalyticsController` | `/analytics` | 消息量趋势等统计 |
@@ -122,7 +122,7 @@ com.mqtt.cloud
 | `WebhookController` | `/webhooks` | Webhook 配置 CRUD |
 | `ExternalApiController` | `/external/v1` | 面向第三方的 API Key 鉴权接口 |
 | `HealthController` | `/health` | 健康检查 |
-| `ProductController` | `/products` | 产品（设备类型模板）CRUD；删除时校验产品下是否仍有设备 |
+| `ProductController` | `/products` | 产品（设备类型模板）CRUD、停用/启用（`status`，ADMIN）；删除时校验产品下是否仍有设备 |
 | `RealtimeController` | `/realtime` | SSE 实时数据流（按设备归属与角色过滤） |
 | `EmqxAuthController` | `/internal/emqx` | EMQX HTTP 认证回调（内部，须 `X-Internal-Token`） |
 | `EmqxAclController` | `/internal/emqx` | EMQX HTTP 授权回调（内部，须 `X-Internal-Token`） |
