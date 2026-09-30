@@ -122,6 +122,15 @@ app:
     # true：经 Redis Pub/Sub 跨副本广播（多副本必须为 true）；false：仅本副本内推送（单副本回退）
     broadcast-enabled: ${REALTIME_BROADCAST_ENABLED:false}
     broadcast-channel: ${REALTIME_BROADCAST_CHANNEL:mqtt:realtime:device-data}
+  # EMQX 管理面（Dashboard REST API）：禁用 / 停用时踢掉在线连接，实现「禁用即切断」
+  emqx:
+    # API 根地址，容器网络内直连 EMQX，不经网关
+    api-base-url: ${EMQX_API_BASE_URL:http://emqx:18083/api/v5}
+    # 凭据必须与 emqx-init 下发认证/授权配置所用账号一致
+    dashboard-user: ${EMQX_DASHBOARD_USER:admin}
+    dashboard-password: ${EMQX_DASHBOARD_PASSWORD:public}
+    # false 时不做踢线，仅依赖 EMQX 授权缓存 TTL 收敛已连接会话
+    kick-enabled: ${EMQX_KICK_ENABLED:true}
   # 上行摄取管线：回调线程只入队，落库与下游分发在 worker 线程完成
   ingest:
     # false 时回退为回调线程同步落库（仅用于故障回滚）

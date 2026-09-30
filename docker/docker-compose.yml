@@ -162,6 +162,11 @@ services:
       DIRECT_FRONTEND_ENABLED: ${DIRECT_FRONTEND_ENABLED:-true}
       # 认证元数据缓存 TTL（秒）；0 关闭缓存，认证每次回源查库
       ACCESS_CONTROL_CACHE_TTL_SECONDS: ${ACCESS_CONTROL_CACHE_TTL_SECONDS:-60}
+      # EMQX 管理面：禁用 / 停用时踢掉在线连接，凭据与 emqx-init 下发配置所用账号一致
+      EMQX_API_BASE_URL: http://emqx:18083/api/v5
+      EMQX_DASHBOARD_USER: ${EMQX_DASHBOARD_USER:-admin}
+      EMQX_DASHBOARD_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
+      EMQX_KICK_ENABLED: ${EMQX_KICK_ENABLED:-true}
       STREAM_TIMEOUT_MS: ${STREAM_TIMEOUT_MS:-1800000}
       STREAM_HEARTBEAT_INTERVAL_MS: ${STREAM_HEARTBEAT_INTERVAL_MS:-15000}
       # 实时通道跨副本广播：多副本必须置 true；单副本保持 false（本地扇出）
