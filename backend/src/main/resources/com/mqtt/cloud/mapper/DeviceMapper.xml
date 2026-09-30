@@ -9,7 +9,11 @@
     </sql>
 
     <select id="findByDeviceKey" resultType="com.mqtt.cloud.entity.Device">
-        SELECT <include refid="baseColumns"/>
+        <!-- 认证回源（EmqxAuthServiceImpl.loadMeta）依赖 product_id/enabled/device_secret_hash，
+             故此处必须显式全列，不能用 baseColumns（其不含敏感字段，供列表类查询复用）。 -->
+        SELECT id, product_id, device_name, device_key, device_type, topic, description,
+               owner_id, status, last_seen, enabled, device_secret_hash, secret_updated_at,
+               metadata, created_at, updated_at, deleted
         FROM device
         WHERE device_key = #{deviceKey}
           AND deleted = 0
