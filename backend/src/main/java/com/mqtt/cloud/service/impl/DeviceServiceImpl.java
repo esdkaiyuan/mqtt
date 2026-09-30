@@ -115,6 +115,33 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         evictAuthCache(device);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void disableDevice(Long deviceId) {
+        setDeviceEnabled(deviceId, 0);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void enableDevice(Long deviceId) {
+        setDeviceEnabled(deviceId, 1);
+    }
+
+    /**
+     * 统一设置连接许可。enabled 与运行态 status 语义分离，仅影响后续认证判定；
+     * 变更后主动失效认证缓存，避免 TTL 内旧元数据继续放行。
+     */
+    private void setDeviceEnabled(Long deviceId, int enabled) {
+        Device device = getDeviceById(deviceId);
+        if (Objects.equals(device.getEnabled(), enabled)) {
+            return;
+        }
+        LambdaUpdateWrapper<Device> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(Device::getId, deviceId).set(Device::getEnabled, enabled);
+        this.baseMapper.update(null, wrapper);
+        evictAuthCache(device);
+    }
+
     /**
      * 设备被删除后其认证元数据不再有效，主动失效避免 TTL 内旧记录继续放行。
      * 失效失败不应影响删除本身：捕获异常并依赖 TTL 自然过期。

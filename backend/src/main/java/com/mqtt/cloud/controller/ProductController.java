@@ -41,6 +41,22 @@ public class ProductController {
         return Result.success(productService.update(id, request));
     }
 
+    @Operation(summary = "停用产品", description = "旗下所有设备将无法通过认证，缓存立即失效；重复停用幂等成功")
+    @PostMapping("/{id}/disable")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Result<Void> disableProduct(@PathVariable Long id) {
+        productService.disableProduct(id);
+        return Result.success();
+    }
+
+    @Operation(summary = "启用产品", description = "恢复旗下设备的认证许可，缓存立即失效；重复启用幂等成功")
+    @PostMapping("/{id}/enable")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Result<Void> enableProduct(@PathVariable Long id) {
+        productService.enableProduct(id);
+        return Result.success();
+    }
+
     @Operation(summary = "删除产品")
     @DeleteMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")

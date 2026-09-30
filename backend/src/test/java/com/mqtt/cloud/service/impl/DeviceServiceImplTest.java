@@ -74,6 +74,57 @@ class DeviceServiceImplTest {
     }
 
     @Test
+    void disableDevice_should_set_enabled_and_evict_auth_cache() {
+        Device device = new Device();
+        device.setId(1L);
+        device.setDeviceKey("sensor-01");
+        device.setProductId(10L);
+        device.setEnabled(1);
+        when(deviceMapper.selectById(1L)).thenReturn(device);
+        Product product = new Product();
+        product.setId(10L);
+        product.setProductKey("esp32-fall");
+        when(productService.requireById(10L)).thenReturn(product);
+
+        service.disableDevice(1L);
+
+        verify(deviceMapper).update(any(), any());
+        verify(authCacheService).evict("esp32-fall", "sensor-01");
+    }
+
+    @Test
+    void disableDevice_should_be_idempotent_when_already_disabled() {
+        Device device = new Device();
+        device.setId(1L);
+        device.setEnabled(0);
+        when(deviceMapper.selectById(1L)).thenReturn(device);
+
+        service.disableDevice(1L);
+
+        verify(deviceMapper, never()).update(any(), any());
+        verifyNoInteractions(authCacheService);
+    }
+
+    @Test
+    void enableDevice_should_set_enabled_and_evict_auth_cache() {
+        Device device = new Device();
+        device.setId(1L);
+        device.setDeviceKey("sensor-01");
+        device.setProductId(10L);
+        device.setEnabled(0);
+        when(deviceMapper.selectById(1L)).thenReturn(device);
+        Product product = new Product();
+        product.setId(10L);
+        product.setProductKey("esp32-fall");
+        when(productService.requireById(10L)).thenReturn(product);
+
+        service.enableDevice(1L);
+
+        verify(deviceMapper).update(any(), any());
+        verify(authCacheService).evict("esp32-fall", "sensor-01");
+    }
+
+    @Test
     void updateDeviceStatus_should_drop_stale_event_and_skip_history() {
         Device device = device(DeviceStatusValue.ONLINE);
         when(deviceMapper.selectById(1L)).thenReturn(device);

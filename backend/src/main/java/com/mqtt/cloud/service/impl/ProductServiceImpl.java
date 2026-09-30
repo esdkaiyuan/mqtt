@@ -24,6 +24,7 @@ public class ProductServiceImpl implements ProductService {
     private static final String DEFAULT_PAYLOAD_FORMAT = "JSON";
     private static final String AUTH_MODE_SECRET = "SECRET";
     private static final String STATUS_ENABLED = "ENABLED";
+    private static final String STATUS_DISABLED = "DISABLED";
     private static final String RESERVED_KEY = "platform";
 
     private final ProductMapper productMapper;
@@ -101,6 +102,32 @@ public class ProductServiceImpl implements ProductService {
         }
         productMapper.deleteById(id);
         // 产品停用/删除后其下设备不应再通过认证；停用走状态变更时同样需要失效
+        authCacheService.evictProduct(product.getProductKey());
+    }
+
+    @Override
+    @Transactional
+    public void disableProduct(Long id) {
+        setProductStatus(id, STATUS_DISABLED);
+    }
+
+    @Override
+    @Transactional
+    public void enableProduct(Long id) {
+        setProductStatus(id, STATUS_ENABLED);
+    }
+
+    /**
+     * 统一设置产品状态。状态变更会改变旗下设备的认证判定结果，
+     * 因此必须失效该产品下全部设备的认证缓存，避免 TTL 内旧元数据继续放行。
+     */
+    private void setProductStatus(Long id, String status) {
+        Product product = requireById(id);
+        if (status.equals(product.getStatus())) {
+            return;
+        }
+        product.setStatus(status);
+        productMapper.updateById(product);
         authCacheService.evictProduct(product.getProductKey());
     }
 

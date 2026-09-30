@@ -14,7 +14,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -88,6 +90,49 @@ class ProductServiceImplTest {
         productService.delete(9L);
 
         verify(authCacheService).evictProduct("esp32-fall");
+    }
+
+    @Test
+    void disableProduct_should_set_status_and_evict_auth_cache() {
+        Product existing = product(9L, "esp32-fall", "ENABLED");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+
+        productService.disableProduct(9L);
+
+        assertThat(existing.getStatus()).isEqualTo("DISABLED");
+        verify(productMapper).updateById(existing);
+        verify(authCacheService).evictProduct("esp32-fall");
+    }
+
+    @Test
+    void disableProduct_should_be_idempotent_when_already_disabled() {
+        Product existing = product(9L, "esp32-fall", "DISABLED");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+
+        productService.disableProduct(9L);
+
+        verify(productMapper, never()).updateById(any(Product.class));
+        verifyNoInteractions(authCacheService);
+    }
+
+    @Test
+    void enableProduct_should_set_status_and_evict_auth_cache() {
+        Product existing = product(9L, "esp32-fall", "DISABLED");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+
+        productService.enableProduct(9L);
+
+        assertThat(existing.getStatus()).isEqualTo("ENABLED");
+        verify(productMapper).updateById(existing);
+        verify(authCacheService).evictProduct("esp32-fall");
+    }
+
+    private Product product(Long id, String key, String status) {
+        Product product = new Product();
+        product.setId(id);
+        product.setProductKey(key);
+        product.setStatus(status);
+        return product;
     }
 
     @Test

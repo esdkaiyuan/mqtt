@@ -104,6 +104,24 @@ public class DeviceController {
         return Result.success();
     }
 
+    @Operation(summary = "禁用设备", description = "将设备连接许可置为禁止，设备将在下次认证时被拒绝；重复禁用幂等成功")
+    @PostMapping("/{deviceId}/disable")
+    public Result<Void> disableDevice(
+            @Parameter(description = "设备ID", required = true) @PathVariable Long deviceId) {
+        checkDeviceOwnership(deviceId);
+        deviceService.disableDevice(deviceId);
+        return Result.success();
+    }
+
+    @Operation(summary = "启用设备", description = "恢复设备连接许可，启用立即生效；重复启用幂等成功")
+    @PostMapping("/{deviceId}/enable")
+    public Result<Void> enableDevice(
+            @Parameter(description = "设备ID", required = true) @PathVariable Long deviceId) {
+        checkDeviceOwnership(deviceId);
+        deviceService.enableDevice(deviceId);
+        return Result.success();
+    }
+
     @Operation(summary = "获取在线设备", description = "返回当前用户名下状态为 ONLINE 的设备列表")
     @GetMapping("/online")
     public Result<List<Device>> getOnlineDevices() {

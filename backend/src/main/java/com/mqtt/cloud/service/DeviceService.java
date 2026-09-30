@@ -27,6 +27,18 @@ public interface DeviceService extends IService<Device> {
 
     void deleteDevice(Long deviceId);
 
+    /**
+     * 禁用设备：连接许可置为禁止，已连接设备将在下次认证时被拒绝，并主动失效认证缓存。
+     * 已禁用时重复调用幂等成功。
+     */
+    void disableDevice(Long deviceId);
+
+    /**
+     * 启用设备：恢复连接许可，并主动失效认证缓存使启用立即生效。
+     * 已启用时重复调用幂等成功。
+     */
+    void enableDevice(Long deviceId);
+
     IPage<Device> getDevices(Long userId, DeviceQueryDTO dto);
 
     Device getDeviceById(Long deviceId);

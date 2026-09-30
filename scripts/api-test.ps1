@@ -141,6 +141,28 @@ $r = Check '9' 'PUT /devices/{id}' (Call -Method PUT -Path "/devices/$devId" -Bo
 $r = Check '11' 'GET /devices/online' (Call -Method GET -Path '/devices/online' -Token $TOKEN) 200 200
 $r = Check '12' 'GET /devices/{id}/status' (Call -Method GET -Path "/devices/$devId/status" -Token $TOKEN) 200 200
 
+# ---------- 设备禁用 / 启用（R3-4） ----------
+$r = Check 'D1' 'POST /devices/{id}/disable' (Call -Method POST -Path "/devices/$devId/disable" -Token $TOKEN) 200 200
+$r = Call -Method GET -Path "/devices/$devId" -Token $TOKEN
+$devDisabled = ((J $r).data.enabled -eq 0)
+if ($devDisabled) { $script:PASS++ } else { $script:FAIL++ }
+$script:ROWS += [pscustomobject]@{ Id = 'D2'; Desc = 'GET /devices/{id} shows enabled=0 after disable'; Http = $r.http; ExpHttp = 200; Code = $null; ExpCode = $null; Result = $(if ($devDisabled) { 'PASS' } else { 'FAIL' }) }
+$r = Check 'D3' 'POST /devices/{id}/disable again (idempotent)' (Call -Method POST -Path "/devices/$devId/disable" -Token $TOKEN) 200 200
+$r = Check 'D4' 'POST /devices/{id}/enable' (Call -Method POST -Path "/devices/$devId/enable" -Token $TOKEN) 200 200
+$r = Call -Method GET -Path "/devices/$devId" -Token $TOKEN
+$devEnabled = ((J $r).data.enabled -eq 1)
+if ($devEnabled) { $script:PASS++ } else { $script:FAIL++ }
+$script:ROWS += [pscustomobject]@{ Id = 'D5'; Desc = 'GET /devices/{id} shows enabled=1 after enable'; Http = $r.http; ExpHttp = 200; Code = $null; ExpCode = $null; Result = $(if ($devEnabled) { 'PASS' } else { 'FAIL' }) }
+
+# ---------- 产品停用 / 启用（R3-4） ----------
+$r = Check 'D6' 'POST /products/{id}/disable' (Call -Method POST -Path "/products/$prodId/disable" -Token $TOKEN) 200 200
+$r = Call -Method GET -Path '/products' -Token $TOKEN
+$prodDisabled = @((J $r).data | Where-Object { $_.id -eq $prodId })[0].status -eq 'DISABLED'
+if ($prodDisabled) { $script:PASS++ } else { $script:FAIL++ }
+$script:ROWS += [pscustomobject]@{ Id = 'D7'; Desc = 'GET /products shows status=DISABLED after disable'; Http = $r.http; ExpHttp = 200; Code = $null; ExpCode = $null; Result = $(if ($prodDisabled) { 'PASS' } else { 'FAIL' }) }
+$r = Check 'D8' 'POST /products/{id}/disable again (idempotent)' (Call -Method POST -Path "/products/$prodId/disable" -Token $TOKEN) 200 200
+$r = Check 'D9' 'POST /products/{id}/enable' (Call -Method POST -Path "/products/$prodId/enable" -Token $TOKEN) 200 200
+
 # ---------- 产品删除保护 / 凭据管理 / 内部接口令牌（T-11） ----------
 $r = Check 'P5' 'DELETE /products/{id} with devices -> 409/6003' (Call -Method DELETE -Path "/products/$prodId" -Token $TOKEN) 409 6003
 $r = Check 'P6' 'POST /devices/{id}/reset-secret' (Call -Method POST -Path "/devices/$devId/reset-secret" -Token $TOKEN) 200 200
@@ -230,6 +252,8 @@ $null = Call -Method POST -Path '/auth/register' -Body @{ username = $userB; pas
 $rb = Call -Method POST -Path '/auth/login' -Body @{ username = $userB; password = 'Passw0rd!23' }
 $TOKENB = (J $rb).data.token
 $r = Check 'E5' 'userB reads userA device -> 403/2003' (Call -Method GET -Path "/devices/$devId" -Token $TOKENB) 403 2003
+$r = Check 'E11' 'userB disables userA device -> 403/2003' (Call -Method POST -Path "/devices/$devId/disable" -Token $TOKENB) 403 2003
+$r = Check 'E12' 'userB disables product (ADMIN only) -> 403/403' (Call -Method POST -Path "/products/$prodId/disable" -Token $TOKENB) 403 403
 $r = Check 'E8' 'userB deletes userA api key -> 403/403' (Call -Method DELETE -Path "/api-keys/$keyId" -Token $TOKENB) 403 403
 $r = Call -Method POST -Path '/webhooks' -Body @{ name = "hookA-$suffix"; url = 'http://127.0.0.1:1/h'; events = '["device.data"]' } -Token $TOKEN
 $hookA = (J $r).data.id
