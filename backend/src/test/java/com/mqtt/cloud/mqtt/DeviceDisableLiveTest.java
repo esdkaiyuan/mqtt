@@ -29,6 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /**
  * 现场复核「设备禁用 / 产品停用与凭据轮换的生效时机」。
@@ -48,8 +49,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *     -Dlive.platformSecret=$env:PLATFORM_SECRET
  * </pre>
  * 平台密钥取自 {@code -Dlive.platformSecret} 或环境变量 {@code PLATFORM_SECRET}（与 {@code .env} 同源），
- * 不在代码中写死；缺失时仅第 8 步（平台账号不受产品停用影响）失败。
+ * 不在代码中写死；缺失时仅平台账号一步（不受产品停用影响）失败。
  * {@code live.aclCacheTtlSeconds} 需与 {@code emqx-init} 下发的 {@code ACL_CACHE_TTL} 对齐（默认 10）。
+ * {@code live.kickEnabled} 需与运行中后端的 {@code EMQX_KICK_ENABLED} 对齐（默认 true）：踢线开启时
+ * 禁用 / 停用会**立即断开**已连接会话；关闭时连接保持存活，仅由 ACL 在 TTL 内拒绝收发（降级路径）。
  */
 @Tag("loadtest")
 class DeviceDisableLiveTest {
@@ -62,12 +65,19 @@ class DeviceDisableLiveTest {
     private final String adminPassword = System.getProperty("live.adminPassword", "admin123");
     private final String platformUsername = "PLATFORM";
     // 平台密钥不写死：优先取 -Dlive.platformSecret，其次取环境变量 PLATFORM_SECRET（与 .env 同源），
-    // 避免真实凭据进入版本库。缺失时仅第 8 步（平台账号不受产品停用影响）会失败。
+    // 避免真实凭据进入版本库。缺失时仅平台账号一步会失败。
     private final String platformSecret = resolvePlatformSecret();
 
-    // EMQX 授权结果缓存 TTL（与 emqx-init 的 ACL_CACHE_TTL 对齐）。禁用后需等该缓存过期，
+    // EMQX 授权结果缓存 TTL（与 emqx-init 的 ACL_CACHE_TTL 对齐）。踢线关闭时，禁用后需等该缓存过期，
     // ACL 的 deny 才会对已连接会话生效；测试等待 TTL + 余量后再断言。
     private final long aclCacheTtlSeconds = Long.getLong("live.aclCacheTtlSeconds", 10L);
+
+    // 踢线开关：与运行中后端的 EMQX_KICK_ENABLED 对齐。
+    // true：禁用 / 停用调用 EMQX 踢线接口，已连接会话被立即断开（「禁用即切断」）。
+    // false：不做踢线，已连接会话保持存活，仅由 ACL 在 TTL 内拒绝收发（降级路径）。
+    private final boolean kickEnabled = Boolean.parseBoolean(
+            System.getProperty("live.kickEnabled",
+                    System.getenv().getOrDefault("EMQX_KICK_ENABLED", "true")));
 
     private final RestTemplate rest = new RestTemplate();
     private final String productKey = "live-" + Long.toString(System.currentTimeMillis(), 36);
@@ -88,52 +98,50 @@ class DeviceDisableLiveTest {
         MqttClient client = connect(deviceUsername, deviceSecret);
         System.out.printf("[1] 禁用前连接成功 clientId=%s%n", client.getClientId());
 
-        // 2) 禁用设备后：已建立连接必须保持存活（EMQX 不主动踢下线）
+        // 2) 禁用设备后：踢线开启时已建立连接必须被**立即断开**（「禁用即切断」）；
+        //    踢线关闭时（降级）连接保持存活，等待 ACL TTL 收敛收发权限
         postDisable("/devices/" + deviceId + "/disable");
-        Thread.sleep(1500);
-        assertTrue(client.isConnected(), "禁用后已连接设备应保持连接");
-        System.out.println("[2] 禁用设备后，已建立连接仍保持（不被踢下线）");
+        if (kickEnabled) {
+            awaitTrue(() -> !client.isConnected(), 5000, "禁用后已连接设备应被踢下线");
+            System.out.println("[2] 禁用设备后，已连接会话被立即断开（踢线生效）");
+        } else {
+            Thread.sleep(1500);
+            assertTrue(client.isConnected(), "踢线关闭时禁用后已连接设备应保持连接");
+            System.out.println("[2] 禁用设备后，已连接会话仍保持（踢线关闭，等待 ACL TTL 收敛）");
+        }
 
-        // 3) 禁用后已连接会话 publish：客户端不报错（QoS1 仍会收到 PUBACK），
-        //    是否真正投递由 Broker 授权决定 —— 禁用后 ACL 回调返回 deny，消息被丢弃（见 ACL 复核）
-        String topic = "device/" + deviceKey + "/data";
-        MqttMessage message = new MqttMessage("{\"t\":1}".getBytes());
-        message.setQos(1);
-        client.publish(topic, message);
-        System.out.println("[3] 禁用后已连接会话 publish 不报错（投递与否由 ACL 裁决，见 ACL 复核）");
-
-        // 4) 禁用后：全新连接（重连）必须被拒绝（认证回调返回 deny）
-        client.disconnect();
+        // 3) 禁用后：全新连接（重连）必须被拒绝（认证回调返回 deny）
+        disconnectQuietly(client);
         assertRejectedByAuth("禁用后重连", deviceUsername, deviceSecret);
-        System.out.println("[4] 禁用后重连被拒（认证失败）");
+        System.out.println("[3] 禁用后重连被拒（认证失败）");
 
-        // 5) 启用设备后：重新连接必须恢复成功
+        // 4) 启用设备后：重新连接必须恢复成功
         postDisable("/devices/" + deviceId + "/enable");
         Thread.sleep(1500);
         MqttClient reconnected = connect(deviceUsername, deviceSecret);
         assertTrue(reconnected.isConnected());
-        System.out.println("[5] 启用后重连恢复成功");
+        System.out.println("[4] 启用后重连恢复成功");
         reconnected.disconnect();
 
-        // 6) 产品维度对称验证：停用产品后重连被拒，启用后恢复
+        // 5) 产品维度对称验证：停用产品后重连被拒，启用后恢复
         postDisable("/products/" + productId + "/disable");
         Thread.sleep(1500);
         assertRejectedByAuth("停用产品后重连", deviceUsername, deviceSecret);
-        System.out.println("[6] 停用产品后重连被拒");
+        System.out.println("[5] 停用产品后重连被拒");
 
         postDisable("/products/" + productId + "/enable");
         Thread.sleep(1500);
         MqttClient again = connect(deviceUsername, deviceSecret);
         assertTrue(again.isConnected());
-        System.out.println("[7] 启用产品后重连恢复成功");
+        System.out.println("[6] 启用产品后重连恢复成功");
         again.disconnect();
 
-        // 8) 平台账号（PLATFORM）不受产品停用影响
+        // 7) 平台账号（PLATFORM）不受产品停用影响
         postDisable("/products/" + productId + "/disable");
         Thread.sleep(1500);
         MqttClient platform = connect(platformUsername, platformSecret);
         assertTrue(platform.isConnected(), "平台账号认证不受产品停用影响");
-        System.out.println("[8] 产品停用后 PLATFORM 账号仍可连接");
+        System.out.println("[7] 产品停用后 PLATFORM 账号仍可连接");
         platform.disconnect();
         postDisable("/products/" + productId + "/enable");
 
@@ -141,7 +149,10 @@ class DeviceDisableLiveTest {
     }
 
     /**
-     * 现场复核 ACL 缺口收敛：禁用后**已连接会话**的上行发布必须被授权回调拒绝。
+     * 现场复核 ACL 兜底：踢线**关闭**时，禁用后**已连接会话**的上行发布必须被授权回调拒绝。
+     * <p>
+     * 仅在 {@code EMQX_KICK_ENABLED=false}（降级模式）下可观测 —— 踢线开启时禁用会立即断开会话，
+     * 已无「已连接会话」可断言，故以 {@link org.junit.jupiter.api.Assumptions#assumeFalse} 跳过。
      * <p>
      * 用 {@code PLATFORM} 账号另开一个订阅端监听 {@code device/+/data}，以「消息是否真正投递」为判据
      * —— 客户端侧 QoS1 发布即使被 Broker 丢弃也仍会收到 PUBACK，故不能只看发布是否报错。
@@ -150,6 +161,8 @@ class DeviceDisableLiveTest {
      */
     @Test
     void verifyAclDeniedForExistingSessionAfterDisable() throws Exception {
+        assumeFalse(kickEnabled,
+                "踢线开启时禁用会立即断开已连接会话，无法观测 ACL 兜底；请以 EMQX_KICK_ENABLED=false 运行");
         token = login();
         createProductAndDevice();
 
@@ -170,10 +183,10 @@ class DeviceDisableLiveTest {
         awaitTrue(() -> received.get() >= 1, 5000, "启用状态下发布应被投递");
         System.out.println("[ACL-1] 启用状态下发布已投递（基线）");
 
-        // 禁用设备：已建立连接保持存活（EMQX 不主动踢下线）
+        // 禁用设备：踢线关闭（降级模式），已建立连接保持存活，等待 ACL TTL 收敛收发
         postDisable("/devices/" + deviceId + "/disable");
         Thread.sleep(1500);
-        assertTrue(device.isConnected(), "禁用后已连接会话应保持连接");
+        assertTrue(device.isConnected(), "踢线关闭时禁用后已连接会话应保持连接");
 
         // 等 EMQX 授权结果缓存过期，deny 才会对已连接会话生效
         long waitMs = (aclCacheTtlSeconds + 3) * 1000L;
@@ -254,6 +267,17 @@ class DeviceDisableLiveTest {
             Thread.sleep(200);
         }
         assertTrue(condition.getAsBoolean(), message);
+    }
+
+    /** 已断开（被踢线）的客户端再 disconnect 会抛异常，忽略即可。 */
+    private void disconnectQuietly(MqttClient client) {
+        try {
+            if (client.isConnected()) {
+                client.disconnect();
+            }
+        } catch (Exception ignored) {
+            // 已被 Broker 断开，无需再断开
+        }
     }
 
     /**
