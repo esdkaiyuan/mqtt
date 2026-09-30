@@ -465,6 +465,32 @@ SELECT COUNT(*) FROM message;   -- 需 < 500 万
 3. 分区不可逆：回退需重建非分区表并回灌数据，故务必保留迁移前备份。
 4. 上线后按需滚动新增/清理分区（`ALTER TABLE ... ADD/DROP PARTITION`），并纳入巡检。
 
+### 9.8 R5 触发条件巡检
+
+R5 触发式组件（Kafka 按 `deviceKey` 分区、时序库、物理 Maven 多模块拆分、独立抓取告警）的启用阈值由脚本巡检，避免阈值被跨越后无人察觉。两个脚本同口径，按运行环境择一：
+
+```bash
+# Linux 宿主（需宿主可执行 docker）
+bash scripts/r5-trigger-check.sh
+# 可调采样窗口（秒，默认 15）与预警比例（%，默认 70）
+QPS_WINDOW_SECONDS=60 WARN_RATIO=80 bash scripts/r5-trigger-check.sh
+```
+
+```powershell
+# Windows / 本机（PowerShell + Docker Desktop）
+powershell -ExecutionPolicy Bypass -File scripts/r5-trigger-check.ps1 -QpsWindowSeconds 60 -WarnRatio 80
+```
+
+退出码可直接用于告警：`0`=全部未达阈、`1`=存在接近阈值（≥阈值×70%）、`2`=存在已触发。例如挂 cron 每 6 小时巡检一次：
+
+```bash
+0 */6 * * * cd /opt/mqtt && bash scripts/r5-trigger-check.sh >> /var/log/r5-check.log 2>&1 || echo "R5 触发条件变化，见 /var/log/r5-check.log"
+```
+
+采集项与阈值（设备 5000 / 上行 QPS 2000 / `message` 1 亿行 / 后端代码 2 万行）见
+`docs/T-12_架构重构_实施计划.md` §R5「R5 触发条件监控」。`docker` 或网关不可达时该项记「未采集」，
+不报错也不影响其余项。
+
 ---
 
 ## 10. 依赖版本与安全扫描
