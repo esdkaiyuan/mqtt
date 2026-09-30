@@ -280,7 +280,6 @@ import { useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { productApi } from '@/api/product'
 import SvgIcon from '@/components/Icon.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
 const deviceStore = useDeviceStore()

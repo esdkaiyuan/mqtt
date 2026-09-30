@@ -136,7 +136,6 @@ import { useDeviceStore } from '@/stores/device'
 import { useAuthStore } from '@/stores/auth'
 import SvgIcon from '@/components/Icon.vue'
 import api from '@/api/axios'
-import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()

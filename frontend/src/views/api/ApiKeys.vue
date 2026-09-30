@@ -84,7 +84,6 @@
 import { ref, onMounted } from 'vue'
 import api from '@/api/axios'
 import SvgIcon from '@/components/Icon.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 const loading = ref(false)
 const apiKeys = ref([])
@@ -105,6 +104,11 @@ async function loadKeys() {
   } finally {
     loading.value = false
   }
+}
+
+function openCreateDialog() {
+  form.value = { name: '', permissions: '["device:read","device:write","data:read"]', expiresAt: '' }
+  showCreate.value = true
 }
 
 async function handleCreate() {

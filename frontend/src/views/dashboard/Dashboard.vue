@@ -126,7 +126,6 @@ import echarts from '@/utils/echarts'
 import { statsApi } from '@/api/stats'
 import { messageApi } from '@/api/message'
 import SvgIcon from '@/components/Icon.vue'
-import { ElMessage } from 'element-plus'
 
 const trendDays = ref(7)
 const loading = ref(false)

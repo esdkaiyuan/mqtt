@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import api from '@/api/axios'
-import { ElMessage } from 'element-plus'
 
 export const useDeviceStore = defineStore('device', () => {
   const devices = ref([])

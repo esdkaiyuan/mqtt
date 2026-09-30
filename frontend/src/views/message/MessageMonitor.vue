@@ -101,7 +101,6 @@ import { subscribeRealtime } from '@/api/realtime'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api/axios'
 import SvgIcon from '@/components/Icon.vue'
-import { ElMessage } from 'element-plus'
 
 const authStore = useAuthStore()
 

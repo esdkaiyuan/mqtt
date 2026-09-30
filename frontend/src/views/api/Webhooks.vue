@@ -100,7 +100,6 @@
 import { ref, onMounted } from 'vue'
 import api from '@/api/axios'
 import SvgIcon from '@/components/Icon.vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
 
 const loading = ref(false)
 const webhooks = ref([])
@@ -125,6 +124,19 @@ async function loadWebhooks() {
   } finally {
     loading.value = false
   }
+}
+
+function openCreateDialog() {
+  form.value = {
+    name: '',
+    url: '',
+    secret: '',
+    deviceKey: '',
+    events: '["device.data"]',
+    retryCount: 3,
+    timeoutSeconds: 10
+  }
+  showCreate.value = true
 }
 
 async function handleCreate() {

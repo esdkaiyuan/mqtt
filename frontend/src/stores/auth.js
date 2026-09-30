@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { authApi } from '@/api/auth'
-import { ElMessage } from 'element-plus'
 
 const STORAGE_TOKEN = 'token'
 const STORAGE_USER = 'user'

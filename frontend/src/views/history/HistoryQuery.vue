@@ -137,7 +137,6 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useDeviceStore } from '@/stores/device'
 import api from '@/api/axios'
 import SvgIcon from '@/components/Icon.vue'
-import { ElMessage } from 'element-plus'
 
 const deviceStore = useDeviceStore()
 
