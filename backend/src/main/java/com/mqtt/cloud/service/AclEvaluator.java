@@ -18,6 +18,7 @@ public class AclEvaluator {
     private final AccessControlProperties accessControlProperties;
     private final RealtimeProperties realtimeProperties;
     private final DeviceSecretService deviceSecretService;
+    private final DeviceAccessGuard deviceAccessGuard;
 
     public boolean allow(String username, String action, String topic) {
         if (!accessControlProperties.isEnforceAuth()) {
@@ -37,6 +38,11 @@ public class AclEvaluator {
         }
         String[] parts = deviceSecretService.parseUsername(username);
         if (parts == null) {
+            return false;
+        }
+        // 与认证回调同源：产品停用/设备禁用后，已连接会话的收发同样被拒。
+        // 此前 ACL 只校验主题前缀，形成「禁用只作用于连接、不作用于收发」的缺口。
+        if (!deviceAccessGuard.isPermitted(deviceAccessGuard.resolve(parts[0], parts[1]))) {
             return false;
         }
         return allowDevice(parts[1], action, topic);

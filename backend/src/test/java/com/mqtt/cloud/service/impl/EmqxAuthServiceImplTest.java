@@ -3,6 +3,7 @@ package com.mqtt.cloud.service.impl;
 import com.mqtt.cloud.config.AccessControlProperties;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.Product;
+import com.mqtt.cloud.service.DeviceAccessGuard;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.DeviceService;
@@ -41,7 +42,8 @@ class EmqxAuthServiceImplTest {
         properties = new AccessControlProperties();
         properties.setEnforceAuth(true);
         properties.setPlatformSecret("platform-secret");
-        service = new EmqxAuthServiceImpl(properties, deviceSecretService, productService, deviceService, authCacheService);
+        service = new EmqxAuthServiceImpl(properties, deviceSecretService,
+                new DeviceAccessGuard(productService, deviceService, authCacheService));
     }
 
     private Device deviceWithSecret(String rawSecret) {
