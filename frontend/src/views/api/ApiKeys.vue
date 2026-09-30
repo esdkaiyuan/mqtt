@@ -61,7 +61,7 @@
         </div>
         <div class="form-group">
           <label class="form-label">权限范围</label>
-          <input v-model="form.permissions" placeholder='如：["device:read","device:write","data:read"]' class="form-input" />
+          <input v-model="form.permissions" placeholder="如：[&quot;device:read&quot;,&quot;device:write&quot;,&quot;data:read&quot;]" class="form-input" />
           <p class="form-hint">留空表示拥有全部权限。多个权限用JSON数组格式。</p>
         </div>
         <div class="form-group">
@@ -134,6 +134,7 @@ async function handleCreate() {
     form.value = { name: '', permissions: '["device:read","device:write","data:read"]', expiresAt: '' }
     loadKeys()
   } catch (error) {
+    // 创建失败的具体原因已由 axios 拦截器统一提示，此处只需结束 loading
   } finally {
     createLoading.value = false
   }
@@ -150,6 +151,7 @@ async function deleteKey(key) {
     ElMessage.success('API密钥已撤销')
     loadKeys()
   } catch (error) {
+    // 用户取消确认对话框时 ElMessageBox 会 reject；接口失败亦由拦截器提示，这里静默即可
   }
 }
 

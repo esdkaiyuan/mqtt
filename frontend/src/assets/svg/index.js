@@ -1,8 +1,8 @@
 // 导入所有SVG图标
 const icons = import.meta.glob('./icons/*.svg', { query: '?raw', import: 'default' })
 
-// 注册为Vue组件（在App.vue中使用）
-export function registerIcons(app) {
+// 把 SVG 图标注入为页面上隐藏的 <symbol> 雪碧图，供 Icon.vue 通过 <use> 引用
+export function registerIcons() {
   const svgSprite = document.createElement('div')
   svgSprite.style.display = 'none'
   svgSprite.id = 'svg-sprite'

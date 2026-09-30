@@ -37,13 +37,12 @@
 
 <script setup>
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import Sidebar from './Sidebar.vue'
 import SvgIcon from '@/components/Icon.vue'
 
 const route = useRoute()
-const router = useRouter()
 const authStore = useAuthStore()
 
 const pageTitle = computed(() => route.meta.title || 'MQTT云平台')

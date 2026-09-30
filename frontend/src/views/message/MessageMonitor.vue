@@ -81,7 +81,7 @@
           <label class="form-label">Payload</label>
           <textarea
             v-model="publishForm.payload"
-            placeholder='{"action": "restart"}'
+            placeholder="{&quot;action&quot;: &quot;restart&quot;}"
             class="form-input form-textarea"
             rows="4"
             required
@@ -98,11 +98,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { subscribeRealtime } from '@/api/realtime'
-import { useAuthStore } from '@/stores/auth'
 import api from '@/api/axios'
 import SvgIcon from '@/components/Icon.vue'
-
-const authStore = useAuthStore()
 
 // 连接状态四态：connecting / open / reconnecting / closed
 const connectionState = ref('connecting')
@@ -169,7 +166,7 @@ function scrollToBottom() {
 async function handlePublish() {
   publishLoading.value = true
   try {
-    const response = await api.post('/messages/publish', {
+    await api.post('/messages/publish', {
       topic: publishForm.value.topic,
       payload: publishForm.value.payload,
       qos: parseInt(publishForm.value.qos)
@@ -189,6 +186,7 @@ async function handlePublish() {
 
     publishForm.value.payload = ''
   } catch (error) {
+    // 发布失败的具体原因已由 axios 拦截器统一提示，此处只需结束 loading
   } finally {
     publishLoading.value = false
   }

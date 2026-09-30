@@ -388,6 +388,7 @@ async function handleCreate() {
     }
     showCredentialDialog.value = true
   } catch (error) {
+    // 创建失败的具体原因已由 axios 拦截器统一提示，此处只需结束 loading
   } finally {
     createLoading.value = false
   }
@@ -422,6 +423,7 @@ async function handleEdit() {
     await deviceStore.updateDevice(editForm.id, editForm)
     showEditDialog.value = false
   } catch (error) {
+    // 更新失败的具体原因已由 axios 拦截器统一提示，此处只需结束 loading
   } finally {
     editLoading.value = false
   }
@@ -440,6 +442,7 @@ async function deleteDevice(device) {
     )
     await deviceStore.deleteDevice(device.id)
   } catch (error) {
+    // 用户取消确认对话框时 ElMessageBox 会 reject；接口失败亦由拦截器提示，这里静默即可
   }
 }
 

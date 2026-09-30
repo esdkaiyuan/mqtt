@@ -66,8 +66,9 @@
             </div>
             <div class="form-group">
               <label class="form-label">指令内容 (JSON)</label>
-              <textarea v-model="commandForm.payload" class="form-input form-textarea" rows="4"
-                placeholder='{"action": "restart"}'></textarea>
+              <textarea
+v-model="commandForm.payload" class="form-input form-textarea" rows="4"
+                placeholder="{&quot;action&quot;: &quot;restart&quot;}"></textarea>
             </div>
             <div class="form-row">
               <div class="form-group">
@@ -133,14 +134,12 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
-import { useAuthStore } from '@/stores/auth'
 import SvgIcon from '@/components/Icon.vue'
 import api from '@/api/axios'
 
 const route = useRoute()
 const router = useRouter()
 const deviceStore = useDeviceStore()
-const authStore = useAuthStore()
 
 const device = ref({})
 const statusHistory = ref([])

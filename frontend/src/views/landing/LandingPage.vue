@@ -5,10 +5,10 @@
       <div class="nav-container">
         <div class="nav-logo">
           <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect width="32" height="32" rx="8" fill="#165DFF"/>
-            <path d="M8 16C8 11.6 11.6 8 16 8C20.4 8 24 11.6 24 16C24 20.4 20.4 24 16 24" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-            <circle cx="16" cy="16" r="3" fill="white"/>
-            <path d="M16 10V13M16 19V22M13 16H10M19 16H22" stroke="white" stroke-width="2" stroke-linecap="round"/>
+            <rect width="32" height="32" rx="8" fill="#165DFF" />
+            <path d="M8 16C8 11.6 11.6 8 16 8C20.4 8 24 11.6 24 16C24 20.4 20.4 24 16 24" stroke="white" stroke-width="2.5" stroke-linecap="round" />
+            <circle cx="16" cy="16" r="3" fill="white" />
+            <path d="M16 10V13M16 19V22M13 16H10M19 16H22" stroke="white" stroke-width="2" stroke-linecap="round" />
           </svg>
           <span class="logo-text">MQTT Cloud</span>
         </div>
@@ -133,8 +133,12 @@
         </div>
 
         <div class="scenarios-grid">
-          <div class="scenario-card" v-for="scenario in scenarios" :key="scenario.title"
-               :style="{ borderColor: scenario.color }">
+          <div
+            v-for="scenario in scenarios"
+            :key="scenario.title"
+            class="scenario-card"
+            :style="{ borderColor: scenario.color }"
+          >
             <div class="scenario-icon" :style="{ background: scenario.bg }">
               {{ scenario.icon }}
             </div>
@@ -231,6 +235,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import SvgIcon from '@/components/Icon.vue'
 
 const isScrolled = ref(false)
 const mobileMenuOpen = ref(false)

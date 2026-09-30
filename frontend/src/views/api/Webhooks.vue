@@ -73,7 +73,7 @@
         </div>
         <div class="form-group">
           <label class="form-label">事件类型 <span class="required">*</span></label>
-          <input v-model="form.events" placeholder='["device.data","device.heartbeat"]' class="form-input" />
+          <input v-model="form.events" placeholder="[&quot;device.data&quot;,&quot;device.heartbeat&quot;]" class="form-input" />
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -151,6 +151,7 @@ async function handleCreate() {
     showCreate.value = false
     loadWebhooks()
   } catch (error) {
+    // 创建失败的具体原因已由 axios 拦截器统一提示，此处只需结束 loading
   } finally {
     createLoading.value = false
   }
@@ -167,6 +168,7 @@ async function deleteWebhook(wh) {
     ElMessage.success('Webhook已删除')
     loadWebhooks()
   } catch (error) {
+    // 用户取消确认对话框时 ElMessageBox 会 reject；接口失败亦由拦截器提示，这里静默即可
   }
 }
 

@@ -6,10 +6,10 @@
         <div class="brand-content">
           <div class="brand-logo">
             <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect width="32" height="32" rx="8" fill="#165DFF"/>
-              <path d="M8 16C8 11.6 11.6 8 16 8C20.4 8 24 11.6 24 16C24 20.4 20.4 24 16 24" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
-              <circle cx="16" cy="16" r="3" fill="white"/>
-              <path d="M16 10V13M16 19V22M13 16H10M19 16H22" stroke="white" stroke-width="2" stroke-linecap="round"/>
+              <rect width="32" height="32" rx="8" fill="#165DFF" />
+              <path d="M8 16C8 11.6 11.6 8 16 8C20.4 8 24 11.6 24 16C24 20.4 20.4 24 16 24" stroke="white" stroke-width="2.5" stroke-linecap="round" />
+              <circle cx="16" cy="16" r="3" fill="white" />
+              <path d="M16 10V13M16 19V22M13 16H10M19 16H22" stroke="white" stroke-width="2" stroke-linecap="round" />
             </svg>
           </div>
           <h1 class="brand-title">MQTT Cloud</h1>
@@ -95,11 +95,9 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import SvgIcon from '@/components/Icon.vue'
 
-const router = useRouter()
 const authStore = useAuthStore()
 
 const form = ref({
