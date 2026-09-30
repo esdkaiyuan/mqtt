@@ -426,6 +426,29 @@ docker compose -f docker/docker-compose.yml logs backend
 
 杀掉一个副本后，nginx 在下一次解析（≤10s）内切到存活副本，共享订阅由存活副本接管消息，**无重复、无丢失**。表现为 nginx 错误日志出现一次对已死副本的 `connect() failed (111: Connection refused)`，随后恢复。
 
+### 9.7 分区维护（R1-5，按门槛推迟到 R5）
+
+> **当前状态：未执行。** 本小节如实记录决策依据与未来操作口径，便于后续接手时直接执行。
+
+原计划在 R1-5 对 `message` 表做按月分区改造（`V4` 迁移）。该改造涉及**主键变更**（改为 `(id, sent_at)`）与**外键删除**（`message.device_id` 的 `ON DELETE SET NULL`），且 MySQL 8 要求分区键必须包含在每个唯一索引中、分区表不支持外键，属于本阶段风险最高的一项。
+
+**执行前置门槛**（源自 `docs/T-12_架构重构_实施计划.md`）：
+
+```sql
+-- 若满足以下条件，可将分区改造推迟到 R5（已在 R1 决策推迟）
+SELECT COUNT(*) FROM message;   -- 需 < 500 万
+-- 且月增速 < 200 万
+```
+
+当前数据量未达阈，故**未执行 V4**，`backend/src/main/resources/db/migration/` 下不存在 V4 文件；该决策与依据已记录于 `docs/总督促文档.md`。
+
+**未来执行口径**（数据量过门槛后）：
+
+1. 选停机窗口：分区 DDL 会重建整表，先在副本库演练并核对行数与校验和。
+2. 先在 `message` 上删除 `device_id` 外键，再把主键改为 `(id, sent_at)`，最后按 `sent_at` 建月分区。
+3. 分区不可逆：回退需重建非分区表并回灌数据，故务必保留迁移前备份。
+4. 上线后按需滚动新增/清理分区（`ALTER TABLE ... ADD/DROP PARTITION`），并纳入巡检。
+
 ---
 
 ## 10. 依赖版本与安全扫描
@@ -464,3 +487,53 @@ docker run --rm -v //var/run/docker.sock:/var/run/docker.sock \
 | `gnupg` 系列 | CVE-2022-3219 | Low | 基础镜像自带 |
 
 > 升级依赖后如发现应用依赖新增高危项，优先在 `pom.xml` 的 `<properties>` 中**同 minor 覆盖补丁版本**（Spring Boot 会读取这些属性作为 BOM 版本），避免直接改依赖声明破坏 BOM 一致性。
+
+---
+
+## 11. CI 流水线
+
+`.github/workflows/ci.yml` 定义三阶段流水线，`push` 到 `main` 或提交 PR 时触发；同一分支的连续推送会取消排队中的旧运行（`concurrency.cancel-in-progress`），避免重复占用 runner。
+
+| 阶段 | 运行环境 | 关键步骤 | 覆盖内容 |
+|------|----------|----------|----------|
+| `backend` | ubuntu-latest + JDK 17 (temurin) | `mvn -B verify`（工作目录 `backend`） | 单元测试、ArchUnit 分层约束、打包；依赖走 `cache: maven` |
+| `frontend` | ubuntu-latest + Node 20 | `npm ci` → `lint` → `test` → `build`（工作目录 `frontend`） | ESLint、Vitest 单测、生产构建；npm 缓存按 `frontend/package-lock.json` 命中 |
+| `e2e` | ubuntu-latest | `bash scripts/deploy.sh` 起全套服务 → `pwsh scripts/api-test.ps1` | 真实 Broker / MySQL / Redis / nginx 下执行 76 条接口断言；`needs: [backend, frontend]` |
+
+测试报告（surefire）在 `if: always()` 时以 artifact 形式上传，保留 7 天，便于失败后回溯。
+
+### 11.1 为什么 `backend` 阶段必须挂 MySQL service
+
+`MqttCloudApplicationTests` 是全上下文 `@SpringBootTest`，而 `application.yml` 中 `spring.flyway.baseline-on-migrate: true` 且 `locations: classpath:db/migration`，上下文启动时会**真实执行**建表脚本（日志可见 `Successfully applied 3 migrations` / `Current version of schema mqtt_cloud: 3`）。因此流水线用 `services: mysql:8.0` 起一个临时库（`MYSQL_DATABASE=mqtt_cloud`），并通过 `DB_HOST=127.0.0.1` / `DB_PORT=3306` / `DB_USERNAME` / `DB_PASSWORD` 注入连接信息；缺少数据库时测试会在 Flyway 阶段直接失败。
+
+### 11.2 为什么 e2e 经 nginx 网关执行
+
+`docker-compose.yml` 中后端**不发布宿主机端口**（多副本会端口冲突），唯一入口是 nginx（`${FRONTEND_PORT:-80}`）。因此健康轮询与接口测试都走 `http://127.0.0.1/api`。这带来两处与「直连后端」不同的口径，已在 `scripts/api-test.ps1` 中参数化，**默认行为不变**（直连时仍按原断言执行）：
+
+| 参数 | 作用 | 不传时的默认 |
+|------|------|--------------|
+| `-BehindGateway` | 网关对 `/api/internal/` 是 `deny all; return 403`，无令牌请求在**网关层**即返回 403（请求不到达后端），故 P8/P9 的期望放宽为 `401/403` | 仅接受 `401`（直连后端，由内部令牌过滤器拒绝） |
+| `-SelfBase` | webhook 正向投递用例（`33a/33b`）的请求由**后端进程自身**发出，回环地址必须指向后端而非网关；经网关执行时须显式指定 `http://localhost:8080/api` | 取 `-Base` 的值 |
+
+另外 `scripts/api-test.ps1` 通过 `curl.exe`（Windows 命名）发请求，Linux runner 上补一个同名软链（`ln -sf "$(command -v curl)" /usr/local/bin/curl.exe`）即可，**无需改动被测脚本本身**。
+
+### 11.3 本地等价复现
+
+```powershell
+# 等价 backend 阶段
+cd backend ; mvn -B verify
+
+# 等价 frontend 阶段
+cd frontend ; npm ci ; npm run lint ; npm run test ; npm run build
+
+# 等价 e2e 阶段（需本机已安装 Docker）
+bash scripts/deploy.sh
+pwsh -File scripts/api-test.ps1 -Base http://127.0.0.1/api -BehindGateway -SelfBase http://localhost:8080/api
+```
+
+**实测结果（R4-5 本地等价验证）**：backend `BUILD SUCCESS` / `Tests run: 97, Failures: 0, Errors: 0`；frontend `Test Files 4 passed / Tests 31 passed`、构建产物 `element-plus` chunk 170.62 kB（gzip 55.41 kB）；e2e `PASS=76  FAIL=0  TOTAL=76`（退出码 0）。
+
+### 11.4 首次绿灯运行
+
+<!-- 待填写：首个全绿 run 链接 -->
+

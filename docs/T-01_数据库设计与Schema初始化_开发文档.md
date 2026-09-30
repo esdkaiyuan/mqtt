@@ -189,6 +189,7 @@ CREATE TABLE IF NOT EXISTS history_record (
 | device_status_history | 180天 | 超过期限删除 | 状态变更历史无需长期保留 |
 | message | 90天 | 超过期限删除或归档 | 高频表，注意性能 |
 | history_record | 365天 | 超过期限归档 | 业务数据，长期保留价值高 |
+| ingest_dead_letter | 待定 | 手动重放/丢弃 | T-12 新增（`V3`）；建议定期清理已处置（`REPLAYED`/`DISCARDED`）记录 |
 
 ### 2.7 连接池配置建议
 
@@ -463,7 +464,53 @@ A: message表记录原始MQTT消息（含QoS、方向、发送/接收时间等�
 A: MySQL 8.0支持JSON函数，如 `JSON_EXTRACT(metadata, '$.unit')`、`JSON_CONTAINS(metadata, '{"unit":"°C"}')`。但在MyBatis中建议在Service层解析JSON字符串为Java对象，避免在SQL中过度使用JSON函数。
 
 **Q: message表数据量很大时如何优化？**
-A: 可考虑：(1) 按月做分区表；(2) 超过90天的数据归档到message_archive表；(3) 对高频设备单独建表（按device_id分表）。
+A: 可考虑：(1) 按月做分区表；(2) 超过90天的数据归档到message_archive表；(3) 对高频设备单独建表（按device_id分表）。其中「按月分区」已在 T-12 R1 阶段规划为 `V4` 迁移，但因数据量未过门槛（`message` 行数 < 500 万且月增速 < 200 万）**推迟到 R5**，详见第 10 节与 `docs/DEPLOYMENT.md` §9.7。
 
 **Q: 外键会影响写入性能吗？**
-A: 外键检查有微小开销，但在当前数据规模下（百万级以内）影响可忽略。若未来数据量极大，可考虑在应用层维护数据一致性，去掉外键。
+A: 外键检查有微小开销，但在当前数据规模下（百万级以内）影响可忽略。若未来数据量极大，可考虑在应用层维护数据一致性，去掉外键。注意：若 R5 执行 `message` 按月分区（`V4`），因 MySQL 分区表不支持外键，须先删除 `message.device_id` 外键。
+
+---
+
+## 10. Schema 迁移演进（Flyway）
+
+自 T-11 起 schema 由 **Flyway** 接管，迁移脚本位于 `backend/src/main/resources/db/migration/`。存量库通过 `spring.flyway.baseline-on-migrate: true` 记为 V1 后，仅执行 V2 及之后的脚本（本文档第 3 节的 `scripts/init-mysql.sql` 为**首次部署的等价基线**，与 `V1__baseline.sql` 内容对应）。
+
+| 版本 | 脚本 | 变更内容 | 状态 |
+|------|------|----------|------|
+| `V1` | `V1__baseline.sql` | 基线：`sys_user` / `product` 之前的核心表、外键与索引，播种默认 `admin` 账号 | 已执行 |
+| `V2` | `V2__product_and_device_identity.sql` | 新增 `product`（产品模板）表；`device` 增加 `product_id`（外键）、`device_secret_hash`、`secret_updated_at`、`enabled`；唯一键由 `device_key` 全局唯一收敛为 `(product_id, device_key)` | 已执行 |
+| `V3` | `V3__ingest_dead_letter.sql` | 新增 `ingest_dead_letter` 死信表：记录摄取管线中队列满或批量落库失败的消息（原文、失败原因、重试次数、处置状态），供人工重放/丢弃；对应 T-12 R1 摄取管线的重试死信能力 | 已执行 |
+| `V4` | （未创建） | 原计划：删除 `message.device_id` 外键、主键由 `id` 改为 `(id, sent_at)`、按 `sent_at` 建月分区 | **未执行（推迟到 R5）** |
+
+### 10.1 关于 `V4`（未执行，如实记录）
+
+`V4` 涉及**主键变更**与**外键删除**，且 MySQL 8 要求分区键必须包含在每个唯一索引中、分区表不支持外键，属本阶段风险最高的一项。T-12 为其设了**执行前置门槛**：
+
+```sql
+-- 满足以下条件时可将分区改造推迟到 R5
+SELECT COUNT(*) FROM message;   -- 需 < 500 万
+-- 且月增速 < 200 万
+```
+
+当前数据量未达阈，故 R1 阶段已决策**推迟到 R5**，`db/migration/` 下**不存在 V4 文件**；该决策与依据同步记录于 `docs/总督促文档.md`，未来执行口径见 `docs/DEPLOYMENT.md` §9.7。
+
+### 10.2 新增表说明 — `ingest_dead_letter`（`V3`）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | BIGINT AUTO_INCREMENT PK | 主键 |
+| `device_key` | VARCHAR(100) NOT NULL | 设备标识 |
+| `topic` | VARCHAR(255) NOT NULL | MQTT Topic |
+| `message_type` | VARCHAR(20) NOT NULL | 消息类型：`data` / `heartbeat` / `lwt` |
+| `payload` | TEXT | 消息载荷 |
+| `qos` | INT DEFAULT 0 | QoS 等级 |
+| `received_at` | DATETIME(3) NOT NULL | 消息接收时间（毫秒精度） |
+| `reason` | VARCHAR(30) NOT NULL | 失败原因：`queue_full` / `persist_failed` |
+| `attempts` | INT NOT NULL DEFAULT 0 | 落库尝试次数 |
+| `error_message` | VARCHAR(500) | 最后一次失败原因 |
+| `status` | ENUM('PENDING','REPLAYED','DISCARDED') DEFAULT 'PENDING' | 处置状态 |
+| `created_at` | DATETIME DEFAULT CURRENT_TIMESTAMP | 入库时间 |
+
+索引：`idx_status_created (status, created_at)`、`idx_device_key (device_key)`、`idx_created_at (created_at)`。
+
+死信查询与处置接口：`GET /api/admin/dead-letters?status=PENDING`（详见 `docs/DEPLOYMENT.md` §6）。

@@ -1,6 +1,6 @@
 # MQTT云平台 - 系统架构文档
 
-> 版本：v1.4　最后更新：2026-09-30
+> 版本：v1.5　最后更新：2026-09-30
 > 适用范围：`MQTT自建站点` 主项目（Spring Boot + Vue 3 + EMQX + MySQL + Redis）
 
 ---
@@ -34,6 +34,7 @@ flowchart TB
 
     subgraph App["应用层"]
         Backend["Spring Boot 后端（context-path: /api）"]
+        Ingest["摄取管线（共享订阅消费 → 有界队列 → 批量落库）"]
         Init["emqx-init（一次性：下发认证/授权源）"]
     end
 
@@ -55,6 +56,10 @@ flowchart TB
     Init -->|"REST API 下发认证/授权源"| EMQX
 
     Backend -->|"TCP :1883 平台账号订阅/发布"| EMQX
+    EMQX -->|"共享订阅 $share/{group}/device/+/data"| Ingest
+    Ingest -->|"批量落库（INSERT ... ON DUPLICATE KEY）"| MySQL
+    Ingest -->|"PUBLISH realtime:broadcast"| Redis
+    Redis -->|"SUBSCRIBE 扇出至本副本订阅者"| Backend
     Backend -->|"SSE /api/realtime/stream（按归属过滤）"| Browser
     Backend --> MySQL
     Backend --> Redis
@@ -66,6 +71,8 @@ flowchart TB
 - **实时通道收敛到后端**：浏览器不再直连 Broker，改为订阅后端 SSE（`GET /api/realtime/stream`），由后端按设备归属与角色过滤后推送，前端不再持有任何 Broker 凭据。
 - **EMQX 认证与授权外置到后端**：设备连接触发 `/api/internal/emqx/auth`，主题读写触发 `/api/internal/emqx/acl`，由后端按「产品 → 设备 → 一机一密」规则裁决；`emqx-init` 服务负责把这两个回调源写入 EMQX（幂等，可重复执行）。
 - **Nginx 只代理 `/api`**：前端静态资源与 SPA 回退由 Nginx 承担；`/api/internal/*` 在网关层直接返回 403，仅允许容器网络内的 EMQX 直连后端。
+- **摄取链路（R2-1~R2-3）**：平台以共享订阅 `$share/{group}/device/+/data` 消费设备上行数据，进入有界队列后由固定 worker 批量落库；同一份数据同时 `PUBLISH` 到 Redis Pub/Sub 频道，由各后端副本 `SUBSCRIBE` 后扇出给本副本持有的 SSE 连接。队列满或落库持续失败的消息进入 `ingest_dead_letter` 表待人工处置，不阻塞主链路。
+- **摘要指标优先**：设备最新状态与消息计数走 `updateStatusGuarded` 时间戳守卫写入，避免共享订阅 `round_robin` 分摊导致的乱序覆盖；严格有序场景留待 R5 引入 Kafka 按 `deviceKey` 分区解决。
 
 ---
 
@@ -218,10 +225,12 @@ frontend/src
 | `history_record` | 历史查询用归档记录 |
 | `api_key` | 第三方接入密钥（哈希存储） |
 | `webhook_config` | Webhook 目标地址与事件订阅 |
+| `ingest_dead_letter` | 摄取管线死信（`V3` 新增）：记录 `device_key`/`topic`/`message_type`/`payload`/`qos`/`received_at`，以及失败原因（`queue_full`/`persist_failed`）、尝试次数与处置状态（`PENDING`/`REPLAYED`/`DISCARDED`） |
 
 三层关系：**产品（模板）→ 设备（实例，`deviceKey` 在产品内唯一）→ 凭据（`deviceSecret` 仅存 BCrypt 哈希于 `device`）**。
 
-Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__baseline.sql`（基线）与 `V2__product_and_device_identity.sql`（产品表 + 设备表改造）。存量库通过 `baseline-on-migrate` 记为 V1 后仅执行 V2+。字段级设计与索引见 `docs/T-01_数据库设计与Schema初始化_开发文档.md`。
+Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__baseline.sql`（基线）、`V2__product_and_device_identity.sql`（产品表 + 设备表改造）与 `V3__ingest_dead_letter.sql`（摄取死信表）。存量库通过 `baseline-on-migrate` 记为 V1 后仅执行 V2+。
+原计划的 `V4`（`message` 删外键 + 主键改 `(id, sent_at)` + 按月分区）**未执行**：按前置门槛（`SELECT COUNT(*) FROM message` < 500 万且月增速 < 200 万）判定当前数据量未达阈，已在 R1 阶段决策推迟到 R5，并记录于 `docs/总督促文档.md`；因此 `db/migration/` 下不存在 V4 文件。字段级设计与索引见 `docs/T-01_数据库设计与Schema初始化_开发文档.md`。
 
 ---
 
@@ -276,3 +285,15 @@ Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__base
 - 前端各模块：[`docs/T-06`](T-06_前端项目基础架构与设计系统_开发文档.md) ~ [`docs/T-08`](T-08_前端实时消息与历史页面_开发文档.md)
 - 集成测试：[`docs/T-09_API集成与端到端测试_开发文档.md`](T-09_API集成与端到端测试_开发文档.md)
 - 设备接入：[`docs/ESP32_接入手册.md`](ESP32_接入手册.md)
+
+---
+
+## 11. 变更记录
+
+| 版本 | 日期 | 变更摘要 |
+|------|------|----------|
+| v1.1 | 2026-09-28 | 初版：分层结构、部署拓扑、安全设计与外部依赖基线。 |
+| v1.2 | 2026-09-29 | 补充目标模块边界映射与 ArchUnit 可执行边界（R3-2）。 |
+| v1.3 | 2026-09-29 | 补充共享订阅顺序性权衡与 `updateStatusGuarded` 守卫说明（R1-6）。 |
+| v1.4 | 2026-09-30 | 更新前端构建优化说明：Element Plus 按需引入（自定义 resolver）与 `manualChunks` 分包实测数据（R4-1）。 |
+| v1.5 | 2026-09-30 | R4-6 收口：§2 运行时拓扑补入摄取链路（共享订阅 → 摄取管线 → 批量落库 → Redis Pub/Sub → SSE 扇出）；§6 数据模型补 `ingest_dead_letter` 表与 `V3` 迁移，并如实标注 `V4` 因未过数据量门槛推迟到 R5；新增本节变更记录。 |
