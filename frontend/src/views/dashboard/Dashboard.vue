@@ -63,31 +63,6 @@ const { overview, statusData, typeData, trendData, recentMessages, loading, refe
   gap: var(--spacing-md);
 }
 
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 6px 14px;
-  background: #fff;
-  color: var(--color-text-regular);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-sm);
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  font-family: var(--font-family);
-  transition: all 0.2s;
-}
-
-.btn-secondary:hover:not(:disabled) {
-  color: var(--color-primary);
-  border-color: var(--color-primary);
-}
-
-.btn-secondary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .btn-secondary .svg-icon {
   transition: transform 0.4s;
 }
