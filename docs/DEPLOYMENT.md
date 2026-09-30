@@ -75,6 +75,8 @@ bash scripts/health-check.sh
 | `DIRECT_FRONTEND_ENABLED` | 是否保留前端直连 Broker 的受限账号；前端已改用 SSE，确认后可置 `false` | `true` |
 | `ACCESS_CONTROL_CACHE_TTL_SECONDS` | 认证元数据缓存 TTL（秒）；`0` 关闭缓存，认证每次回源查库 | `60` |
 | `ACL_CACHE_TTL` | EMQX 授权结果缓存 TTL（由 `emqx-init` 下发）；决定禁用/停用后已连接会话收发被拒的最长收敛窗口 | `10s` |
+| `EMQX_DASHBOARD_USER` / `EMQX_DASHBOARD_PASSWORD` | EMQX Dashboard 账号；`emqx-init` 下发认证/授权配置与后端踢线换取 token **共用**，二者必须一致 | `admin` / `public` |
+| `EMQX_KICK_ENABLED` | 禁用 / 停用时是否调用 EMQX 踢线接口（`DELETE /api/v5/clients/{clientid}`）**立即断开**已连接会话；`false` 时仅靠 `ACL_CACHE_TTL` 收敛收发、连接态等下次认证 | `true` |
 
 `emqx-init` 服务（容器名 `mqtt-emqx-init`，`restart: "no"`）在 `emqx` 与 `backend` 均健康后执行一次，
 通过 EMQX REST API 下发 HTTP 认证源（回调 `/api/internal/emqx/auth`）与 HTTP 授权源
@@ -128,14 +130,28 @@ curl -s http://localhost/api/actuator/prometheus | grep '^mqtt_'
 > P99 **514.15 → 497.86 ms**（**持平、不劣化**）。P99 由 BCrypt（strength=10，逐次计算约 80 ms、不可缓存）主导，缓存仅消除约 12~18 ms 的 DB 往返，
 > 故不应预期 P99 大幅下降 —— 该哈希成本是有意保留的安全约束。若需进一步压低 P99，方向为提升后端 CPU 配额或引入连接级会话复用。
 
-> **设备禁用 / 产品停用的生效语义（R3-4 / R3-5）**：禁用设备（`device.enabled=0`）与停用产品（`product.status=DISABLED`）
+> **设备禁用 / 产品停用的生效语义（R3-4 / R3-5 / R3-6）**：禁用设备（`device.enabled=0`）与停用产品（`product.status=DISABLED`）
 > 对**连接**与**收发**两个环节同时生效，两处判定共用 `DeviceAccessGuard`，避免"认证拒绝、授权放行"的语义分叉。
-> - **连接**：已建立的连接**不会被主动踢下线**，但在**下一次认证**（重连）时被拒（CONNACK `reasonCode=5`）；启用后重连恢复。
+> - **连接**：`EMQX_KICK_ENABLED=true`（默认）时，禁用 / 停用后后端调用 EMQX 踢线接口
+>   （`DELETE /api/v5/clients/{clientid}`）**立即断开**该设备（产品停用则批量断开其下全部设备）的已连接会话；
+>   置 `false` 时不做踢线，已连接会话保持存活，仅由下方授权在 TTL 内收敛收发，连接态等**下一次认证**（重连）才被拒（CONNACK `reasonCode=5`）。
+>   启用后重连恢复。
 > - **收发**：授权回调按同源判定裁决，禁用/停用经主动失效后，已连接会话的发布与订阅**同样被拒**，
 >   消息由 Broker 丢弃（`deny_action: ignore`）。
 > - **收敛窗口**：EMQX 授权结果缓存（`ACL_CACHE_TTL`，默认 `10s`）内可能仍按旧结论放行，**最长 10 秒**后收敛；
 >   该缓存不随后端主动失效而清除，故不能为 0。
-> - **即时切断**：若需"禁用即断开"而非等下次认证，须调用 EMQX 踢线接口（`DELETE /api/v5/clients/{clientid}`），当前**未实现**。
+> - **降级**：踢线是尽力而为的加速手段（禁用本身已由准入判定保证），全路径失败只记 WARN、**绝不连累禁用动作**；
+>   EMQX 不可达或踢线失败时，退回「等下次认证 + ACL TTL 收敛」。
+>
+> 踢线自检（禁用某设备后其在线连接应立即消失）：
+>
+> ```bash
+> # 1) 后端日志应出现踢线成功记录
+> docker logs docker-backend-1 --tail 20 | grep '已踢下线设备连接'   # 期望：username={productKey}.{deviceKey}, count=N
+> # 2) EMQX 侧该用户名下已无在线连接
+> docker exec mqtt-emqx emqx ctl clients list | grep '<productKey>.<deviceKey>'   # 期望：无输出
+> # 3) 降级路径自检：EMQX_KICK_ENABLED=false 重建后端后，禁用设备连接保持存活，仅收发在 ACL_CACHE_TTL 内被拒
+> ```
 
 > **共享订阅（多副本去重）**：上行订阅使用 EMQX 共享订阅 `$share/{MQTT_SHARED_GROUP}/device/+/...`（组名默认 `mqtt-backend`）。多副本部署时各副本必须使用**同一组名**，同组内消息按 `round_robin` 分摊、不会重复落库；单副本同样适用（组内仅一个成员）。共享订阅**不保证同一设备消息跨副本的到达顺序**，设备状态正确性由时间戳守卫兜底（见 `ARCHITECTURE.md` 第 9 节）。EMQX 传给授权回调的是剥离前缀后的真实主题，`AclEvaluator` 无需感知 `$share`。
 
