@@ -1,15 +1,24 @@
 package com.mqtt.cloud.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.dto.request.ProductRequest;
+import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.ProductMapper;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
+import com.mqtt.cloud.service.DeviceSecretService;
+import com.mqtt.cloud.service.EmqxClientKicker;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -31,8 +40,20 @@ class ProductServiceImplTest {
     @Mock
     private DeviceAuthCacheService authCacheService;
 
+    @Mock
+    private DeviceSecretService deviceSecretService;
+
+    @Mock
+    private EmqxClientKicker emqxClientKicker;
+
     @InjectMocks
     private ProductServiceImpl productService;
+
+    @BeforeEach
+    void setUp() {
+        // LambdaQueryWrapper 需要实体的 TableInfo；纯单测无 MyBatis 上下文，手动初始化
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Device.class);
+    }
 
     private ProductRequest request(String key) {
         ProductRequest req = new ProductRequest();
@@ -93,15 +114,21 @@ class ProductServiceImplTest {
     }
 
     @Test
-    void disableProduct_should_set_status_and_evict_auth_cache() {
+    void disableProduct_should_set_status_evict_auth_cache_and_kick_devices() {
         Product existing = product(9L, "esp32-fall", "ENABLED");
         when(productMapper.selectById(9L)).thenReturn(existing);
+        when(deviceMapper.selectList(any())).thenReturn(List.of(
+                device(101L, "sensor-01"), device(102L, "sensor-02")));
+        when(deviceSecretService.buildUsername("esp32-fall", "sensor-01")).thenReturn("esp32-fall.sensor-01");
+        when(deviceSecretService.buildUsername("esp32-fall", "sensor-02")).thenReturn("esp32-fall.sensor-02");
 
         productService.disableProduct(9L);
 
         assertThat(existing.getStatus()).isEqualTo("DISABLED");
         verify(productMapper).updateById(existing);
         verify(authCacheService).evictProduct("esp32-fall");
+        verify(emqxClientKicker).kickByUsername("esp32-fall.sensor-01");
+        verify(emqxClientKicker).kickByUsername("esp32-fall.sensor-02");
     }
 
     @Test
@@ -113,6 +140,7 @@ class ProductServiceImplTest {
 
         verify(productMapper, never()).updateById(any(Product.class));
         verifyNoInteractions(authCacheService);
+        verifyNoInteractions(emqxClientKicker);
     }
 
     @Test
@@ -125,6 +153,7 @@ class ProductServiceImplTest {
         assertThat(existing.getStatus()).isEqualTo("ENABLED");
         verify(productMapper).updateById(existing);
         verify(authCacheService).evictProduct("esp32-fall");
+        verifyNoInteractions(emqxClientKicker);
     }
 
     private Product product(Long id, String key, String status) {
@@ -133,6 +162,13 @@ class ProductServiceImplTest {
         product.setProductKey(key);
         product.setStatus(status);
         return product;
+    }
+
+    private Device device(Long id, String key) {
+        Device device = new Device();
+        device.setId(id);
+        device.setDeviceKey(key);
+        return device;
     }
 
     @Test

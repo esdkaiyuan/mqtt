@@ -8,6 +8,7 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.common.util.AfterCommit;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
@@ -20,6 +21,7 @@ import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
+import com.mqtt.cloud.service.EmqxClientKicker;
 import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +42,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     private final DeviceSecretService deviceSecretService;
     private final ProductService productService;
     private final DeviceAuthCacheService authCacheService;
+    private final EmqxClientKicker emqxClientKicker;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -130,6 +133,8 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     /**
      * 统一设置连接许可。enabled 与运行态 status 语义分离，仅影响后续认证判定；
      * 变更后主动失效认证缓存，避免 TTL 内旧元数据继续放行。
+     * <p>
+     * 禁用时额外踢线切断已建立连接；状态未变化视为幂等空操作，不产生任何副作用。
      */
     private void setDeviceEnabled(Long deviceId, int enabled) {
         Device device = getDeviceById(deviceId);
@@ -140,6 +145,23 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         wrapper.eq(Device::getId, deviceId).set(Device::getEnabled, enabled);
         this.baseMapper.update(null, wrapper);
         evictAuthCache(device);
+        if (enabled == 0) {
+            kickDeviceSessions(device);
+        }
+    }
+
+    /**
+     * 踢掉该设备当前的在线连接。事务提交后执行，避免网络 I/O 占用数据库连接；
+     * 踢线失败不影响禁用本身，由授权缓存 TTL 兜底收敛。
+     */
+    private void kickDeviceSessions(Device device) {
+        try {
+            Product product = productService.requireById(device.getProductId());
+            String username = deviceSecretService.buildUsername(product.getProductKey(), device.getDeviceKey());
+            AfterCommit.run(() -> emqxClientKicker.kickByUsername(username));
+        } catch (Exception e) {
+            log.warn("禁用设备时解析踢线用户名失败，将依赖授权缓存 TTL 收敛: deviceId={}", device.getId(), e);
+        }
     }
 
     /**

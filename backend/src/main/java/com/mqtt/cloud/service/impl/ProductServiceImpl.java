@@ -3,13 +3,18 @@ package com.mqtt.cloud.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.common.util.AfterCommit;
 import com.mqtt.cloud.dto.request.ProductRequest;
+import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.ProductMapper;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
+import com.mqtt.cloud.service.DeviceSecretService;
+import com.mqtt.cloud.service.EmqxClientKicker;
 import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -18,6 +23,7 @@ import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ProductServiceImpl implements ProductService {
 
     private static final String DEFAULT_TOPIC_PREFIX = "device/{deviceKey}";
@@ -32,6 +38,10 @@ public class ProductServiceImpl implements ProductService {
     private final DeviceMapper deviceMapper;
 
     private final DeviceAuthCacheService authCacheService;
+
+    private final DeviceSecretService deviceSecretService;
+
+    private final EmqxClientKicker emqxClientKicker;
 
     @Override
     @Transactional
@@ -120,6 +130,8 @@ public class ProductServiceImpl implements ProductService {
     /**
      * 统一设置产品状态。状态变更会改变旗下设备的认证判定结果，
      * 因此必须失效该产品下全部设备的认证缓存，避免 TTL 内旧元数据继续放行。
+     * <p>
+     * 停用时额外踢掉旗下设备的在线连接；状态未变化视为幂等空操作，不产生任何副作用。
      */
     private void setProductStatus(Long id, String status) {
         Product product = requireById(id);
@@ -129,6 +141,31 @@ public class ProductServiceImpl implements ProductService {
         product.setStatus(status);
         productMapper.updateById(product);
         authCacheService.evictProduct(product.getProductKey());
+        if (STATUS_DISABLED.equals(status)) {
+            kickProductSessions(product);
+        }
+    }
+
+    /**
+     * 踢掉该产品下全部设备的在线连接。事务提交后执行，避免网络 I/O 占用数据库连接；
+     * 踢线失败不影响停用本身，由授权缓存 TTL 兜底收敛。
+     */
+    private void kickProductSessions(Product product) {
+        try {
+            List<Device> devices = deviceMapper.selectList(
+                    Wrappers.<Device>lambdaQuery().eq(Device::getProductId, product.getId()));
+            List<String> usernames = devices.stream()
+                    .map(device -> deviceSecretService.buildUsername(product.getProductKey(), device.getDeviceKey()))
+                    .filter(StringUtils::hasText)
+                    .toList();
+            if (usernames.isEmpty()) {
+                return;
+            }
+            AfterCommit.run(() -> usernames.forEach(emqxClientKicker::kickByUsername));
+        } catch (Exception e) {
+            log.warn("停用产品时解析踢线用户名失败，将依赖授权缓存 TTL 收敛: productKey={}",
+                    product.getProductKey(), e);
+        }
     }
 
     @Override

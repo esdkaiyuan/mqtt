@@ -10,6 +10,7 @@ import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
+import com.mqtt.cloud.service.EmqxClientKicker;
 import com.mqtt.cloud.service.ProductService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +45,8 @@ class DeviceServiceImplTest {
     private DeviceMapper deviceMapper;
     @Mock
     private DeviceAuthCacheService authCacheService;
+    @Mock
+    private EmqxClientKicker emqxClientKicker;
 
     private DeviceServiceImpl service;
 
@@ -52,7 +55,7 @@ class DeviceServiceImplTest {
         // LambdaUpdateWrapper 需要实体的 TableInfo；纯单测无 MyBatis 上下文，手动初始化
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Device.class);
         service = new DeviceServiceImpl(deviceStatusHistoryService, deviceCredentialService,
-                deviceSecretService, productService, authCacheService);
+                deviceSecretService, productService, authCacheService, emqxClientKicker);
         ReflectionTestUtils.setField(service, "baseMapper", deviceMapper);
     }
 
@@ -85,11 +88,13 @@ class DeviceServiceImplTest {
         product.setId(10L);
         product.setProductKey("esp32-fall");
         when(productService.requireById(10L)).thenReturn(product);
+        when(deviceSecretService.buildUsername("esp32-fall", "sensor-01")).thenReturn("esp32-fall.sensor-01");
 
         service.disableDevice(1L);
 
         verify(deviceMapper).update(any(), any());
         verify(authCacheService).evict("esp32-fall", "sensor-01");
+        verify(emqxClientKicker).kickByUsername("esp32-fall.sensor-01");
     }
 
     @Test
@@ -103,6 +108,7 @@ class DeviceServiceImplTest {
 
         verify(deviceMapper, never()).update(any(), any());
         verifyNoInteractions(authCacheService);
+        verifyNoInteractions(emqxClientKicker);
     }
 
     @Test
@@ -122,6 +128,7 @@ class DeviceServiceImplTest {
 
         verify(deviceMapper).update(any(), any());
         verify(authCacheService).evict("esp32-fall", "sensor-01");
+        verifyNoInteractions(emqxClientKicker);
     }
 
     @Test
