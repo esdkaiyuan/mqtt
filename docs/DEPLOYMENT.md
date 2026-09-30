@@ -74,6 +74,7 @@ bash scripts/health-check.sh
 | `ACCESS_CONTROL_ENFORCE_AUTH` | `false`=双轨期，认证/授权回调一律放行（存量设备老账号仍可用）；`true`=仅一机一密凭据可接入 | `false` |
 | `DIRECT_FRONTEND_ENABLED` | 是否保留前端直连 Broker 的受限账号；前端已改用 SSE，确认后可置 `false` | `true` |
 | `ACCESS_CONTROL_CACHE_TTL_SECONDS` | 认证元数据缓存 TTL（秒）；`0` 关闭缓存，认证每次回源查库 | `60` |
+| `ACL_CACHE_TTL` | EMQX 授权结果缓存 TTL（由 `emqx-init` 下发）；决定禁用/停用后已连接会话收发被拒的最长收敛窗口 | `10s` |
 
 `emqx-init` 服务（容器名 `mqtt-emqx-init`，`restart: "no"`）在 `emqx` 与 `backend` 均健康后执行一次，
 通过 EMQX REST API 下发 HTTP 认证源（回调 `/api/internal/emqx/auth`）与 HTTP 授权源
@@ -88,7 +89,8 @@ EMQX 的认证/授权源指向后端，若在后端就绪前下发，连接器�
 ```bash
 docker logs mqtt-emqx-init --tail 20
 # 期望输出：EMQX 认证与授权配置完成，且回读校验通过
-# 校验项：HTTP 认证器 enable=true；HTTP 授权源 enable=true；file 授权源 enable=false；authorization.settings.no_match=deny
+# 校验项：HTTP 认证器 enable=true；HTTP 授权源 enable=true；file 授权源 enable=false；
+#         authorization.settings.no_match=deny；authorization.settings.cache.ttl=$ACL_CACHE_TTL
 ```
 
 > 内置 `file` 授权源的 `acl.conf` 末尾是 `{allow, all}`，会在授权链中直接放行、短路其后的 HTTP 授权源，
@@ -121,6 +123,15 @@ curl -s http://localhost/api/actuator/prometheus | grep '^mqtt_'
 > 验证缓存生效：连续两次使用同一设备凭据连接，第二次不再触发 `product` / `device` 查询
 > （单测 `EmqxAuthServiceImplTest#authenticate_should_skip_db_when_cache_hits` 断言 `ProductService` / `DeviceService` 零调用）。
 > EMQX 5.0 的 HTTP 认证器不提供认证结果缓存，故缓存落在后端；EMQX 侧版本评估见 R3-3。
+
+> **设备禁用 / 产品停用的生效语义（R3-4 / R3-5）**：禁用设备（`device.enabled=0`）与停用产品（`product.status=DISABLED`）
+> 对**连接**与**收发**两个环节同时生效，两处判定共用 `DeviceAccessGuard`，避免"认证拒绝、授权放行"的语义分叉。
+> - **连接**：已建立的连接**不会被主动踢下线**，但在**下一次认证**（重连）时被拒（CONNACK `reasonCode=5`）；启用后重连恢复。
+> - **收发**：授权回调按同源判定裁决，禁用/停用经主动失效后，已连接会话的发布与订阅**同样被拒**，
+>   消息由 Broker 丢弃（`deny_action: ignore`）。
+> - **收敛窗口**：EMQX 授权结果缓存（`ACL_CACHE_TTL`，默认 `10s`）内可能仍按旧结论放行，**最长 10 秒**后收敛；
+>   该缓存不随后端主动失效而清除，故不能为 0。
+> - **即时切断**：若需"禁用即断开"而非等下次认证，须调用 EMQX 踢线接口（`DELETE /api/v5/clients/{clientid}`），当前**未实现**。
 
 > **共享订阅（多副本去重）**：上行订阅使用 EMQX 共享订阅 `$share/{MQTT_SHARED_GROUP}/device/+/...`（组名默认 `mqtt-backend`）。多副本部署时各副本必须使用**同一组名**，同组内消息按 `round_robin` 分摊、不会重复落库；单副本同样适用（组内仅一个成员）。共享订阅**不保证同一设备消息跨副本的到达顺序**，设备状态正确性由时间戳守卫兜底（见 `ARCHITECTURE.md` 第 9 节）。EMQX 传给授权回调的是剥离前缀后的真实主题，`AclEvaluator` 无需感知 `$share`。
 
