@@ -1,6 +1,8 @@
 # ========== 构建阶段 ==========
 # 构建上下文为仓库根目录（见 docker/docker-compose.yml 的 build.context）
-FROM node:18-alpine AS builder
+# Node 版本要求 ≥20.19：unplugin@3.x（unplugin-auto-import / unplugin-vue-components 的依赖）
+# 声明 engines.node ^20.19.0 || >=22.12.0，Node 18 下 vite.config.js 加载会失败。
+FROM node:22-alpine AS builder
 WORKDIR /build
 
 COPY frontend/package.json frontend/package-lock.json ./
