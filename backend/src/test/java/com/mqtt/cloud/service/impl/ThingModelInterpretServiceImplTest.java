@@ -7,6 +7,7 @@ import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.ingest.ResolvedEvent;
 import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
+import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
@@ -26,9 +27,11 @@ import java.util.Set;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -51,6 +54,7 @@ class ThingModelInterpretServiceImplTest {
     private DevicePropertyLatestMapper propertyLatestMapper;
     private DeviceEventRecordMapper eventRecordMapper;
     private DeviceShadowService deviceShadowService;
+    private AlertEvaluationService alertEvaluationService;
     private ThingModelProperties properties;
     private SimpleMeterRegistry registry;
     private ThingModelInterpretServiceImpl service;
@@ -61,11 +65,12 @@ class ThingModelInterpretServiceImplTest {
         propertyLatestMapper = mock(DevicePropertyLatestMapper.class);
         eventRecordMapper = mock(DeviceEventRecordMapper.class);
         deviceShadowService = mock(DeviceShadowService.class);
+        alertEvaluationService = mock(AlertEvaluationService.class);
         properties = new ThingModelProperties();
         registry = new SimpleMeterRegistry();
         service = new ThingModelInterpretServiceImpl(thingModelService, propertyLatestMapper,
-                eventRecordMapper, deviceShadowService, new ThingModelInterpretMetrics(registry),
-                properties, new ObjectMapper());
+                eventRecordMapper, deviceShadowService, alertEvaluationService,
+                new ThingModelInterpretMetrics(registry), properties, new ObjectMapper());
     }
 
     @Test
@@ -258,6 +263,49 @@ class ThingModelInterpretServiceImplTest {
         service.interpret(List.of(dataEvent("{\"method\":\"thing.event.property.post\",\"params\":{\"temperature\":25.5}}")));
 
         verify(propertyLatestMapper).upsertIfNewer(eq(DEVICE_ID), eq("temperature"), eq("double"), eq("25.5"), eq(RECEIVED_AT));
+    }
+
+    // ---------- T-17 告警旁路 ----------
+
+    @Test
+    void interpret_should_call_alert_evaluation_for_properties() {
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWithTemperature());
+
+        service.interpret(List.of(dataEvent("{\"method\":\"thing.event.property.post\",\"params\":{\"temperature\":25.5}}")));
+
+        verify(alertEvaluationService).onProperties(eq(DEVICE_ID), eq(PRODUCT_ID), argThat(samples ->
+                samples.size() == 1
+                        && "temperature".equals(samples.get(0).identifier())
+                        && "25.5".equals(samples.get(0).valueText())
+                        && RECEIVED_AT.equals(samples.get(0).reportedAt())));
+    }
+
+    @Test
+    void interpret_should_call_alert_evaluation_for_events() {
+        ThingModelDefinition definition = new ThingModelDefinition(1, Map.of(),
+                Map.of("fall", new ThingModelDefinition.EventSpec("fall", "alert")), Map.of());
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(definition);
+
+        service.interpret(List.of(dataEvent("{\"method\":\"thing.event.post\","
+                + "\"params\":{\"eventId\":\"fall\",\"value\":{\"level\":3}}}")));
+
+        verify(alertEvaluationService).onEvents(eq(DEVICE_ID), argThat(samples ->
+                samples.size() == 1
+                        && "fall".equals(samples.get(0).identifier())
+                        && "alert".equals(samples.get(0).eventType())
+                        && "{\"level\":3}".equals(samples.get(0).outputData())));
+    }
+
+    @Test
+    void interpret_should_not_evaluate_events_when_insert_fails() {
+        ThingModelDefinition definition = new ThingModelDefinition(1, Map.of(),
+                Map.of("fall", new ThingModelDefinition.EventSpec("fall", "alert")), Map.of());
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(definition);
+        doThrow(new RuntimeException("batch failed")).when(eventRecordMapper).insertBatch(any());
+
+        service.interpret(List.of(dataEvent("{\"method\":\"thing.event.post\",\"params\":{\"eventId\":\"fall\"}}")));
+
+        verify(alertEvaluationService, never()).onEvents(any(), any());
     }
 
     private ThingModelDefinition modelWithTemperature() {
