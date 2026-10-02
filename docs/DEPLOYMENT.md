@@ -548,7 +548,7 @@ docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
 
 > `app.command` **无总开关**（命令是显式用户动作，无需灰度）。如需停用可下线接口，或依赖 ACL（`ACCESS_CONTROL_ENFORCE_AUTH=true` 时未授权主题必被拒）。翻转上述任一变量后 `docker compose ... up -d --force-recreate backend`，无需重跑 `emqx-init`。
 
-**命令记录排查**（状态：`PENDING` / `SENT` / `ACKED` / `FAILED` / `TIMEOUT`）：
+**命令记录排查**（状态：`PENDING` / `SENT` / `ACKED` / `FAILED` / `TIMEOUT`；离线入队为 `QUEUED`）：
 
 ```sql
 -- 某设备最近 20 条命令记录（含耗时与失败原因）
@@ -574,6 +574,57 @@ curl -s http://localhost/api/actuator/prometheus | grep '^command_reply_total'
 - **下发被拒（6201~6204）**：`6201` 产品未定义物模型、`6202` 属性不可写（`accessMode != rw`）、`6203` 标识符未定义、`6204` 参数不符物模型定义 —— 均为云端校验拒绝，命令未发到设备。
 - **`6004` / `6005`**：产品停用 / 设备禁用，命令被准入判定拒绝（复用 `DeviceAccessGuard`）。
 - **日志中不应再出现 `device/{key}/command` 的 ACL 拒绝**：该旧主题已修正为 `cmd/down`，若仍出现说明调用方未更新。
+
+### 9.11 设备影子与离线补发运维（T-16）
+
+**迁移 `V6__device_shadow.sql`**：新建 `device_shadow` 表（唯一键 `device_id`，`desired`/`reported`/`delta` 三份 JSON + 单调递增 `version`），并给 `device_command_record` 补 `next_attempt_at` / `attempt_count` 两列（补发退避与重试计数）。迁移**只加表 / 只加列、不改既有语义**，可安全回滚应用版本。重建后端即触发：
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：Flyway schema history 出现 V6，且影子表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
+  -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'device_shadow';"
+```
+
+**影子语义**：`desired`（云端期望）/ `reported`（设备上报，由属性上行**回读权威库**驱动）/ `delta`（期望与上报的差异，仅按 `desired` 的键生成，上报追平即移除）；任意变更令 `version` 严格递增。影子**懒创建**，无行时按空影子（`version=0`）返回。合并走「读-改-写 + CAS」，冲突重读重算最多 `SHADOW_CAS_RETRY` 次，耗尽仅记 WARN 放弃，**不阻断**命令 / 上报主链路。
+
+**离线入队与补发**：设备离线（或产品停用 / 设备禁用）时下发 `property_set` 不发布，置 `QUEUED` 并写 `desired`；设备上线（`data` / `heartbeat` 上行）由摄取**第五路旁路** `ShadowDeliveryService.onIngest` 自动补发，`ShadowRetrySweeper` 按指数退避周期重试，次数耗尽置 `FAILED`（`error_message='补发重试次数耗尽'`），`desired` 保留不丢。**服务调用（`service`）对离线设备保持 T-15 既有行为，不排队。**
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.shadow`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `SHADOW_RESEND_ENABLED` | `true` | 上线补发总开关 |
+| `SHADOW_RETRY_MAX_ATTEMPTS` | `5` | 补发重试上限，达到置 `FAILED` |
+| `SHADOW_RETRY_BASE_DELAY_MS` | `5000` | 指数退避基数（毫秒） |
+| `SHADOW_RETRY_MAX_DELAY_MS` | `300000` | 退避封顶（毫秒） |
+| `SHADOW_RETRY_SWEEP_INTERVAL_MS` | `30000` | 退避巡检间隔（毫秒），`0` 关闭 |
+| `SHADOW_RESEND_BATCH_SIZE` | `200` | 单轮 / 单设备补发上限 |
+| `SHADOW_CAS_RETRY` | `3` | 影子 CAS 冲突重试次数 |
+| `SHADOW_QUEUE_TTL_MS` | `0` | `QUEUED` 过期时长（毫秒），`0` = 不过期 |
+
+> 翻转上述任一变量后 `docker compose ... up -d --force-recreate backend`，无需重跑 `emqx-init`。`SHADOW_RESEND_ENABLED=false` 时离线期望值仍写 `desired`，但不再自动补发。
+
+**影子排查**：
+
+```sql
+-- 某设备影子三份状态与版本
+SELECT version, desired, reported, delta, updated_at FROM device_shadow
+WHERE device_id = (SELECT id FROM device WHERE device_key = '<deviceKey>');
+-- 待补发命令（QUEUED）及下次尝试时间
+SELECT command_id, identifier, attempt_count, next_attempt_at, error_message
+FROM device_command_record
+WHERE status = 'QUEUED'
+  AND device_id = (SELECT id FROM device WHERE device_key = '<deviceKey>')
+ORDER BY next_attempt_at;
+```
+
+**常见排障**：
+
+- **期望值下发返回 `QUEUED`**：设备离线 / 禁用或产品停用，期望值已入队且写入 `desired`，属预期行为；设备上线后自动补发（前端命令记录显示「待补发」）。
+- **`delta` 不收敛**：确认设备已订阅 `cmd/down` 并按期望值上报对应属性；`delta` 只按 `desired` 的键生成，设备自主上报而云端未期望的属性不产生 `delta`。
+- **`6206`（`SHADOW_DESIRED_INVALID`）**：期望值端点入参兜底（`params` 缺失 / 非对象 / 空），未进入命令通道；属性级校验失败仍用 `6201`~`6204`。
+- **影子长期不更新**：`reported` 由属性上行驱动，若设备无上报则影子不变；`desired` 由下发驱动、`version` 随任意变更递增。
 
 ---
 
