@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount } from '@vue/test-utils'
 import { useDeviceList } from '../useDeviceList'
 
@@ -25,6 +26,7 @@ async function settle() {
 describe('composables/useDeviceList', () => {
   let state
   let wrapper
+  let router
 
   function mountHarness() {
     const Harness = defineComponent({
@@ -33,12 +35,18 @@ describe('composables/useDeviceList', () => {
         return () => h('div')
       }
     })
-    wrapper = mount(Harness)
+    wrapper = mount(Harness, { global: { plugins: [router] } })
     return wrapper
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     deviceStore.fetchDevices.mockClear()
+    router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: { template: '<div />' } }]
+    })
+    await router.push({ path: '/' })
+    await router.isReady()
   })
 
   afterEach(() => {
@@ -131,6 +139,40 @@ describe('composables/useDeviceList', () => {
       deviceName: undefined,
       deviceType: undefined,
       status: undefined
+    })
+  })
+
+  it('挂载时读取路由 query 的 keyword / status 作为初始筛选', async () => {
+    await router.push({ path: '/', query: { keyword: '温湿度', status: 'ONLINE' } })
+    mountHarness()
+    await settle()
+
+    expect(state.filters.deviceName).toBe('温湿度')
+    expect(state.filters.status).toBe('ONLINE')
+    expect(deviceStore.fetchDevices).toHaveBeenLastCalledWith({
+      pageNum: 1,
+      pageSize: 10,
+      deviceName: '温湿度',
+      deviceType: undefined,
+      status: 'ONLINE'
+    })
+  })
+
+  it('路由 query 变化时同步筛选并回到第 1 页重新加载', async () => {
+    mountHarness()
+    await settle()
+
+    await router.push({ path: '/', query: { status: 'OFFLINE' } })
+    await settle()
+
+    expect(state.filters.status).toBe('OFFLINE')
+    expect(state.currentPage.value).toBe(1)
+    expect(deviceStore.fetchDevices).toHaveBeenLastCalledWith({
+      pageNum: 1,
+      pageSize: 10,
+      deviceName: undefined,
+      deviceType: undefined,
+      status: 'OFFLINE'
     })
   })
 })

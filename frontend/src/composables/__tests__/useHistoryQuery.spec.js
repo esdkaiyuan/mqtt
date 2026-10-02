@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h, nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { flushPromises, mount } from '@vue/test-utils'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import { historyApi } from '@/api/history'
@@ -26,6 +27,7 @@ describe('composables/useHistoryQuery', () => {
   let queryClient
   let state
   let wrapper
+  let router
 
   /** 把 composable 挂进真实组件，才能拿到 onMounted 与 queryKey 变更的响应式链路。 */
   function mountHarness() {
@@ -36,12 +38,12 @@ describe('composables/useHistoryQuery', () => {
       }
     })
     wrapper = mount(Harness, {
-      global: { plugins: [[VueQueryPlugin, { queryClient }]] }
+      global: { plugins: [router, [VueQueryPlugin, { queryClient }]] }
     })
     return wrapper
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     queryClient = new QueryClient({
       defaultOptions: {
         // 不重试、不自动回收；缓存到 staleTime 之外才重新请求，
@@ -49,6 +51,12 @@ describe('composables/useHistoryQuery', () => {
         queries: { retry: false, staleTime: Infinity, gcTime: Infinity }
       }
     })
+    router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/', component: { template: '<div />' } }]
+    })
+    await router.push({ path: '/' })
+    await router.isReady()
     historyApi.query = vi.fn().mockResolvedValue({
       code: 200,
       message: 'ok',
@@ -69,6 +77,17 @@ describe('composables/useHistoryQuery', () => {
     expect(historyApi.query).not.toHaveBeenCalled()
     expect(state.hasSearched.value).toBe(false)
     expect(state.records.value).toEqual([])
+  })
+
+  it('从设备详情右栏带 deviceId 进入时自动代入并触发一次查询', async () => {
+    await router.push({ path: '/', query: { deviceId: '7' } })
+    mountHarness()
+    await settle()
+
+    expect(state.form.deviceId).toBe(7)
+    expect(state.hasSearched.value).toBe(true)
+    expect(historyApi.query).toHaveBeenCalledTimes(1)
+    expect(historyApi.query).toHaveBeenLastCalledWith({ pageNum: 1, pageSize: 20, deviceId: 7 })
   })
 
   it('提交查询时使用默认分页（第 1 页 / 每页 20 条）', async () => {
