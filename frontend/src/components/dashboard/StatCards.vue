@@ -23,10 +23,10 @@ defineProps({
 })
 
 const CARDS = [
-  { key: 'totalDevices', label: '设备总数', icon: 'device', color: '#165DFF', background: '#E8F3FF' },
-  { key: 'onlineDevices', label: '在线设备', icon: 'online', color: '#00B42A', background: '#E8FFEA' },
-  { key: 'offlineDevices', label: '离线设备', icon: 'offline', color: '#F53F3F', background: '#FFECEC' },
-  { key: 'todayMessages', label: '今日消息', icon: 'message', color: '#FF7D00', background: '#FFF3E8' }
+  { key: 'totalDevices', label: '设备总数', icon: 'device', color: 'var(--color-primary)', background: 'var(--color-primary-light)' },
+  { key: 'onlineDevices', label: '在线设备', icon: 'online', color: 'var(--color-success)', background: 'var(--color-success-light)' },
+  { key: 'offlineDevices', label: '离线设备', icon: 'offline', color: 'var(--color-danger)', background: 'var(--color-danger-light)' },
+  { key: 'todayMessages', label: '今日消息', icon: 'message', color: 'var(--color-warning)', background: 'var(--color-warning-light)' }
 ]
 </script>
 

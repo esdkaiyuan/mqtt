@@ -7,6 +7,7 @@
 <script setup>
 import { computed } from 'vue'
 import echarts from '@/utils/echarts'
+import { CHART_COLORS } from '@/utils/theme'
 import ChartCard from './ChartCard.vue'
 import EchartChart from './EchartChart.vue'
 
@@ -34,15 +35,15 @@ const option = computed(() => {
     xAxis: {
       type: 'category',
       data: props.data.map((item) => item.date),
-      axisLine: { lineStyle: { color: '#E5E6EB' } },
-      axisLabel: { fontSize: 11, color: '#86909C' }
+      axisLine: { lineStyle: { color: CHART_COLORS.border } },
+      axisLabel: { fontSize: 11, color: CHART_COLORS.textTertiary }
     },
     yAxis: {
       type: 'value',
       axisLine: { show: false },
       axisTick: { show: false },
-      splitLine: { lineStyle: { color: '#F2F3F5' } },
-      axisLabel: { fontSize: 11, color: '#86909C' }
+      splitLine: { lineStyle: { color: CHART_COLORS.borderLight } },
+      axisLabel: { fontSize: 11, color: CHART_COLORS.textTertiary }
     },
     series: [
       {
@@ -50,8 +51,8 @@ const option = computed(() => {
         smooth: true,
         symbol: 'circle',
         symbolSize: 6,
-        lineStyle: { width: 3, color: '#165DFF' },
-        itemStyle: { color: '#165DFF', borderWidth: 2 },
+        lineStyle: { width: 3, color: CHART_COLORS.primary },
+        itemStyle: { color: CHART_COLORS.primary, borderWidth: 2 },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(22, 93, 255, 0.15)' },

@@ -7,6 +7,7 @@
 <script setup>
 import { computed } from 'vue'
 import echarts from '@/utils/echarts'
+import { CHART_COLORS } from '@/utils/theme'
 import ChartCard from './ChartCard.vue'
 import EchartChart from './EchartChart.vue'
 
@@ -32,15 +33,15 @@ const option = computed(() => {
     xAxis: {
       type: 'category',
       data: props.data.map((item) => TYPE_LABELS[item.device_type] || item.device_type),
-      axisLine: { lineStyle: { color: '#E5E6EB' } },
-      axisLabel: { fontSize: 12, color: '#4E5969' }
+      axisLine: { lineStyle: { color: CHART_COLORS.border } },
+      axisLabel: { fontSize: 12, color: CHART_COLORS.textRegular }
     },
     yAxis: {
       type: 'value',
       axisLine: { show: false },
       axisTick: { show: false },
-      splitLine: { lineStyle: { color: '#F2F3F5' } },
-      axisLabel: { fontSize: 12, color: '#86909C' }
+      splitLine: { lineStyle: { color: CHART_COLORS.borderLight } },
+      axisLabel: { fontSize: 12, color: CHART_COLORS.textTertiary }
     },
     series: [
       {
@@ -49,8 +50,8 @@ const option = computed(() => {
         itemStyle: {
           borderRadius: [4, 4, 0, 0],
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#4080FF' },
-            { offset: 1, color: '#165DFF' }
+            { offset: 0, color: CHART_COLORS.primaryHover },
+            { offset: 1, color: CHART_COLORS.primary }
           ])
         },
         barWidth: 40,
@@ -58,7 +59,7 @@ const option = computed(() => {
           show: true,
           position: 'top',
           fontSize: 11,
-          color: '#4E5969'
+          color: CHART_COLORS.textRegular
         }
       }
     ]

@@ -6,6 +6,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { CHART_COLORS } from '@/utils/theme'
 import ChartCard from './ChartCard.vue'
 import EchartChart from './EchartChart.vue'
 
@@ -17,7 +18,11 @@ const props = defineProps({
 })
 
 const STATUS_LABELS = { ONLINE: '在线', OFFLINE: '离线', INACTIVE: '未激活' }
-const STATUS_COLORS = { ONLINE: '#00B42A', OFFLINE: '#F53F3F', INACTIVE: '#86909C' }
+const STATUS_COLORS = {
+  ONLINE: CHART_COLORS.success,
+  OFFLINE: CHART_COLORS.danger,
+  INACTIVE: CHART_COLORS.textTertiary
+}
 
 const subtitle = computed(() => (props.data.length ? '' : '暂无数据'))
 
@@ -30,7 +35,7 @@ const option = computed(() => {
     },
     legend: {
       bottom: 0,
-      textStyle: { fontSize: 12, color: '#4E5969' }
+      textStyle: { fontSize: 12, color: CHART_COLORS.textRegular }
     },
     series: [
       {
@@ -40,14 +45,14 @@ const option = computed(() => {
         avoidLabelOverlap: false,
         itemStyle: {
           borderRadius: 6,
-          borderColor: '#fff',
+          borderColor: CHART_COLORS.white,
           borderWidth: 2
         },
         label: {
           show: true,
           formatter: '{b}\n{c}',
           fontSize: 12,
-          color: '#1D2129'
+          color: CHART_COLORS.textPrimary
         },
         emphasis: {
           label: { fontSize: 14, fontWeight: 'bold' },
@@ -57,7 +62,7 @@ const option = computed(() => {
           name: STATUS_LABELS[item.status] || item.status,
           value: Number(item.count) || 0,
           itemStyle: {
-            color: STATUS_COLORS[item.status] || '#86909C'
+            color: STATUS_COLORS[item.status] || CHART_COLORS.textTertiary
           }
         }))
       }
