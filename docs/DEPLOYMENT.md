@@ -456,7 +456,7 @@ SELECT COUNT(*) FROM message;   -- 需 < 500 万
 -- 且月增速 < 200 万
 ```
 
-当前数据量未达阈，故**未执行 V4**，`backend/src/main/resources/db/migration/` 下不存在 V4 文件；该决策与依据已记录于 `docs/总督促文档.md`。
+当前数据量未达阈，故**该分区改造未执行**（原计划占用 `V4` 版本号，但从未落盘）。T-14 已将该版本号用于 `V4__thing_model.sql`，两者不冲突；该决策与依据已记录于 `docs/总督促文档.md`。
 
 **未来执行口径**（数据量过门槛后）：
 
@@ -490,6 +490,90 @@ powershell -ExecutionPolicy Bypass -File scripts/r5-trigger-check.ps1 -QpsWindow
 采集项与阈值（设备 5000 / 上行 QPS 2000 / `message` 1 亿行 / 后端代码 2 万行）见
 `docs/T-12_架构重构_实施计划.md` §R5「R5 触发条件监控」。`docker` 或网关不可达时该项记「未采集」，
 不报错也不影响其余项。
+
+### 9.9 物模型与数据解析运维（T-14）
+
+**迁移 `V4__thing_model.sql`**：`product` 表新增 `thing_model` / `thing_model_version` / `thing_model_updated_at` 三列，并新建 `device_property_latest`、`device_event_record` 两张派生表。迁移**只加列加表、不改既有列**，可安全回滚应用版本。重建后端即触发：
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：Flyway schema history 出现 V4，且两张派生表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
+  -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'device_%';"
+```
+
+**解析总开关 `THING_MODEL_INTERPRET_ENABLED`**（默认 `true`）：置 `false` 时整条物模型解析链路退化为改造前行为（只落原始 `message`，不写派生表），用于故障回滚。翻转后 `docker compose ... up -d --force-recreate backend`，无需重跑 `emqx-init`。
+
+**缓存 TTL 与多副本收敛窗口 `THING_MODEL_CACHE_TTL_SECONDS`**（默认 `60`，`0` 关闭缓存）：物模型定义在解析热路径走进程内缓存；**保存物模型只失效本副本缓存**，多副本之间的收敛窗口 = 该 TTL。若多副本部署且对「保存后立即生效」敏感，可下调该值（代价是回源查库变频繁）。
+
+**TSL 大小上限 `THING_MODEL_MAX_SIZE_BYTES`**（默认 `262144`，即 256 KB）：物模型保存与导入共用，超限直接拒绝（错误码 6103）。
+
+**核查派生数据**（设备按 Alink JSON 上报后）：
+
+```sql
+-- 某设备属性最新值（每标识符仅一条）
+SELECT identifier, data_type, value_text, reported_at FROM device_property_latest
+  WHERE device_id = (SELECT id FROM device WHERE device_key = '<deviceKey>')
+  ORDER BY identifier;
+-- 某设备事件记录（按上报时间倒序）
+SELECT identifier, event_type, output_data, reported_at FROM device_event_record
+  WHERE device_id = (SELECT id FROM device WHERE device_key = '<deviceKey>')
+  ORDER BY reported_at DESC LIMIT 20;
+```
+
+解析计数指标 `thing_model_interpret_total{result=...}` 经 `/actuator/prometheus` 暴露，`result` 覆盖 `ok` / `skipped_*`（非法值 / 未知标识符 / 乱序旧包等）六种。解析为**落库后第三路旁路**，逐条隔离失败、不进死信；派生数据缺失可由后续上行自然覆盖。
+
+### 9.10 命令下发与服务调用运维（T-15）
+
+**迁移 `V5__device_command.sql`**：新建 `device_command_record` 表承载命令全生命周期。迁移**只加表、不改既有表**，可安全回滚应用版本。重建后端即触发：
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：Flyway schema history 出现 V5，且命令记录表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
+  -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'device_command_record';"
+```
+
+**主题**：下行命令走 `device/{deviceKey}/cmd/down`（平台 → 设备，QoS 1），设备回执走 `device/{deviceKey}/reply`（设备 → 平台，QoS 1）。二者均落在既有 ACL 规则内（**ACL 规则与授权回调一行未改**）：`allowPlatform` 要求平台发布主题含 `/cmd/`，`allowDevice` 禁止设备发布自身 `cmd/` 前缀、故回执改走 `reply`。**回执订阅**由 `MqttMessageHandler` 以共享订阅 `$share/{MQTT_SHARED_GROUP}/device/+/reply` 接入，经摄取**第四路旁路**更新命令状态；多副本各副本须使用**同一组名**，回执只落其中一个副本、不会重复更新（条件更新保证终态不可覆盖）。
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.command`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `COMMAND_SYNC_TIMEOUT_MS` | `5000` | 同步调用等待回执的超时（毫秒），超时置 `TIMEOUT` |
+| `COMMAND_POLL_INTERVAL_MS` | `200` | 同步等待的轮询间隔（毫秒）。同步用**轮询命令记录表**而非进程内 `Future`，多副本下回执可能落到其他副本，轮询跨副本正确 |
+| `COMMAND_TIMEOUT_SWEEP_INTERVAL_MS` | `30000` | 超时巡检间隔（毫秒），`0` 关闭。把长期停留 `PENDING`/`SENT` 的记录兜底置 `TIMEOUT`，保证异步命令也不会永远停在 `SENT` |
+| `COMMAND_ASYNC_TIMEOUT_MS` | `60000` | 异步命令判定超时的时长（毫秒），供巡检使用 |
+| `COMMAND_MAX_PARAMS_BYTES` | `16384` | 命令参数 JSON 大小上限（字节），超限直接拒绝 |
+
+> `app.command` **无总开关**（命令是显式用户动作，无需灰度）。如需停用可下线接口，或依赖 ACL（`ACCESS_CONTROL_ENFORCE_AUTH=true` 时未授权主题必被拒）。翻转上述任一变量后 `docker compose ... up -d --force-recreate backend`，无需重跑 `emqx-init`。
+
+**命令记录排查**（状态：`PENDING` / `SENT` / `ACKED` / `FAILED` / `TIMEOUT`）：
+
+```sql
+-- 某设备最近 20 条命令记录（含耗时与失败原因）
+SELECT command_id, command_type, identifier, status, call_type, source,
+       error_message, created_at, sent_at, finished_at
+FROM device_command_record
+WHERE device_id = (SELECT id FROM device WHERE device_key = '<deviceKey>')
+ORDER BY created_at DESC LIMIT 20;
+-- 停留在非终态（>1 分钟）的记录：应被巡检收敛为 TIMEOUT
+SELECT command_id, status, created_at FROM device_command_record
+WHERE status IN ('PENDING','SENT') AND created_at < NOW() - INTERVAL 1 MINUTE;
+```
+
+**指标**：回执处理计数 `command_reply_total{result=...}` 经 `/actuator/prometheus` 暴露，`result` 覆盖 `acked`（成功回执并更新）、`failed`（非 200 回执并更新）、`ignored`（重复回执 / 未知 `id` / 记录已终态）、`invalid`（载荷非法 / 缺 `id`）：
+
+```bash
+curl -s http://localhost/api/actuator/prometheus | grep '^command_reply_total'
+```
+
+**常见排障**：
+
+- **命令停在 `SENT` 不回执**：确认设备已订阅 `cmd/down`（`docker exec mqtt-emqx emqx ctl subscriptions list | grep '<deviceKey>'`）、回执 `id` 与下行一致、设备能发布 `reply`（ACL 允许自身 `device/{key}/` 下非 `cmd/` 主题）；`SENT` 仅代表投递到 Broker，不代表设备已收到。
+- **下发被拒（6201~6204）**：`6201` 产品未定义物模型、`6202` 属性不可写（`accessMode != rw`）、`6203` 标识符未定义、`6204` 参数不符物模型定义 —— 均为云端校验拒绝，命令未发到设备。
+- **`6004` / `6005`**：产品停用 / 设备禁用，命令被准入判定拒绝（复用 `DeviceAccessGuard`）。
+- **日志中不应再出现 `device/{key}/command` 的 ACL 拒绝**：该旧主题已修正为 `cmd/down`，若仍出现说明调用方未更新。
 
 ---
 

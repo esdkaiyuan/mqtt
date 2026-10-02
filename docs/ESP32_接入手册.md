@@ -1,6 +1,6 @@
 # ESP32 接入 MQTT 云平台 - 接入手册
 
-> 版本：v1.2 | 日期：2026-09-28
+> 版本：v1.4 | 日期：2026-10-02
 
 ---
 
@@ -149,6 +149,9 @@ const char* DEVICE_KEY     = "sensor-livingroom-01";
 String topicData    = String("device/") + DEVICE_KEY + "/data";
 String topicHbt     = String("device/") + DEVICE_KEY + "/heartbeat";
 String topicLwt     = String("device/") + DEVICE_KEY + "/lwt";
+// 命令下发与回执（T-15）：订阅 cmd/down 收命令，回执发 reply
+String topicCmdDown = String("device/") + DEVICE_KEY + "/cmd/down";
+String topicReply   = String("device/") + DEVICE_KEY + "/reply";
 
 // Client ID 必须全局唯一
 String clientId = String("esp32_") + DEVICE_KEY + "_" + String(random(0xffff), HEX);
@@ -189,14 +192,38 @@ void setupWiFi() {
 }
 
 // ==================== MQTT 回调 ====================
+// 收到下行命令后：解析 → 执行 → 回执到 reply 主题
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  // 本示例设备只发布，不需要处理下行指令
-  // 如果需要接收平台下发的指令，在这里处理
-  Serial.printf("收到消息 [%s] ", topic);
+  String body;
   for (unsigned int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+    body += (char)payload[i];
   }
-  Serial.println();
+  Serial.printf("收到命令 [%s] %s\n", topic, body.c_str());
+
+  // 命令主题：device/{DEVICE_KEY}/cmd/down
+  if (String(topic) != topicCmdDown) {
+    return;
+  }
+
+  // id 是请求 / 应答的关联键，回执必须原样带回
+  // 生产环境建议用 ArduinoJson 解析；此处用最简字符串截取演示
+  int idStart = body.indexOf("\"id\":\"");
+  String commandId = "";
+  if (idStart >= 0) {
+    idStart += 6;
+    int idEnd = body.indexOf('"', idStart);
+    commandId = body.substring(idStart, idEnd);
+  }
+
+  // 执行命令（此处按业务实现，示例仅回执成功）
+  // ... 根据 method / params 操作设备 ...
+
+  // 回执：id 关联命令，code=200 表示成功，data 为可选返回数据
+  String reply = String("{\"id\":\"") + commandId +
+                 "\",\"version\":\"1.0\",\"method\":\"thing.service.property.set.reply\"," +
+                 "\"code\":200,\"data\":{}}";
+  mqtt.publish(topicReply.c_str(), reply.c_str(), 1);
+  Serial.printf("已回执 [%s] %s\n", topicReply.c_str(), reply.c_str());
 }
 
 // ==================== MQTT 重连 ====================
@@ -218,8 +245,8 @@ bool mqttReconnect() {
     if (mqtt.connected()) {
       Serial.println("MQTT 连接成功！");
 
-      // 订阅心跳响应主题（如果需要接收平台指令）
-      // mqtt.subscribe((String("device/") + DEVICE_KEY + "/command").c_str());
+      // 订阅命令下发主题（T-15）：平台下发的属性设置 / 服务调用都走这一条
+      mqtt.subscribe(topicCmdDown.c_str(), 1);
 
       // 发布在线状态
       mqtt.publish(topicHbt.c_str(), "online", true);
@@ -327,12 +354,14 @@ void loop() {
 | `device/{device_key}/data` | ESP32 → 后端 | 1 | 上报传感器数据 |
 | `device/{device_key}/heartbeat` | ESP32 → 后端 | 1 | 心跳包，保持设备在线 |
 | `device/{device_key}/lwt` | ESP32 → 后端 | 1 | 遗言主题，断线时自动发 offline |
-| `device/{device_key}/command` | 后端 → ESP32 | 1 | 平台下发指令（可选） |
+| `device/{device_key}/cmd/down` | 后端 → ESP32 | 1 | 平台下发命令（属性设置 / 服务调用） |
+| `device/{device_key}/reply` | ESP32 → 后端 | 1 | 命令回执，设备对 `cmd/down` 的应答 |
 
 **规则：**
 - `{device_key}` 必须与前端创建设备时的标识 **完全一致**
 - 每个设备的 Topic 是独立的，互不干扰
 - 多个 ESP32 可以连接到同一个 Broker，各自使用不同的 device_key
+- 设备**只能**发布/订阅自己 `device/{device_key}/**` 下的主题；`cmd/` 前缀禁止设备发布（防伪造下行），回执因此走独立的 `reply` 主题（详见 §6.5）
 
 ---
 
@@ -364,6 +393,100 @@ offline
 ```
 
 后端收到 `lwt` 主题的 `offline` 消息后，自动将设备状态标记为 OFFLINE。
+
+### 6.4 物模型 Alink JSON 上报（T-14）
+
+为产品定义物模型（TSL：属性 / 事件 / 服务）后，设备按 **Alink JSON** 格式上报，云端会自动解析出**属性最新值**与**事件记录**（分别落 `device_property_latest` / `device_event_record`）。
+
+**属性上报**（发到 `/data`；`params` 的键必须是物模型中已定义的属性标识符）：
+
+```json
+{
+  "id": "123",
+  "version": "1.0",
+  "method": "thing.event.property.post",
+  "params": {
+    "temperature": 25.3,
+    "humidity": 62
+  }
+}
+```
+
+**事件上报**（`method` 固定为 `thing.event.post`；`params.eventId` 为物模型中已定义的事件标识符，
+`params.value` 为该事件的输出数据，原样以 JSON 文本落 `device_event_record.output_data`）：
+
+```json
+{
+  "id": "124",
+  "version": "1.0",
+  "method": "thing.event.post",
+  "params": {
+    "eventId": "highTempAlarm",
+    "value": {
+      "value": 80
+    }
+  }
+}
+```
+
+约定：
+
+- **标识符**：属性 / 事件 / 服务的标识符须与物模型定义一致（`[a-zA-Z][a-zA-Z0-9_]{0,31}`）；未定义的标识符会被跳过并计数，**不影响消息落库**；
+- **数据类型**：属性值须符合物模型声明的 `dataType`（`int`/`float`/`double`/`bool`/`text`/`date`/`enum`/`struct`/`array`），类型或范围不符的条目会被跳过；
+- **兼容**：非 Alink 载荷（如 §6.1 的自由 JSON）仍原样落 `message` 表，**不丢消息**，只是不产生派生数据；
+- **上报时间**：以云端接收时间为准；同一标识符的乱序旧包（时间早于库中最新值）不会覆盖最新值。
+
+> 物模型由管理员在「产品管理 → 物模型」编辑器中定义（或导入 TSL JSON）；属性最新值与事件记录可在设备详情页查看。
+
+### 6.5 命令下发与回执（T-15）
+
+云端可对设备**下发命令**（属性设置 / 服务调用），设备收到后执行并**回执**，平台据此把命令状态从 `SENT` 流转到 `ACKED` / `FAILED`。设备需订阅 `cmd/down`，并在处理完成后向 `reply` 发布回执。
+
+**下行：属性设置**（`device/{device_key}/cmd/down`）：
+
+```json
+{
+  "id": "8f1c0b6e-...-a1",
+  "version": "1.0",
+  "method": "thing.service.property.set",
+  "params": { "targetTemp": 26, "mode": "cool" }
+}
+```
+
+**下行：服务调用**（同一主题，`method` 为 `thing.service.{服务标识符}`）：
+
+```json
+{
+  "id": "8f1c0b6e-...-a1",
+  "version": "1.0",
+  "method": "thing.service.reboot",
+  "params": { "delay": 3 }
+}
+```
+
+**上行：回执**（`device/{device_key}/reply`）：
+
+```json
+{
+  "id": "8f1c0b6e-...-a1",
+  "version": "1.0",
+  "method": "thing.service.property.set.reply",
+  "code": 200,
+  "data": { "targetTemp": 26 }
+}
+```
+
+约定：
+
+- **`id` 是关联键**：必须与下行命令的 `id` **完全一致**，平台据此把回执关联到命令记录；缺失或匹配不到记录时该回执被忽略并计数，**不影响其他消息**；
+- **`code` 判定结果**：`200` 视为成功（`ACKED`），非 `200` 视为失败（`FAILED`），失败原因取 `code` 与 `data` 的文本；`code` 非数字按失败处理；
+- **`data` 原样落库**：作为命令记录的 `result`，可空；
+- **`method` 仅用于可读性**：关联只依赖 `id`，容忍设备回执 `method` 不精确；
+- **幂等**：同一命令重复回执不会覆盖已到达的终态（只有 `PENDING` / `SENT` 的记录会被更新）；
+- **QoS 1、不保留**：命令与回执均为 QoS 1；平台不使用保留消息，避免设备离线时残留旧命令。
+
+> 命令参数会**先按物模型校验**再下发：属性设置要求属性 `accessMode=rw` 且值符合 `dataType`；服务调用要求 `identifier` 命中物模型服务、必填入参齐全。云端校验失败时命令不会发到设备，返回明确错误码（6201~6204）。
+> 命令记录可在**设备详情页 → 命令记录**查看（状态着色、参数与回执 JSON 详情）；下发入口为**设备详情页 → 设备控制**面板。
 
 ---
 
