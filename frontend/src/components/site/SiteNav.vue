@@ -11,6 +11,15 @@
       </div>
 
       <div class="site-nav__actions">
+        <button
+          v-if="tocToggle"
+          class="site-nav__toc"
+          type="button"
+          aria-label="打开文档目录"
+          @click="emit('toggleToc')"
+        >
+          <svg-icon name="documentation" :size="18" />
+        </button>
         <template v-if="authStore.isLoggedIn">
           <router-link to="/workbench/dashboard" class="site-nav__cta">进入工作台</router-link>
         </template>
@@ -34,6 +43,16 @@ import SvgIcon from '@/components/Icon.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import { useAuthStore } from '@/stores/auth'
 import { scrollToSection, useScrollIndicator } from '@/composables/useLandingScroll'
+
+defineProps({
+  // 文档站在 <1024px 需要由站点头唤起目录抽屉，官网不传
+  tocToggle: {
+    type: Boolean,
+    default: false
+  }
+})
+
+const emit = defineEmits(['toggleToc'])
 
 const authStore = useAuthStore()
 const { isScrolled } = useScrollIndicator()
@@ -140,6 +159,33 @@ function handleNavClick(id) {
   border: none;
   color: var(--color-text-regular);
   cursor: pointer;
+}
+
+/* 文档目录入口：仅在窄屏（<1024px，左导航收起为抽屉）时出现 */
+.site-nav__toc {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  color: var(--color-text-regular);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.site-nav__toc:hover {
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+@media (max-width: 1023px) {
+  .site-nav__toc {
+    display: inline-flex;
+  }
 }
 
 @media (max-width: 768px) {
