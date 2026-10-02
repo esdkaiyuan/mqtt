@@ -120,7 +120,7 @@ const lastSeenText = computed(() =>
 const commandTopic = computed(() => {
   const topic = device.value.topic
   if (!topic) return ''
-  return topic.replace('/data', '/command').replace('/heartbeat', '/command')
+  return topic.replace('/data', '/cmd/down').replace('/heartbeat', '/cmd/down')
 })
 
 const metadataText = computed(() => {
