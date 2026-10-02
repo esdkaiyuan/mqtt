@@ -158,6 +158,36 @@ app:
     cache-ttl-seconds: ${THING_MODEL_CACHE_TTL_SECONDS:60}
     # 物模型 TSL 大小上限（字节），保存与导入共用
     max-size-bytes: ${THING_MODEL_MAX_SIZE_BYTES:262144}
+  # 命令下发与服务调用（T-15）
+  command:
+    # 同步调用等待回执的超时（毫秒），超时置 TIMEOUT
+    sync-timeout-ms: ${COMMAND_SYNC_TIMEOUT_MS:5000}
+    # 同步等待的轮询间隔（毫秒）；多副本下回执可能落到其他副本，故轮询命令记录表而非进程内 Future
+    poll-interval-ms: ${COMMAND_POLL_INTERVAL_MS:200}
+    # 超时巡检间隔（毫秒），0 关闭；把长期停留 PENDING/SENT 的记录兜底置 TIMEOUT
+    timeout-sweep-interval-ms: ${COMMAND_TIMEOUT_SWEEP_INTERVAL_MS:30000}
+    # 异步命令判定超时的时长（毫秒），供巡检使用
+    async-timeout-ms: ${COMMAND_ASYNC_TIMEOUT_MS:60000}
+    # 命令参数 JSON 大小上限（字节），超限直接拒绝
+    max-params-bytes: ${COMMAND_MAX_PARAMS_BYTES:16384}
+  # 设备影子与离线补发（T-16）
+  shadow:
+    # 上线补发总开关；置 false 时离线期望值仍写 desired，但不再自动补发
+    resend-enabled: ${SHADOW_RESEND_ENABLED:true}
+    # 补发重试上限，达到该次数仍未成功则置 FAILED
+    retry-max-attempts: ${SHADOW_RETRY_MAX_ATTEMPTS:5}
+    # 指数退避基数（毫秒）
+    retry-base-delay-ms: ${SHADOW_RETRY_BASE_DELAY_MS:5000}
+    # 指数退避封顶（毫秒）
+    retry-max-delay-ms: ${SHADOW_RETRY_MAX_DELAY_MS:300000}
+    # 退避重试巡检间隔（毫秒），0 关闭
+    retry-sweep-interval-ms: ${SHADOW_RETRY_SWEEP_INTERVAL_MS:30000}
+    # 单轮巡检 / 单设备补发批量上限
+    resend-batch-size: ${SHADOW_RESEND_BATCH_SIZE:200}
+    # 影子 CAS 冲突重试次数；耗尽后记 WARN 并放弃本次合并
+    cas-retry: ${SHADOW_CAS_RETRY:3}
+    # QUEUED 过期时长（毫秒），0 表示不过期
+    queue-ttl-ms: ${SHADOW_QUEUE_TTL_MS:0}
 
 # 日志配置
 logging:
