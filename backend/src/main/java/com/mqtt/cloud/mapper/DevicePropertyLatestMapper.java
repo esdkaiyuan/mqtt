@@ -6,6 +6,8 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.List;
 
 /**
  * 设备属性最新值 Mapper。
@@ -24,4 +26,12 @@ public interface DevicePropertyLatestMapper extends BaseMapper<DevicePropertyLat
                       @Param("dataType") String dataType,
                       @Param("valueText") String valueText,
                       @Param("reportedAt") LocalDateTime reportedAt);
+
+    /**
+     * 按标识符批量取权威最新值（T-16 影子 reported 回读）。
+     * <p>
+     * 调用方须保证 {@code identifiers} 非空（空集合会生成非法 SQL）。
+     */
+    List<DevicePropertyLatest> selectByIdentifiers(@Param("deviceId") Long deviceId,
+                                                   @Param("identifiers") Collection<String> identifiers);
 }

@@ -7,6 +7,7 @@ import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.ingest.ResolvedEvent;
 import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
+import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelInterpretService;
 import com.mqtt.cloud.service.ThingModelService;
@@ -50,6 +51,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
     private final ThingModelService thingModelService;
     private final DevicePropertyLatestMapper propertyLatestMapper;
     private final DeviceEventRecordMapper eventRecordMapper;
+    private final DeviceShadowService deviceShadowService;
     private final ThingModelInterpretMetrics metrics;
     private final ThingModelProperties properties;
     private final ObjectMapper objectMapper;
@@ -112,6 +114,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         if (params == null || !params.isObject() || params.isEmpty()) {
             return;
         }
+        List<String> applied = new ArrayList<>();
         for (Map.Entry<String, JsonNode> entry : params.properties()) {
             String identifier = entry.getKey();
             ThingModelDefinition.PropertySpec spec = definition.properties().get(identifier);
@@ -127,6 +130,21 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
             propertyLatestMapper.upsertIfNewer(device.getId(), identifier, spec.type(), valueText,
                     record.receivedAt());
             metrics.count(RESULT_PROPERTY);
+            applied.add(identifier);
+        }
+        // T-16：上报收敛。回读权威库合并进影子 reported，异常只记 WARN，不影响本批其余消息。
+        applyReported(device, applied);
+    }
+
+    /** 上报后的影子收敛；单条合并异常只记 WARN，不冒泡（沿用 T-14 逐条隔离）。 */
+    private void applyReported(Device device, List<String> identifiers) {
+        if (identifiers.isEmpty()) {
+            return;
+        }
+        try {
+            deviceShadowService.applyReported(device.getId(), identifiers);
+        } catch (Exception e) {
+            log.warn("影子 reported 合并失败，跳过: deviceId={}", device.getId(), e);
         }
     }
 

@@ -80,6 +80,17 @@
         />
       </div>
 
+      <div id="device-shadow-section" class="info-card card">
+        <DeviceShadowPanel
+          :shadow="shadow"
+          :capability="capability"
+          :online="device.status === 'ONLINE'"
+          :loading="shadowLoading"
+          :setting="setting"
+          @set-desired="handleSetDesired"
+        />
+      </div>
+
       <div id="device-command-section" class="info-card card">
         <DeviceCommandHistory
           :records="records"
@@ -112,9 +123,11 @@ import EditDeviceDialog from '@/components/device/EditDeviceDialog.vue'
 import DevicePropertyPanel from '@/components/device/DevicePropertyPanel.vue'
 import DeviceEventPanel from '@/components/device/DeviceEventPanel.vue'
 import DeviceControlPanel from '@/components/device/DeviceControlPanel.vue'
+import DeviceShadowPanel from '@/components/device/DeviceShadowPanel.vue'
 import DeviceCommandHistory from '@/components/device/DeviceCommandHistory.vue'
 import { useDeviceData } from '@/composables/useDeviceData'
 import { useDeviceCommand } from '@/composables/useDeviceCommand'
+import { useDeviceShadow } from '@/composables/useDeviceShadow'
 
 const route = useRoute()
 const router = useRouter()
@@ -140,6 +153,9 @@ const commandPage = ref(1)
 const commandSize = ref(10)
 const { capability, capabilityLoading, records, recordsTotal, recordsLoading, sending, sendCommand } =
   useDeviceCommand(deviceKey, commandPage, commandSize)
+
+// 设备影子（T-16）：desired / reported / delta 三份状态与期望值下发
+const { shadow, shadowLoading, setting, setDesired } = useDeviceShadow(deviceKey)
 
 function handleEventPageChange(page) {
   eventPage.value = page
@@ -207,6 +223,20 @@ async function handleSendCommand(payload) {
     }
   } catch {
     // 失败提示由 axios 拦截器统一给出（含 6201~6205 业务错误）
+  }
+}
+
+async function handleSetDesired({ params }) {
+  try {
+    const record = await setDesired(params)
+    if (!record) return
+    if (record.status === 'QUEUED') {
+      ElMessage.warning('设备离线，期望值已保存，上线后自动补发')
+    } else {
+      ElMessage.success('期望值已下发')
+    }
+  } catch {
+    // 失败提示由 axios 拦截器统一给出（含 6206 业务错误）
   }
 }
 

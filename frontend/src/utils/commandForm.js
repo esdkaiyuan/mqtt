@@ -98,3 +98,42 @@ export function buildParams(fields, values) {
 export function commandTopic(deviceKey) {
   return deviceKey ? `device/${deviceKey}/cmd/down` : ''
 }
+
+/**
+ * 把「归一化文本」还原成原生类型值（影子 delta → 期望值 params）。
+ *
+ * 与后端 `ThingModelParamValidator.normalize` 的文本化口径互逆：
+ * 数值 → Number、bool → Boolean、struct/array → JSON.parse、其余原样透传。
+ * 无法还原的键被跳过（不产生非法值，交由接口兜底）。
+ *
+ * @returns {{ params: object }} 始终返回可提交的 params（可能为空对象）
+ */
+export function restoreParams(fields, normalized) {
+  const params = {}
+  for (const field of fields ?? []) {
+    const text = normalized?.[field.identifier]
+    if (isBlank(text)) continue
+    const value = restoreValue(field, text)
+    if (value !== undefined) params[field.identifier] = value
+  }
+  return { params }
+}
+
+function restoreValue(field, text) {
+  switch (field.control) {
+    case 'number': {
+      const num = Number(text)
+      return Number.isNaN(num) ? undefined : num
+    }
+    case 'switch':
+      return text === true || text === 'true'
+    case 'json':
+      try {
+        return JSON.parse(text)
+      } catch {
+        return undefined
+      }
+    default:
+      return text
+  }
+}

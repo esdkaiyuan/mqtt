@@ -15,9 +15,10 @@
           <span class="device-command-history__mono">{{ row.identifier || '—' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="110">
+      <el-table-column label="状态" width="140">
         <template #default="{ row }">
           <el-tag :type="statusTag(row.status)" size="small">{{ row.status }}</el-tag>
+          <span v-if="row.status === 'QUEUED'" class="device-command-history__hint">待补发</span>
         </template>
       </el-table-column>
       <el-table-column label="耗时" width="100">
@@ -98,7 +99,13 @@ function openDetail(row) {
 }
 
 function statusTag(status) {
-  const map = { ACKED: 'success', FAILED: 'danger', TIMEOUT: 'warning', SENT: 'primary' }
+  const map = {
+    ACKED: 'success',
+    FAILED: 'danger',
+    TIMEOUT: 'warning',
+    QUEUED: 'warning',
+    SENT: 'primary'
+  }
   return map[status] || 'info'
 }
 
@@ -148,6 +155,12 @@ function pretty(value) {
 .device-command-history__mono {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
+}
+
+.device-command-history__hint {
+  margin-left: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-warning);
 }
 
 .device-command-history__pagination {

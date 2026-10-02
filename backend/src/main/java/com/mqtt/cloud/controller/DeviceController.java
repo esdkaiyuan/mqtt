@@ -21,6 +21,7 @@ import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceDataService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -28,6 +29,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 
@@ -44,17 +46,20 @@ public class DeviceController {
     private final DeviceCredentialService deviceCredentialService;
     private final DeviceDataService deviceDataService;
     private final DeviceCommandService deviceCommandService;
+    private final DeviceShadowService deviceShadowService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceStatusHistoryService deviceStatusHistoryService,
                             DeviceCredentialService deviceCredentialService,
                             DeviceDataService deviceDataService,
-                            DeviceCommandService deviceCommandService) {
+                            DeviceCommandService deviceCommandService,
+                            DeviceShadowService deviceShadowService) {
         this.deviceService = deviceService;
         this.deviceStatusHistoryService = deviceStatusHistoryService;
         this.deviceCredentialService = deviceCredentialService;
         this.deviceDataService = deviceDataService;
         this.deviceCommandService = deviceCommandService;
+        this.deviceShadowService = deviceShadowService;
     }
 
     @Operation(summary = "创建设备", description = "为当前用户创建设备，初始状态为 INACTIVE；"
@@ -199,6 +204,38 @@ public class DeviceController {
             @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
         Device device = requireOwnedDevice(deviceKey);
         return Result.success(deviceCommandService.listCommands(device.getId(), page, size));
+    }
+
+    @Operation(summary = "获取设备影子", description = "返回 desired/reported/delta 三份状态与影子版本号；"
+            + "影子不存在时返回空映射与 version=0；modeled=false 表示产品未定义物模型；非归属用户访问返回 2003")
+    @GetMapping("/{deviceKey}/shadow")
+    public Result<DeviceShadowService.DeviceShadowResponse> getDeviceShadow(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
+        Device device = requireOwnedDevice(deviceKey);
+        return Result.success(deviceShadowService.get(device.getId(), device.getProductId()));
+    }
+
+    @Operation(summary = "写入影子期望值", description = "等价于 type=property_set 命令：按物模型校验后写入 desired；"
+            + "在线设备返回 SENT 命令记录，离线设备返回 QUEUED 并在上线后自动补发；params 缺失或为空返回 6206")
+    @PutMapping("/{deviceKey}/shadow/desired")
+    public Result<DeviceCommandRecord> putDesired(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @RequestBody CommandInvokeRequest request) {
+        Device device = requireOwnedDevice(deviceKey);
+        return Result.success(invokeDesired(device, request,
+                DeviceCommandService.SOURCE_CONSOLE, SecurityUtils.requireUserId()));
+    }
+
+    /** 影子期望值写入：复用命令通道（强制 {@code property_set} / {@code async}），入参兜底返回 6206。 */
+    private DeviceCommandRecord invokeDesired(Device device, CommandInvokeRequest request,
+                                              String source, Long operatorId) {
+        JsonNode params = request == null ? null : request.getParams();
+        if (params == null || !params.isObject() || params.isEmpty()) {
+            throw new BusinessException(ResultCode.SHADOW_DESIRED_INVALID, "params 必须为非空 JSON 对象");
+        }
+        return deviceCommandService.invoke(new DeviceCommandService.CommandInvoke(
+                device.getId(), device.getProductId(), DeviceCommandService.TYPE_PROPERTY_SET, null,
+                params.toString(), DeviceCommandService.CALL_TYPE_ASYNC, source, operatorId));
     }
 
     /** 物模型能力投影 → 前端表单契约（只暴露可下发所需的字段）。 */

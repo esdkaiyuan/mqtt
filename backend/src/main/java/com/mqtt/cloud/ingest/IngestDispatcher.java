@@ -5,6 +5,7 @@ import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.WebhookConfig;
 import com.mqtt.cloud.service.CommandReplyService;
 import com.mqtt.cloud.service.RealtimeBroadcaster;
+import com.mqtt.cloud.service.ShadowDeliveryService;
 import com.mqtt.cloud.service.ThingModelInterpretService;
 import com.mqtt.cloud.service.WebhookConfigService;
 import com.mqtt.cloud.service.WebhookDispatcher;
@@ -23,8 +24,8 @@ import java.util.stream.Collectors;
  * 由 worker 在落库事务提交后调用，保证「推送出去的，库里一定已经有」。
  * 实时推送经 {@link RealtimeBroadcaster} 出口，多副本时走 Redis 广播；
  * Webhook 配置按整批涉及用户一次性取回，替代原先的逐事件查询。
- * 物模型解析作为第三路 fan-out、命令回执作为第四路 fan-out，逐条隔离失败，绝不让异常冒泡
- * （否则 worker 会整批重试导致消息重复落库）。
+ * 物模型解析作为第三路 fan-out、命令回执作为第四路 fan-out、上线补发作为第五路 fan-out，
+ * 逐条隔离失败，绝不让异常冒泡（否则 worker 会整批重试导致消息重复落库）。
  */
 @Slf4j
 @Component
@@ -45,6 +46,7 @@ public class IngestDispatcher {
     private final RealtimeBroadcaster realtimeBroadcaster;
     private final ThingModelInterpretService thingModelInterpretService;
     private final CommandReplyService commandReplyService;
+    private final ShadowDeliveryService shadowDeliveryService;
 
     public void dispatch(List<ResolvedEvent> events) {
         if (events.isEmpty()) {
@@ -75,6 +77,11 @@ public class IngestDispatcher {
             commandReplyService.handle(events);
         } catch (Exception e) {
             log.warn("命令回执分发失败，跳过本批回执: size={}", events.size(), e);
+        }
+        try {
+            shadowDeliveryService.onIngest(events);
+        } catch (Exception e) {
+            log.warn("影子补发分发失败，跳过本批补发: size={}", events.size(), e);
         }
     }
 

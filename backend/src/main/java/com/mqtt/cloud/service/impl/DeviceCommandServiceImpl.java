@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.config.CommandProperties;
+import com.mqtt.cloud.config.ShadowProperties;
 import com.mqtt.cloud.dto.response.ThingModelResponse;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceCommandRecord;
@@ -16,6 +17,7 @@ import com.mqtt.cloud.service.DeviceAccessGuard;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
@@ -28,8 +30,11 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -48,6 +53,11 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
     static final String STATUS_ACKED = "ACKED";
     static final String STATUS_FAILED = "FAILED";
     static final String STATUS_TIMEOUT = "TIMEOUT";
+    /** T-16：离线缓存待补发。 */
+    static final String STATUS_QUEUED = "QUEUED";
+
+    /** 设备在线判定（{@code status} 运行态，与 {@code enabled} 语义分离）。 */
+    static final String STATUS_ONLINE = "ONLINE";
 
     /** 单页上限：防止 pageSize 被放大成全表扫描。 */
     static final long MAX_PAGE_SIZE = 100L;
@@ -70,6 +80,8 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
     private final DeviceCommandRecordMapper commandMapper;
     private final MqttClientManager mqttClientManager;
     private final CommandProperties properties;
+    private final ShadowProperties shadowProperties;
+    private final DeviceShadowService deviceShadowService;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -103,6 +115,17 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
 
         DeviceCommandRecord record = newPendingRecord(command, device, commandType, callType, params);
         commandMapper.insert(record);
+
+        if (TYPE_PROPERTY_SET.equals(commandType)) {
+            // T-16 §9.1：期望值先落影子 desired（无论在线与否），delta 由服务端计算。
+            applyDesired(definition, device.getId(), params);
+            if (!isDeliverable(device)) {
+                // 设备离线：不发布、不抛错，入队等待上线补发；同步调用也不等待（尚未下发）。
+                enqueue(record, LocalDateTime.now());
+                return record;
+            }
+        }
+
         publish(record, device, commandType, params);
 
         return CALL_TYPE_SYNC.equals(callType) ? awaitTerminal(record) : record;
@@ -159,6 +182,15 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
         try {
             mqttClientManager.publish(topic, payload, PUBLISH_QOS);
         } catch (Exception e) {
+            if (TYPE_PROPERTY_SET.equals(commandType)) {
+                // T-16 §9.1：属性设置的发布异常转为入队退避（不抛错），发布恢复后由补发链路接管。
+                LocalDateTime nextAttemptAt = now.plusNanos(backoffMillis(1) * 1_000_000L);
+                commandMapper.markQueued(record.getCommandId(), nextAttemptAt, truncate("发布失败: " + e.getMessage()));
+                record.setStatus(STATUS_QUEUED);
+                record.setNextAttemptAt(nextAttemptAt);
+                log.warn("属性设置发布失败，转入离线补发队列: commandId={}, topic={}", record.getCommandId(), topic, e);
+                return;
+            }
             commandMapper.markFailed(record.getCommandId(), truncate("发布失败: " + e.getMessage()), now);
             log.warn("命令发布失败: commandId={}, topic={}", record.getCommandId(), topic, e);
             throw new BusinessException(ResultCode.MQTT_PUBLISH_FAILED);
@@ -166,6 +198,163 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
         commandMapper.markSent(record.getCommandId(), now);
         record.setStatus(STATUS_SENT);
         record.setSentAt(now);
+    }
+
+    // ---------- T-16 离线入队与补发 ----------
+
+    /**
+     * 入队：{@code PENDING → QUEUED}，{@code next_attempt_at = now}（设备上线后立即可补发）。
+     * 期望值已在 {@link #applyDesired} 中落影子，此处只迁移命令状态。
+     */
+    private void enqueue(DeviceCommandRecord record, LocalDateTime now) {
+        commandMapper.markQueued(record.getCommandId(), now, null);
+        record.setStatus(STATUS_QUEUED);
+        record.setNextAttemptAt(now);
+    }
+
+    /**
+     * 可即时投递判定（T-16 §9.1）：{@code status='ONLINE' && enabled=1 && 产品 ENABLED}。
+     * 产品 ENABLED 与设备 {@code enabled=1} 已由 {@link #requireInvocable} 保证，此处只剩在线判定。
+     */
+    private boolean isDeliverable(Device device) {
+        return STATUS_ONLINE.equals(device.getStatus());
+    }
+
+    /** 属性设置期望值：按物模型归一化为 {@code identifier -> 文本} 后写入影子 {@code desired}。 */
+    private void applyDesired(ThingModelDefinition definition, Long deviceId, JsonNode params) {
+        Map<String, String> desired = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonNode> entry : params.properties()) {
+            ThingModelDefinition.PropertySpec spec = definition.properties().get(entry.getKey());
+            if (spec == null) {
+                continue;
+            }
+            String normalized = ThingModelParamValidator.normalize(spec, entry.getValue());
+            if (normalized != null) {
+                desired.put(entry.getKey(), normalized);
+            }
+        }
+        deviceShadowService.applyDesired(deviceId, desired);
+    }
+
+    /** {@inheritDoc} */
+    @Override
+    public int countQueued(Long deviceId) {
+        return deviceId == null ? 0 : commandMapper.countQueuedByDevice(deviceId);
+    }
+
+    /**
+     * 补发指定设备的 {@code QUEUED} 命令：按 {@code next_attempt_at} 升序取 {@code limit} 条，
+     * 逐条发布。成功 {@code QUEUED → SENT}；失败按尝试次数决定「退避重试」或「次数耗尽置 FAILED」。
+     * 逐条 try/catch 隔离，单条异常不影响其余命令。
+     */
+    @Override
+    public int flushQueued(Long deviceId, int limit) {
+        if (deviceId == null) {
+            return 0;
+        }
+        int safeLimit = Math.max(1, Math.min(limit, SWEEP_LIMIT));
+        List<DeviceCommandRecord> queued = commandMapper.selectQueuedByDevice(deviceId, LocalDateTime.now(), safeLimit);
+        if (queued.isEmpty()) {
+            return 0;
+        }
+        Device device = deviceService.getById(deviceId);
+        if (device == null) {
+            log.warn("命令补发跳过：设备不存在, deviceId={}", deviceId);
+            return 0;
+        }
+        int delivered = 0;
+        for (DeviceCommandRecord record : queued) {
+            try {
+                if (resend(record, device)) {
+                    delivered++;
+                }
+            } catch (Exception e) {
+                log.warn("命令补发异常，跳过本条: commandId={}", record.getCommandId(), e);
+            }
+        }
+        return delivered;
+    }
+
+    /**
+     * 退避重试巡检：跨设备选取到期的 {@code QUEUED}（设备在线、启用且产品启用），
+     * 按设备去重后逐个 {@link #flushQueued(Long, int)}。返回本轮成功补发条数。
+     */
+    @Override
+    public int sweepQueuedRetries() {
+        if (!shadowProperties.isResendEnabled()) {
+            return 0;
+        }
+        int batch = Math.max(1, Math.min(shadowProperties.getResendBatchSize(), SWEEP_LIMIT));
+        List<DeviceCommandRecord> due = commandMapper.selectDueQueued(LocalDateTime.now(), batch);
+        if (due.isEmpty()) {
+            return 0;
+        }
+        Set<Long> deviceIds = new LinkedHashSet<>();
+        for (DeviceCommandRecord record : due) {
+            if (record.getDeviceId() != null) {
+                deviceIds.add(record.getDeviceId());
+            }
+        }
+        int delivered = 0;
+        for (Long deviceId : deviceIds) {
+            delivered += flushQueued(deviceId, batch);
+        }
+        return delivered;
+    }
+
+    /** 补发单条：发布成功置 SENT，返回 {@code true}；失败按退避或耗尽处理，返回 {@code false}。 */
+    private boolean resend(DeviceCommandRecord record, Device device) {
+        LocalDateTime now = LocalDateTime.now();
+        JsonNode params;
+        try {
+            params = objectMapper.readTree(record.getParams());
+        } catch (Exception e) {
+            params = null;
+        }
+        if (params == null || !params.isObject()) {
+            handleResendFailure(record, now, new IllegalStateException("params 非法"));
+            return false;
+        }
+        String topic = "device/" + device.getDeviceKey() + TOPIC_SUFFIX;
+        String payload = buildPayload(record.getCommandId(), record.getCommandType(), record.getIdentifier(), params);
+        try {
+            mqttClientManager.publish(topic, payload, PUBLISH_QOS);
+        } catch (Exception e) {
+            handleResendFailure(record, now, e);
+            return false;
+        }
+        commandMapper.markSentFromQueued(record.getCommandId(), now);
+        record.setStatus(STATUS_SENT);
+        record.setSentAt(now);
+        return true;
+    }
+
+    /** 补发失败处理：尝试次数 +1，达上限置 FAILED（{@code 补发重试次数耗尽}），否则按指数退避重设时间。 */
+    private void handleResendFailure(DeviceCommandRecord record, LocalDateTime now, Exception cause) {
+        int attempt = (record.getAttemptCount() == null ? 0 : record.getAttemptCount()) + 1;
+        if (attempt >= Math.max(1, shadowProperties.getRetryMaxAttempts())) {
+            commandMapper.markFailedFromQueued(record.getCommandId(), "补发重试次数耗尽", now);
+            record.setStatus(STATUS_FAILED);
+            log.warn("命令补发重试次数耗尽: commandId={}, attempt={}", record.getCommandId(), attempt);
+            return;
+        }
+        long delay = backoffMillis(attempt);
+        LocalDateTime nextAttemptAt = now.plusNanos(delay * 1_000_000L);
+        commandMapper.markRetry(record.getCommandId(), nextAttemptAt, truncate("补发发布失败: " + cause.getMessage()));
+        record.setAttemptCount(attempt);
+        record.setNextAttemptAt(nextAttemptAt);
+        log.warn("命令补发失败，{}ms 后重试: commandId={}, attempt={}", delay, record.getCommandId(), attempt, cause);
+    }
+
+    /** 指数退避：{@code min(base * 2^(attempt-1), maxDelay)}；{@code attempt} 从 1 起。 */
+    private long backoffMillis(int attempt) {
+        long base = Math.max(0L, shadowProperties.getRetryBaseDelayMs());
+        long max = Math.max(base, shadowProperties.getRetryMaxDelayMs());
+        long delay = Math.min(base, max);
+        for (int i = 1; i < attempt && delay < max; i++) {
+            delay = Math.min(delay * 2, max);
+        }
+        return delay;
     }
 
     /** Alink 下行载荷：{@code {id, version, method, params}}；{@code id} 即回执关联键。 */

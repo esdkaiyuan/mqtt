@@ -13,6 +13,7 @@ import com.mqtt.cloud.filter.UserPrincipal;
 import com.mqtt.cloud.service.ApiKeyService;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.DeviceShadowService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,6 +21,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.databind.JsonNode;
 
 import java.util.HashMap;
 import java.util.List;
@@ -44,6 +46,7 @@ public class ExternalApiController {
     private final ApiKeyService apiKeyService;
     private final DeviceService deviceService;
     private final DeviceCommandService deviceCommandService;
+    private final DeviceShadowService deviceShadowService;
 
     @Operation(summary = "外部-查询设备列表", description = "返回密钥所属用户的名下设备列表；传入 deviceKey 时精确返回单个设备")
     @GetMapping("/devices")
@@ -109,6 +112,32 @@ public class ExternalApiController {
             @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
         Device device = requireOwnedDevice(deviceKey, currentUserId());
         return Result.success(deviceCommandService.listCommands(device.getId(), page, size));
+    }
+
+    @Operation(summary = "外部-查询设备影子", description = "返回 desired/reported/delta 三份状态与影子版本号；"
+            + "影子不存在时返回空映射与 version=0；modeled=false 表示产品未定义物模型")
+    @GetMapping("/devices/{deviceKey}/shadow")
+    public Result<DeviceShadowService.DeviceShadowResponse> getDeviceShadow(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
+        Device device = requireOwnedDevice(deviceKey, currentUserId());
+        return Result.success(deviceShadowService.get(device.getId(), device.getProductId()));
+    }
+
+    @Operation(summary = "外部-写入影子期望值", description = "等价于 type=property_set 命令（source=OPEN_API）；"
+            + "在线设备返回 SENT，离线返回 QUEUED 并在上线后补发；params 缺失或为空返回 6206")
+    @PutMapping("/devices/{deviceKey}/shadow/desired")
+    public Result<DeviceCommandRecord> putDesired(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @RequestBody CommandInvokeRequest request) {
+        Device device = requireOwnedDevice(deviceKey, currentUserId());
+        JsonNode params = request == null ? null : request.getParams();
+        if (params == null || !params.isObject() || params.isEmpty()) {
+            throw new BusinessException(ResultCode.SHADOW_DESIRED_INVALID, "params 必须为非空 JSON 对象");
+        }
+        return Result.success(deviceCommandService.invoke(new DeviceCommandService.CommandInvoke(
+                device.getId(), device.getProductId(), DeviceCommandService.TYPE_PROPERTY_SET, null,
+                params.toString(), DeviceCommandService.CALL_TYPE_ASYNC,
+                DeviceCommandService.SOURCE_OPEN_API, null)));
     }
 
     @Operation(summary = "外部-获取统计信息", description = "返回 totalDevices/onlineDevices/apiKeyName/permissions")

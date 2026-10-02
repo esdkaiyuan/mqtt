@@ -36,4 +36,77 @@
         LIMIT #{limit}
     </update>
 
+    <!-- ==================== T-16 设备影子：离线入队与补发 ====================
+         QUEUED 相关迁移一律带 status = 'QUEUED' 守卫（入队带 PENDING 守卫），
+         与既有 PENDING/SENT 守卫互不干扰；重复补发会被守卫丢弃（幂等）。 -->
+
+    <update id="markQueued">
+        UPDATE device_command_record
+        SET status = 'QUEUED',
+            next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+            error_message = #{errorMessage}
+        WHERE command_id = #{commandId} AND status = 'PENDING'
+    </update>
+
+    <update id="markRetry">
+        UPDATE device_command_record
+        SET attempt_count = attempt_count + 1,
+            next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+            error_message = #{errorMessage}
+        WHERE command_id = #{commandId} AND status = 'QUEUED'
+    </update>
+
+    <update id="markSentFromQueued">
+        UPDATE device_command_record
+        SET status = 'SENT', sent_at = #{sentAt,jdbcType=TIMESTAMP}, next_attempt_at = NULL, error_message = NULL
+        WHERE command_id = #{commandId} AND status = 'QUEUED'
+    </update>
+
+    <update id="markFailedFromQueued">
+        UPDATE device_command_record
+        SET status = 'FAILED',
+            error_message = #{errorMessage},
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            next_attempt_at = NULL
+        WHERE command_id = #{commandId} AND status = 'QUEUED'
+    </update>
+
+    <sql id="commandColumns">
+        id, command_id, device_id, product_id, command_type, identifier, params,
+        status, call_type, source, operator_id, result, error_message,
+        created_at, sent_at, finished_at, attempt_count, next_attempt_at
+    </sql>
+
+    <select id="selectQueuedByDevice" resultType="com.mqtt.cloud.entity.DeviceCommandRecord">
+        SELECT <include refid="commandColumns"/>
+        FROM device_command_record
+        WHERE device_id = #{deviceId}
+          AND status = 'QUEUED'
+          AND (next_attempt_at IS NULL OR next_attempt_at &lt;= #{now,jdbcType=TIMESTAMP})
+        ORDER BY next_attempt_at ASC, created_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="countQueuedByDevice" resultType="int">
+        SELECT COUNT(*)
+        FROM device_command_record
+        WHERE device_id = #{deviceId} AND status = 'QUEUED'
+    </select>
+
+    <!-- 巡检跨设备补发：仅取设备在线且启用、产品启用的到期 QUEUED 命令。 -->
+    <select id="selectDueQueued" resultType="com.mqtt.cloud.entity.DeviceCommandRecord">
+        SELECT c.id, c.command_id, c.device_id, c.product_id, c.command_type, c.identifier, c.params,
+               c.status, c.call_type, c.source, c.operator_id, c.result, c.error_message,
+               c.created_at, c.sent_at, c.finished_at, c.attempt_count, c.next_attempt_at
+        FROM device_command_record c
+        JOIN device d ON d.id = c.device_id AND d.deleted = 0
+        JOIN product p ON p.id = c.product_id AND p.status = 'ENABLED' AND p.deleted = 0
+        WHERE c.status = 'QUEUED'
+          AND d.status = 'ONLINE'
+          AND d.enabled = 1
+          AND (c.next_attempt_at IS NULL OR c.next_attempt_at &lt;= #{now,jdbcType=TIMESTAMP})
+        ORDER BY c.next_attempt_at ASC, c.created_at ASC
+        LIMIT #{limit}
+    </select>
+
 </mapper>

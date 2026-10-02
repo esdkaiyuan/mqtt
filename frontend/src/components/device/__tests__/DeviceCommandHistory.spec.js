@@ -153,6 +153,14 @@ describe('components/device/DeviceCommandHistory', () => {
     expect(tags[1].text()).toBe('TIMEOUT')
   })
 
+  it('QUEUED 状态标注待补发提示', () => {
+    const wrapper = mountPanel({ records: [{ ...ROWS[0], status: 'QUEUED' }], total: 1 })
+
+    expect(wrapper.find('.stub-tag').attributes('data-type')).toBe('warning')
+    expect(wrapper.find('.stub-tag').text()).toBe('QUEUED')
+    expect(wrapper.find('.device-command-history__hint').text()).toBe('待补发')
+  })
+
   it('毫秒级耗时按 ms 展示', () => {
     const wrapper = mountPanel({
       records: [{ ...ROWS[0], finishedAt: '2026-10-02T10:00:00.250' }],

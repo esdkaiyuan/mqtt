@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DeviceShadowMapper">
+
+    <!-- 懒创建：命中 uk_shadow_device 时 id = id 不产生实际变更（幂等）。 -->
+    <insert id="insertIfAbsent">
+        INSERT INTO device_shadow (device_id, desired, reported, delta, version, created_at, updated_at)
+        VALUES (#{deviceId}, NULL, NULL, NULL, 0, #{now,jdbcType=TIMESTAMP}, #{now,jdbcType=TIMESTAMP})
+        ON DUPLICATE KEY UPDATE id = id
+    </insert>
+
+    <!-- 版本号 CAS：WHERE version = ? 保证并发合并只成功一次，成功后版本自增。 -->
+    <update id="casUpdate">
+        UPDATE device_shadow
+        SET desired = #{desired},
+            reported = #{reported},
+            delta = #{delta},
+            version = version + 1,
+            updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+        WHERE device_id = #{deviceId} AND version = #{expectedVersion}
+    </update>
+
+</mapper>

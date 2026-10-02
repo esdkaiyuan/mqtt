@@ -14,6 +14,9 @@ import java.time.LocalDateTime;
  * <p>
  * 一次下行命令一行，状态流转 {@code PENDING → SENT → ACKED/FAILED/TIMEOUT}；
  * {@code command_id} 即下行 Alink 载荷的 {@code id}，设备回执按它关联。
+ * <p>
+ * T-16 扩展：新增 {@code QUEUED} 状态（设备离线 / property_set 发布失败时入队），
+ * 并增加 {@code attemptCount} / {@code nextAttemptAt} 支持补发与指数退避。
  */
 @Data
 @EqualsAndHashCode(callSuper = false)
@@ -46,7 +49,7 @@ public class DeviceCommandRecord {
     @TableField("params")
     private String params;
 
-    /** PENDING / SENT / ACKED / FAILED / TIMEOUT */
+    /** PENDING / SENT / QUEUED / ACKED / FAILED / TIMEOUT */
     @TableField("status")
     private String status;
 
@@ -81,4 +84,12 @@ public class DeviceCommandRecord {
     /** 终态时间（ACKED/FAILED/TIMEOUT） */
     @TableField("finished_at")
     private LocalDateTime finishedAt;
+
+    /** 补发尝试次数（QUEUED 阶段累计，T-16） */
+    @TableField("attempt_count")
+    private Integer attemptCount;
+
+    /** 下次可补发时间（指数退避，T-16）；非 QUEUED 时为 NULL */
+    @TableField("next_attempt_at")
+    private LocalDateTime nextAttemptAt;
 }

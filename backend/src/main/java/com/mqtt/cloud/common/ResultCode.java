@@ -56,7 +56,8 @@ public enum ResultCode {
     COMMAND_PROPERTY_READONLY(6202, "属性不可写", HttpStatus.BAD_REQUEST),
     COMMAND_IDENTIFIER_UNKNOWN(6203, "标识符未在物模型中定义", HttpStatus.BAD_REQUEST),
     COMMAND_PARAM_INVALID(6204, "参数不符合物模型定义", HttpStatus.BAD_REQUEST),
-    COMMAND_NOT_FOUND(6205, "命令记录不存在", HttpStatus.NOT_FOUND);
+    COMMAND_NOT_FOUND(6205, "命令记录不存在", HttpStatus.NOT_FOUND),
+    SHADOW_DESIRED_INVALID(6206, "影子期望状态非法", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;

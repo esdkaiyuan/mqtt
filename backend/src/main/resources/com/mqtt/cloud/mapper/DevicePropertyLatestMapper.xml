@@ -15,4 +15,15 @@
             reported_at = IF(#{reportedAt,jdbcType=TIMESTAMP} &gt;= reported_at, #{reportedAt,jdbcType=TIMESTAMP}, reported_at)
     </insert>
 
+    <!-- 按标识符批量取权威最新值；identifiers 由调用方保证非空。 -->
+    <select id="selectByIdentifiers" resultType="com.mqtt.cloud.entity.DevicePropertyLatest">
+        SELECT id, device_id, identifier, data_type, value_text, reported_at, updated_at
+        FROM device_property_latest
+        WHERE device_id = #{deviceId}
+          AND identifier IN
+        <foreach collection="identifiers" item="it" open="(" separator="," close=")">
+            #{it}
+        </foreach>
+    </select>
+
 </mapper>

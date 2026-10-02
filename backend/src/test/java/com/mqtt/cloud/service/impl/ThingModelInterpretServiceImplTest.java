@@ -7,6 +7,7 @@ import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.ingest.ResolvedEvent;
 import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
+import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
 import io.micrometer.core.instrument.Counter;
@@ -49,6 +50,7 @@ class ThingModelInterpretServiceImplTest {
     private ThingModelService thingModelService;
     private DevicePropertyLatestMapper propertyLatestMapper;
     private DeviceEventRecordMapper eventRecordMapper;
+    private DeviceShadowService deviceShadowService;
     private ThingModelProperties properties;
     private SimpleMeterRegistry registry;
     private ThingModelInterpretServiceImpl service;
@@ -58,11 +60,12 @@ class ThingModelInterpretServiceImplTest {
         thingModelService = mock(ThingModelService.class);
         propertyLatestMapper = mock(DevicePropertyLatestMapper.class);
         eventRecordMapper = mock(DeviceEventRecordMapper.class);
+        deviceShadowService = mock(DeviceShadowService.class);
         properties = new ThingModelProperties();
         registry = new SimpleMeterRegistry();
         service = new ThingModelInterpretServiceImpl(thingModelService, propertyLatestMapper,
-                eventRecordMapper, new ThingModelInterpretMetrics(registry), properties,
-                new ObjectMapper());
+                eventRecordMapper, deviceShadowService, new ThingModelInterpretMetrics(registry),
+                properties, new ObjectMapper());
     }
 
     @Test

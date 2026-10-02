@@ -64,5 +64,20 @@ export const deviceApi = {
   /**
    * 命令记录分页（按创建时间倒序）
    */
-  getCommandRecords: (deviceKey, params) => api.get(`/devices/${deviceKey}/commands`, { params })
+  getCommandRecords: (deviceKey, params) => api.get(`/devices/${deviceKey}/commands`, { params }),
+
+  // ---------- 设备影子（T-16） ----------
+
+  /**
+   * 查询设备影子：desired / reported / delta 三份状态与版本号
+   * 影子不存在时返回空映射与 version=0；modeled=false 表示产品未定义物模型
+   */
+  getDeviceShadow: (deviceKey) => api.get(`/devices/${deviceKey}/shadow`),
+
+  /**
+   * 写入影子期望值：等价于 type=property_set 命令
+   * 在线设备返回 SENT 命令记录，离线设备返回 QUEUED 并在上线后自动补发
+   */
+  setDeviceShadowDesired: (deviceKey, params) =>
+    api.put(`/devices/${deviceKey}/shadow/desired`, { params })
 }

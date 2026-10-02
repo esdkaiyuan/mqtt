@@ -7,6 +7,7 @@ import {
   initialValues,
   missingRequired,
   propertyFields,
+  restoreParams,
   serviceFields
 } from '../commandForm'
 
@@ -92,5 +93,25 @@ describe('utils/commandForm', () => {
   it('下行 Topic 与后端发布主题一致', () => {
     expect(commandTopic('dev-1')).toBe('device/dev-1/cmd/down')
     expect(commandTopic('')).toBe('')
+  })
+
+  it('还原 delta 文本为原生类型，跳过空值与非法 JSON', () => {
+    const fields = [
+      { identifier: 'targetTemp', control: 'number' },
+      { identifier: 'power', control: 'switch' },
+      { identifier: 'ext', control: 'json' },
+      { identifier: 'mode', control: 'select' }
+    ]
+
+    const { params } = restoreParams(fields, {
+      targetTemp: '26.5',
+      power: 'true',
+      ext: '{"a":1}',
+      mode: 'auto'
+    })
+    expect(params).toEqual({ targetTemp: 26.5, power: true, ext: { a: 1 }, mode: 'auto' })
+
+    const partial = restoreParams(fields, { targetTemp: '', ext: 'not json', mode: 'cool' })
+    expect(partial.params).toEqual({ mode: 'cool' })
   })
 })
