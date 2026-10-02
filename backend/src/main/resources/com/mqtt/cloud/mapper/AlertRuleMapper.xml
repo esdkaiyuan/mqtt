@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.AlertRuleMapper">
+
+    <sql id="ruleColumns">
+        id, user_id, device_id, name, source_type, severity, identifier, operator,
+        threshold_value, event_type, offline_seconds, suppress_window_seconds, enabled,
+        created_at, updated_at, deleted
+    </sql>
+
+    <!-- 按用户 + 可选来源查启用规则 -->
+    <select id="selectEnabledByUser" resultType="com.mqtt.cloud.entity.AlertRule">
+        SELECT <include refid="ruleColumns"/>
+        FROM alert_rule
+        WHERE user_id = #{userId}
+          AND enabled = 1
+          AND deleted = 0
+        <if test="sourceType != null and sourceType != ''">
+            AND source_type = #{sourceType}
+        </if>
+        ORDER BY id DESC
+    </select>
+
+    <!-- 某设备适用的启用规则：作用域为全部设备（device_id IS NULL）或正是该设备 -->
+    <select id="selectEnabledForDevice" resultType="com.mqtt.cloud.entity.AlertRule">
+        SELECT <include refid="ruleColumns"/>
+        FROM alert_rule
+        WHERE user_id = #{userId}
+          AND enabled = 1
+          AND deleted = 0
+          AND (device_id IS NULL OR device_id = #{deviceId})
+        <if test="sourceType != null and sourceType != ''">
+            AND source_type = #{sourceType}
+        </if>
+        ORDER BY id ASC
+    </select>
+
+    <!-- 跨用户按来源取启用规则（离线巡检用），按 id 升序分批 -->
+    <select id="selectEnabledBySource" resultType="com.mqtt.cloud.entity.AlertRule">
+        SELECT <include refid="ruleColumns"/>
+        FROM alert_rule
+        WHERE source_type = #{sourceType}
+          AND enabled = 1
+          AND deleted = 0
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

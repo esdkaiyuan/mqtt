@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.AlertRecordMapper">
+
+    <!-- 取某规则 + 某设备的唯一活动记录（跨多次重复触发复用一行） -->
+    <select id="selectOpenByRuleAndDevice" resultType="com.mqtt.cloud.entity.AlertRecord">
+        SELECT *
+        FROM alert_record
+        WHERE rule_id = #{ruleId}
+          AND device_id = #{deviceId}
+          AND status &lt;&gt; 'RECOVERED'
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <!-- 重复触发累加：仅活动记录可更新，返回受影响行数作为幂等判定 -->
+    <update id="updateTrigger">
+        UPDATE alert_record
+        SET trigger_count = #{triggerCount},
+            last_triggered_at = #{lastTriggeredAt,jdbcType=TIMESTAMP},
+            trigger_value = #{triggerValue},
+            notified_at = #{notifiedAt,jdbcType=TIMESTAMP},
+            updated_at = #{lastTriggeredAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status &lt;&gt; 'RECOVERED'
+    </update>
+
+    <!-- 置恢复（终态），仅活动记录可恢复 -->
+    <update id="markRecovered">
+        UPDATE alert_record
+        SET status = 'RECOVERED',
+            recovered_at = #{recoveredAt,jdbcType=TIMESTAMP},
+            updated_at = #{recoveredAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status &lt;&gt; 'RECOVERED'
+    </update>
+
+    <!-- 人工确认，仅 TRIGGERED 可确认 -->
+    <update id="markAcknowledged">
+        UPDATE alert_record
+        SET status = 'ACKNOWLEDGED',
+            acknowledged_at = #{acknowledgedAt,jdbcType=TIMESTAMP},
+            acknowledged_by = #{acknowledgedBy},
+            updated_at = #{acknowledgedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status = 'TRIGGERED'
+    </update>
+
+    <!-- 未读数：本人全部活动告警 -->
+    <select id="countOpenByUser" resultType="long">
+        SELECT COUNT(*)
+        FROM alert_record
+        WHERE user_id = #{userId}
+          AND status &lt;&gt; 'RECOVERED'
+    </select>
+
+    <!-- 顶栏最近告警：本人活动告警按最近触发时间倒序 -->
+    <select id="selectOpenByUserLimit" resultType="com.mqtt.cloud.entity.AlertRecord">
+        SELECT *
+        FROM alert_record
+        WHERE user_id = #{userId}
+          AND status &lt;&gt; 'RECOVERED'
+        ORDER BY last_triggered_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 某规则下的活动告警 -->
+    <select id="selectOpenByRule" resultType="com.mqtt.cloud.entity.AlertRecord">
+        SELECT *
+        FROM alert_record
+        WHERE rule_id = #{ruleId}
+          AND status &lt;&gt; 'RECOVERED'
+        ORDER BY last_triggered_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 某规则下、指定设备集合的活动告警（离线巡检批量恢复判定） -->
+    <select id="selectOpenByRuleAndDevices" resultType="com.mqtt.cloud.entity.AlertRecord">
+        SELECT *
+        FROM alert_record
+        WHERE rule_id = #{ruleId}
+          AND status &lt;&gt; 'RECOVERED'
+          AND device_id IN
+        <foreach collection="deviceIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
+    <!-- 规则已逻辑删除（或规则行缺失）的活动告警：巡检兜底置恢复，避免永久活动告警（§13⑥） -->
+    <select id="selectOpenByDeletedRule" resultType="com.mqtt.cloud.entity.AlertRecord">
+        SELECT r.*
+        FROM alert_record r
+        LEFT JOIN alert_rule ar ON ar.id = r.rule_id
+        WHERE r.status &lt;&gt; 'RECOVERED'
+          AND (ar.id IS NULL OR ar.deleted = 1)
+        ORDER BY r.id ASC
+        LIMIT #{limit}
+    </select>
+
+</mapper>
