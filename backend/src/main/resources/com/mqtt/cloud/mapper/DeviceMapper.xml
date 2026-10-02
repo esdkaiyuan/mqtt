@@ -85,6 +85,25 @@
           AND deleted = 0
     </select>
 
+    <!-- 离线告警巡检：status=OFFLINE 且离线时长达到规则阈值。
+         last_seen 为空视为「从未上报」，同样满足；offlineSeconds=0 时 DATE_SUB 为当前时刻，任何离线段均满足。 -->
+    <select id="findOfflineDevicesForAlert" resultType="com.mqtt.cloud.entity.Device">
+        SELECT <include refid="baseColumns"/>
+        FROM device
+        WHERE status = 'OFFLINE'
+          AND deleted = 0
+          <if test="userId != null">
+            AND owner_id = #{userId}
+          </if>
+          <if test="deviceId != null">
+            AND id = #{deviceId}
+          </if>
+          AND (last_seen IS NULL
+               OR last_seen &lt;= DATE_SUB(NOW(), INTERVAL #{offlineSeconds} SECOND))
+        ORDER BY last_seen ASC
+        LIMIT #{limit}
+    </select>
+
     <select id="pageQuery" resultType="com.mqtt.cloud.entity.Device">
         SELECT d.id, d.device_name, d.device_key, d.device_type, d.topic,
                d.description, d.owner_id, d.status, d.last_seen, d.metadata,

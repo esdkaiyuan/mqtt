@@ -40,5 +40,18 @@ public interface DeviceMapper extends BaseMapper<Device> {
 
     List<Device> findTimeoutDevices(@Param("timeoutMinutes") int timeoutMinutes);
 
+    /**
+     * 离线告警巡检：取作用域内 {@code status='OFFLINE'} 且离线时长已达阈值的设备（T-17 设计文档 §8.3）。
+     *
+     * @param userId         可空，非空时限定归属用户
+     * @param deviceId       可空，非空时限定单台设备（规则作用域）
+     * @param offlineSeconds 离线持续阈值（秒），0 表示状态一变 OFFLINE 即满足
+     * @param limit          单轮上限
+     */
+    List<Device> findOfflineDevicesForAlert(@Param("userId") Long userId,
+                                            @Param("deviceId") Long deviceId,
+                                            @Param("offlineSeconds") int offlineSeconds,
+                                            @Param("limit") int limit);
+
     IPage<Device> pageQuery(Page<Device> page, @Param("dto") DeviceQueryDTO dto, @Param("ownerId") Long ownerId);
 }
