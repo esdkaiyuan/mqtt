@@ -68,7 +68,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = data.token || ''
     user.value = normalizeUser(data)
     persistSession()
-    emit('navigate', '/dashboard')
+    emit('navigate', '/workbench/dashboard')
   }
 
   async function register(registerDTO) {

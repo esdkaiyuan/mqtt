@@ -1,39 +1,47 @@
 <template>
   <div class="query-card card">
     <h3 class="card-title">查询条件</h3>
-    <form class="query-form" @submit.prevent="emit('submit')">
+    <el-form label-position="top" class="query-form" @submit.prevent="emit('submit')">
       <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">设备</label>
-          <select v-model="deviceId" class="form-input">
-            <option value="">全部设备</option>
-            <option v-for="device in deviceOptions" :key="device.id" :value="device.id">
-              {{ device.deviceName }} ({{ device.deviceKey }})
-            </option>
-          </select>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Topic</label>
-          <input v-model="topic" placeholder="Topic关键词（选填）" class="form-input" />
-        </div>
+        <el-form-item label="设备">
+          <el-select v-model="deviceId" placeholder="全部设备" clearable filterable>
+            <el-option
+              v-for="device in deviceOptions"
+              :key="device.id"
+              :label="`${device.deviceName} (${device.deviceKey})`"
+              :value="device.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Topic">
+          <el-input v-model="topic" placeholder="Topic 关键词（选填）" clearable />
+        </el-form-item>
       </div>
       <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">开始时间</label>
-          <input v-model="startTime" type="datetime-local" class="form-input" />
-        </div>
-        <div class="form-group">
-          <label class="form-label">结束时间</label>
-          <input v-model="endTime" type="datetime-local" class="form-input" />
-        </div>
+        <el-form-item label="开始时间">
+          <el-date-picker
+            v-model="startTime"
+            type="datetime"
+            placeholder="开始时间"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="结束时间">
+          <el-date-picker
+            v-model="endTime"
+            type="datetime"
+            placeholder="结束时间"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            style="width: 100%"
+          />
+        </el-form-item>
       </div>
       <div class="form-actions">
-        <button type="submit" class="btn-primary" :disabled="loading">
-          {{ loading ? '查询中...' : '查询' }}
-        </button>
-        <button type="button" class="btn-secondary" @click="emit('reset')">重置</button>
+        <el-button type="primary" :loading="loading" @click="emit('submit')">查询</el-button>
+        <el-button @click="emit('reset')">重置</el-button>
       </div>
-    </form>
+    </el-form>
   </div>
 </template>
 
@@ -59,28 +67,26 @@ const endTime = defineModel('endTime', { type: String })
 
 <style scoped>
 .query-card {
-  margin-bottom: var(--spacing-lg);
+  margin-bottom: var(--grid-gutter);
 }
 
 .card-title {
   font-size: var(--font-size-md);
-  font-weight: 600;
-  color: var(--color-gray-dark);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
   margin-bottom: var(--spacing-md);
   padding-bottom: var(--spacing-sm);
   border-bottom: 1px solid var(--border-color-light);
 }
 
-.query-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-md);
+.query-form :deep(.el-form-item) {
+  margin-bottom: var(--spacing-md);
 }
 
 .form-row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: var(--spacing-md);
+  gap: var(--grid-gutter);
 }
 
 .form-actions {

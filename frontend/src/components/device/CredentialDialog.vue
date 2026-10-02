@@ -12,24 +12,18 @@
       <span class="credential-label">MQTT 用户名</span>
       <div class="credential-value">
         <code>{{ credential.username }}</code>
-        <button type="button" class="btn-link" @click="copyText(credential.username)">
-          复制
-        </button>
+        <el-button link type="primary" @click="copyText(credential.username)">复制</el-button>
       </div>
     </div>
     <div class="credential-row">
       <span class="credential-label">设备密钥</span>
       <div class="credential-value">
         <code>{{ credential.deviceSecret }}</code>
-        <button type="button" class="btn-link" @click="copyText(credential.deviceSecret)">
-          复制
-        </button>
+        <el-button link type="primary" @click="copyText(credential.deviceSecret)">复制</el-button>
       </div>
     </div>
     <template #footer>
-      <div class="dialog-footer">
-        <button class="btn-primary" @click="visible = false">我已保存</button>
-      </div>
+      <el-button type="primary" @click="visible = false">我已保存</el-button>
     </template>
   </el-dialog>
 </template>
@@ -59,10 +53,10 @@ async function copyText(text) {
 .credential-tip {
   padding: 10px 12px;
   margin-bottom: var(--spacing-md);
-  background: #FFF7E6;
-  border: 1px solid #FFD591;
+  background: var(--color-warning-light);
+  border: 1px solid var(--color-warning-light);
   border-radius: var(--border-radius-sm);
-  color: #AD6800;
+  color: var(--color-warning);
   font-size: var(--font-size-sm);
   line-height: 1.5;
 }
@@ -77,7 +71,7 @@ async function copyText(text) {
 .credential-label {
   width: 90px;
   flex-shrink: 0;
-  color: var(--color-gray-text);
+  color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
 }
 
@@ -88,36 +82,17 @@ async function copyText(text) {
   justify-content: space-between;
   gap: var(--spacing-sm);
   padding: 6px 10px;
-  background: var(--color-gray-light);
+  background: var(--color-bg);
   border-radius: var(--border-radius-sm);
   min-width: 0;
 }
 
 .credential-value code {
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
-  color: var(--color-gray-dark);
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-sm);
-}
-
-.btn-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  color: var(--color-primary);
-  background: none;
-  border: none;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  font-family: var(--font-family);
 }
 </style>

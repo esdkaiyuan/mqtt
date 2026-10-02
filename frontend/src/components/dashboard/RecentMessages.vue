@@ -2,10 +2,10 @@
   <div class="recent-messages card">
     <div class="recent-header">
       <h3 class="chart-title">最近消息</h3>
-      <router-link to="/messages" class="btn-link">查看全部</router-link>
+      <router-link to="/workbench/messages" class="btn-link">查看全部</router-link>
     </div>
     <div v-if="messages.length === 0" class="empty-state-small">
-      <svg-icon name="message" :size="32" color="#E0E0E0" />
+      <svg-icon name="message" :size="32" color="var(--color-border)" />
       <p>暂无消息数据</p>
     </div>
     <div v-else class="recent-table-wrapper">
@@ -159,8 +159,8 @@ function truncatePayload(payload) {
 }
 
 .direction-badge.publish {
-  background: #E8F3FF;
-  color: #165DFF;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
 .direction-badge.subscribe {

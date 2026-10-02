@@ -5,77 +5,53 @@
     width="500px"
     :close-on-click-modal="false"
   >
-    <form class="dialog-form" @submit.prevent="handleSubmit">
-      <div class="form-group">
-        <label class="form-label">所属产品 <span class="required">*</span></label>
-        <select
+    <el-form label-position="top" class="dialog-form" @submit.prevent>
+      <el-form-item label="所属产品" required>
+        <el-select
           v-model="form.productId"
-          class="form-input"
-          :disabled="productsLoading"
+          placeholder="请选择产品"
+          :loading="productsLoading"
+          filterable
         >
-          <option value="">{{ productsLoading ? '加载中...' : '请选择产品' }}</option>
-          <option
+          <el-option
             v-for="product in products"
             :key="product.id"
+            :label="`${product.productName}（${product.productKey}）`"
             :value="product.id"
-          >
-            {{ product.productName }}（{{ product.productKey }}）
-          </option>
-        </select>
+          />
+        </el-select>
         <p v-if="!productsLoading && products.length === 0" class="form-hint">
           暂无可用产品，请先通过 POST /api/products 创建并启用产品
         </p>
-      </div>
-      <div class="form-group">
-        <label class="form-label">设备名称 <span class="required">*</span></label>
-        <input
-          v-model="form.deviceName"
-          placeholder="请输入设备名称"
-          class="form-input"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label">设备标识 <span class="required">*</span></label>
-        <input
-          v-model="form.deviceKey"
-          placeholder="全局唯一标识，如sensor-001"
-          class="form-input"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label">设备类型 <span class="required">*</span></label>
-        <select v-model="form.deviceType" class="form-input">
-          <option value="">请选择类型</option>
-          <option value="sensor">传感器</option>
-          <option value="gateway">网关</option>
-          <option value="actuator">执行器</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">MQTT Topic <span class="required">*</span></label>
-        <input
-          v-model="form.topic"
-          placeholder="如 device/sensor-001/data"
-          class="form-input"
-        />
-      </div>
-      <div class="form-group">
-        <label class="form-label">设备描述</label>
-        <textarea
+      </el-form-item>
+      <el-form-item label="设备名称" required>
+        <el-input v-model="form.deviceName" placeholder="请输入设备名称" />
+      </el-form-item>
+      <el-form-item label="设备标识" required>
+        <el-input v-model="form.deviceKey" placeholder="全局唯一标识，如 sensor-001" />
+      </el-form-item>
+      <el-form-item label="设备类型" required>
+        <el-select v-model="form.deviceType" placeholder="请选择类型">
+          <el-option label="传感器" value="sensor" />
+          <el-option label="网关" value="gateway" />
+          <el-option label="执行器" value="actuator" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="MQTT Topic" required>
+        <el-input v-model="form.topic" placeholder="如 device/sensor-001/data" />
+      </el-form-item>
+      <el-form-item label="设备描述">
+        <el-input
           v-model="form.description"
+          type="textarea"
+          :rows="3"
           placeholder="设备描述信息（选填）"
-          class="form-input form-textarea"
-          rows="3"
-        ></textarea>
-      </div>
-    </form>
+        />
+      </el-form-item>
+    </el-form>
     <template #footer>
-      <div class="dialog-footer">
-        <button class="btn-secondary" @click="visible = false">取消</button>
-        <button class="btn-primary" :disabled="loading" @click="handleSubmit">
-          {{ loading ? '创建中...' : '创建设备' }}
-        </button>
-      </div>
+      <el-button @click="visible = false">取消</el-button>
+      <el-button type="primary" :loading="loading" @click="handleSubmit">创建设备</el-button>
     </template>
   </el-dialog>
 </template>
@@ -119,26 +95,18 @@ function handleSubmit() {
 </script>
 
 <style scoped>
-.dialog-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.dialog-form :deep(.el-form-item) {
+  margin-bottom: var(--spacing-md);
 }
 
-.form-textarea {
-  resize: vertical;
-  min-height: 80px;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-sm);
+.dialog-form :deep(.el-select) {
+  width: 100%;
 }
 
 .form-hint {
-  margin-top: 4px;
+  width: 100%;
+  margin-top: var(--spacing-xs);
   font-size: var(--font-size-xs);
-  color: var(--color-gray-text);
+  color: var(--color-text-tertiary);
 }
 </style>

@@ -5,35 +5,27 @@
     width="500px"
     :close-on-click-modal="false"
   >
-    <form class="dialog-form" @submit.prevent="handleSubmit">
-      <div class="form-group">
-        <label class="form-label">设备名称</label>
-        <input v-model="form.deviceName" class="form-input" />
-      </div>
-      <div class="form-group">
-        <label class="form-label">设备类型</label>
-        <select v-model="form.deviceType" class="form-input">
-          <option value="sensor">传感器</option>
-          <option value="gateway">网关</option>
-          <option value="actuator">执行器</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">MQTT Topic</label>
-        <input v-model="form.topic" class="form-input" />
-      </div>
-      <div class="form-group">
-        <label class="form-label">设备描述</label>
-        <textarea v-model="form.description" class="form-input form-textarea" rows="3"></textarea>
-      </div>
-    </form>
+    <el-form label-position="top" class="dialog-form" @submit.prevent>
+      <el-form-item label="设备名称">
+        <el-input v-model="form.deviceName" />
+      </el-form-item>
+      <el-form-item label="设备类型">
+        <el-select v-model="form.deviceType">
+          <el-option label="传感器" value="sensor" />
+          <el-option label="网关" value="gateway" />
+          <el-option label="执行器" value="actuator" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="MQTT Topic">
+        <el-input v-model="form.topic" />
+      </el-form-item>
+      <el-form-item label="设备描述">
+        <el-input v-model="form.description" type="textarea" :rows="3" />
+      </el-form-item>
+    </el-form>
     <template #footer>
-      <div class="dialog-footer">
-        <button class="btn-secondary" @click="visible = false">取消</button>
-        <button class="btn-primary" :disabled="loading" @click="handleSubmit">
-          {{ loading ? '保存中...' : '保存' }}
-        </button>
-      </div>
+      <el-button @click="visible = false">取消</el-button>
+      <el-button type="primary" :loading="loading" @click="handleSubmit">保存</el-button>
     </template>
   </el-dialog>
 </template>
@@ -75,20 +67,11 @@ function handleSubmit() {
 </script>
 
 <style scoped>
-.dialog-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+.dialog-form :deep(.el-form-item) {
+  margin-bottom: var(--spacing-md);
 }
 
-.form-textarea {
-  resize: vertical;
-  min-height: 80px;
-}
-
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--spacing-sm);
+.dialog-form :deep(.el-select) {
+  width: 100%;
 }
 </style>

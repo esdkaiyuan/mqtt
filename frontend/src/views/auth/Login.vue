@@ -4,27 +4,25 @@
       <!-- Left branding panel -->
       <div class="login-brand">
         <div class="brand-content">
-          <div class="brand-logo">
-            <svg class="logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect width="32" height="32" rx="8" fill="#165DFF" />
-              <path d="M8 16C8 11.6 11.6 8 16 8C20.4 8 24 11.6 24 16C24 20.4 20.4 24 16 24" stroke="white" stroke-width="2.5" stroke-linecap="round" />
-              <circle cx="16" cy="16" r="3" fill="white" />
-              <path d="M16 10V13M16 19V22M13 16H10M19 16H22" stroke="white" stroke-width="2" stroke-linecap="round" />
-            </svg>
-          </div>
-          <h1 class="brand-title">MQTT Cloud</h1>
-          <p class="brand-desc">构建万物互联的<br>智能IoT平台</p>
+          <BrandLogo :size="48" :text-size="32" class="brand-logo" />
+          <p class="brand-desc">构建万物互联的<br>智能 IoT 平台</p>
           <div class="brand-features">
             <div class="brand-feature">
-              <span class="brand-feature-icon">&#x1F4E1;</span>
+              <span class="brand-feature-icon">
+                <svg-icon name="device" :size="16" />
+              </span>
               <span>设备接入管理</span>
             </div>
             <div class="brand-feature">
-              <span class="brand-feature-icon">&#x1F4CA;</span>
+              <span class="brand-feature-icon">
+                <svg-icon name="message" :size="16" />
+              </span>
               <span>实时消息监控</span>
             </div>
             <div class="brand-feature">
-              <span class="brand-feature-icon">&#x1F300;</span>
+              <span class="brand-feature-icon">
+                <svg-icon name="chart" :size="16" />
+              </span>
               <span>数据可视化</span>
             </div>
           </div>
@@ -35,49 +33,52 @@
       <div class="login-form-area">
         <div class="login-form-wrapper">
           <h2 class="form-title">登录平台</h2>
-          <p class="form-subtitle">使用您的账号登录管理后台</p>
+          <p class="form-subtitle">使用您的账号登录管理工作台</p>
 
-          <form @submit.prevent="handleLogin" class="login-form">
-            <div class="form-group">
-              <label class="form-label">用户名</label>
-              <div class="input-wrapper">
-                <svg-icon name="user" :size="16" color="#86909C" />
-                <input
-                  v-model="form.username"
-                  type="text"
-                  placeholder="请输入用户名"
-                  class="form-input with-icon"
-                  autocomplete="username"
-                />
-              </div>
-            </div>
+          <el-form label-position="top" class="login-form" @submit.prevent>
+            <el-form-item label="用户名">
+              <el-input
+                v-model="form.username"
+                placeholder="请输入用户名"
+                autocomplete="username"
+                size="large"
+              >
+                <template #prefix>
+                  <el-icon><User /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
 
-            <div class="form-group">
-              <label class="form-label">密码</label>
-              <div class="input-wrapper">
-                <svg-icon name="user" :size="16" color="#86909C" />
-                <input
-                  v-model="form.password"
-                  type="password"
-                  placeholder="请输入密码"
-                  class="form-input with-icon"
-                  autocomplete="current-password"
-                />
-              </div>
-            </div>
+            <el-form-item label="密码">
+              <el-input
+                v-model="form.password"
+                type="password"
+                placeholder="请输入密码"
+                autocomplete="current-password"
+                size="large"
+                show-password
+                @keyup.enter="handleLogin"
+              >
+                <template #prefix>
+                  <el-icon><Lock /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
 
-            <button
-              type="submit"
-              class="btn-login"
-              :disabled="loading"
+            <el-button
+              type="primary"
+              size="large"
+              class="login-submit"
+              :loading="loading"
+              @click="handleLogin"
             >
-              {{ loading ? '登录中...' : '登 录' }}
-            </button>
+              登录
+            </el-button>
 
             <div v-if="errorMessage" class="error-message">
               {{ errorMessage }}
             </div>
-          </form>
+          </el-form>
 
           <div class="login-footer">
             <span>还没有账号？</span>
@@ -95,10 +96,15 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { User, Lock } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import SvgIcon from '@/components/Icon.vue'
+import BrandLogo from '@/components/common/BrandLogo.vue'
 
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 
 const form = ref({
   username: '',
@@ -119,6 +125,10 @@ async function handleLogin() {
   loading.value = true
   try {
     await authStore.login(form.value)
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+    if (redirect) {
+      router.replace(redirect)
+    }
   } catch (error) {
     // axios 拦截器已显示错误消息，此处无需重复提示
   } finally {
@@ -133,7 +143,7 @@ async function handleLogin() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #F5F7FA;
+  background: var(--color-bg);
 }
 
 .login-layout {
@@ -141,19 +151,19 @@ async function handleLogin() {
   width: 100%;
   max-width: 960px;
   min-height: 560px;
-  border-radius: 16px;
+  border-radius: var(--border-radius-lg);
   overflow: hidden;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-card);
 }
 
 .login-brand {
   flex: 1;
-  background: linear-gradient(135deg, #165DFF 0%, #4080FF 100%);
-  color: #fff;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
+  color: var(--color-white);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px;
+  padding: var(--spacing-4xl);
 }
 
 .brand-content {
@@ -161,38 +171,31 @@ async function handleLogin() {
 }
 
 .brand-logo {
-  margin-bottom: 24px;
+  margin-bottom: var(--spacing-2xl);
 }
 
-.logo-icon {
-  width: 48px;
-  height: 48px;
-}
-
-.brand-title {
-  font-size: 32px;
-  font-weight: 700;
-  margin-bottom: 12px;
+.brand-logo :deep(.brand-logo__text) {
+  color: var(--color-white);
 }
 
 .brand-desc {
-  font-size: 16px;
+  font-size: var(--font-size-lg);
   opacity: 0.85;
   line-height: 1.8;
-  margin-bottom: 40px;
+  margin-bottom: var(--spacing-3xl);
 }
 
 .brand-features {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--spacing-lg);
 }
 
 .brand-feature {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 14px;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-md);
   opacity: 0.9;
 }
 
@@ -203,17 +206,16 @@ async function handleLogin() {
   align-items: center;
   justify-content: center;
   background: rgba(255, 255, 255, 0.15);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--border-radius-sm);
 }
 
 .login-form-area {
   flex: 1;
-  background: #fff;
+  background: var(--color-white);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px;
+  padding: var(--spacing-4xl);
 }
 
 .login-form-wrapper {
@@ -222,143 +224,74 @@ async function handleLogin() {
 }
 
 .form-title {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1D2129;
-  margin-bottom: 8px;
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-sm);
 }
 
 .form-subtitle {
-  font-size: 14px;
-  color: #86909C;
-  margin-bottom: 32px;
+  font-size: var(--font-size-md);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--spacing-3xl);
 }
 
-.login-form {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
+.login-form :deep(.el-form-item) {
+  margin-bottom: var(--spacing-xl);
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.form-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #4E5969;
-}
-
-.input-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-wrapper .svg-icon {
-  position: absolute;
-  left: 12px;
-  pointer-events: none;
-}
-
-.form-input {
+.login-submit {
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid #E5E6EB;
-  border-radius: 6px;
-  font-size: 14px;
-  font-family: var(--font-family);
-  color: #1D2129;
-  background-color: #fff;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: #165DFF;
-  box-shadow: 0 0 0 3px rgba(22, 93, 255, 0.1);
-}
-
-.form-input.with-icon {
-  padding-left: 36px;
-}
-
-.form-input::placeholder {
-  color: #C9CDD4;
-}
-
-.btn-login {
-  width: 100%;
-  height: 44px;
-  background: #165DFF;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font-size: 16px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-  font-family: var(--font-family);
-  margin-top: 8px;
-}
-
-.btn-login:hover {
-  background: #4080FF;
-}
-
-.btn-login:disabled {
-  background: #C9CDD4;
-  cursor: not-allowed;
+  margin-top: var(--spacing-sm);
 }
 
 .error-message {
-  margin-top: 4px;
+  margin-top: var(--spacing-sm);
   padding: 10px 12px;
-  background-color: #FFECEC;
-  color: #F53F3F;
-  border-radius: 6px;
-  font-size: 13px;
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-sm);
 }
 
 .login-footer {
   text-align: center;
-  font-size: 13px;
-  color: #86909C;
-  margin-top: 24px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-2xl);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
 }
 
 .login-footer a {
-  color: #165DFF;
-  font-weight: 500;
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
   text-decoration: none;
 }
 
 .login-hint {
   text-align: center;
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid #F2F3F5;
+  margin-top: var(--spacing-2xl);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--color-border-light);
 }
 
 .login-hint p {
-  font-size: 12px;
-  color: #C9CDD4;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
 }
 
 @media (max-width: 768px) {
   .login-brand {
     display: none;
   }
+
   .login-form-area {
-    padding: 32px 24px;
+    padding: var(--spacing-3xl) var(--spacing-2xl);
   }
+
   .login-layout {
     max-width: 420px;
   }

@@ -1,4 +1,5 @@
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 import { useDeviceStore } from '@/stores/device'
 import { historyApi } from '@/api/history'
@@ -26,6 +27,7 @@ function buildParams(criteria, pageNum, pageSize) {
  */
 export function useHistoryQuery() {
   const deviceStore = useDeviceStore()
+  const route = useRoute()
   const deviceOptions = computed(() => deviceStore.devices)
 
   const form = reactive({ deviceId: '', topic: '', startTime: '', endTime: '' })
@@ -79,7 +81,15 @@ export function useHistoryQuery() {
     currentPage.value = 1
   }
 
-  onMounted(() => deviceStore.fetchDevices({ pageNum: 1, pageSize: 100 }))
+  onMounted(() => {
+    deviceStore.fetchDevices({ pageNum: 1, pageSize: 100 })
+    // 从设备详情右栏「查询历史数据」进入时带 deviceId，直接代入并触发一次查询
+    const { deviceId } = route.query
+    if (typeof deviceId === 'string' && deviceId) {
+      form.deviceId = /^\d+$/.test(deviceId) ? Number(deviceId) : deviceId
+      submit()
+    }
+  })
 
   return {
     form,

@@ -8,14 +8,20 @@ import fs from 'node:fs'
 /**
  * 少数 <el-*> 组件并非独立目录，而是父组件的子导出，这里给出目录归并表。
  * 例如 ElOption 由 select 目录导出，ElDropdownItem/ElDropdownMenu 由 dropdown 目录导出。
+ * 子组件目录（如 form-item/）下只有 style，没有 index.mjs，必须回指父组件目录，
+ * 否则组件解析失败会退化成未注册的自定义元素，导致表单/表格/面包屑结构塌陷。
  */
 const EP_DIR_ALIAS = {
   option: 'select',
   'option-group': 'select',
   'menu-item': 'menu',
+  'menu-item-group': 'menu',
   'sub-menu': 'menu',
   'dropdown-item': 'dropdown',
-  'dropdown-menu': 'dropdown'
+  'dropdown-menu': 'dropdown',
+  'form-item': 'form',
+  'table-column': 'table',
+  'breadcrumb-item': 'breadcrumb'
 }
 
 function kebab(str) {

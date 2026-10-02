@@ -66,17 +66,31 @@
   --border-color: #E5E6EB;
   --border-color-light: #F2F3F5;
 
-  /* ========== 布局 ========== */
-  --sidebar-width: 220px;
-  --sidebar-width-collapsed: 64px;
-  --header-height: 56px;
-  --page-max-width: 1200px;
+  /* ========== 布局（T-13 骨架令牌） ========== */
+  /* 骨架尺寸 */
+  --topbar-height: 56px;
+  --statusbar-height: 28px;
+  --nav-width: 240px;
+  --nav-width-collapsed: 64px;
+  --rail-width: 320px;
 
-  /* ========== 兼容旧变量名 ========== */
-  --color-gray-light: var(--color-bg);
-  --color-gray-border: var(--color-border);
-  --color-gray-text: var(--color-text-regular);
-  --color-gray-dark: var(--color-text-primary);
-  --shadow-sm: var(--shadow-card);
-  --shadow-md: var(--shadow-card-hover);
+  /* 公开站站点头高度 */
+  --site-nav-height: 64px;
+
+  /* 内容栅格 */
+  --content-padding: 24px;      /* 内容区四周内边距，唯一来源 */
+  --content-max-width: 1440px;  /* 工作台超宽内容上限，居中 */
+  --grid-gutter: 16px;          /* 卡片/栅格间距，全站统一 */
+  --site-max-width: 1200px;     /* 公开站（官网/文档）内容上限 */
+
+  /* 层级 */
+  --z-nav: 100;
+  --z-rail: 150;
+  --z-topbar: 200;
+  --z-overlay: 900;
+  --z-modal: 1000;
+
+  /* 过渡 */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
 }

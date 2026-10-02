@@ -29,18 +29,18 @@
     </div>
 
     <div class="device-card-actions">
-      <button class="btn-link" @click="emit('view', device)">
+      <el-button link type="primary" @click="emit('view', device)">
         <svg-icon name="device" :size="14" />
         查看
-      </button>
-      <button class="btn-link" @click="emit('edit', device)">
+      </el-button>
+      <el-button link type="primary" @click="emit('edit', device)">
         <svg-icon name="edit" :size="14" />
         编辑
-      </button>
-      <button class="btn-link-danger" @click="emit('delete', device)">
+      </el-button>
+      <el-button link type="danger" @click="emit('delete', device)">
         <svg-icon name="delete" :size="14" />
         删除
-      </button>
+      </el-button>
     </div>
   </div>
 </template>
@@ -76,7 +76,7 @@ function formatDeviceType(type) {
 }
 
 .device-card:hover {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .device-card-header {
@@ -94,7 +94,7 @@ function formatDeviceType(type) {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--color-gray-light);
+  background: var(--color-bg);
   border-radius: var(--border-radius-sm);
 }
 
@@ -106,7 +106,7 @@ function formatDeviceType(type) {
 .device-name {
   font-size: var(--font-size-md);
   font-weight: 600;
-  color: var(--color-gray-dark);
+  color: var(--color-text-primary);
   margin-bottom: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -122,18 +122,18 @@ function formatDeviceType(type) {
 }
 
 .device-type-tag.sensor {
-  background: #E8F3FF;
-  color: #165DFF;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
 .device-type-tag.gateway {
-  background: #E8FFEA;
-  color: #00B42A;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .device-type-tag.actuator {
-  background: #FFF3E8;
-  color: #FF7D00;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
 }
 
 .device-card-body {
@@ -149,12 +149,12 @@ function formatDeviceType(type) {
 }
 
 .detail-label {
-  color: var(--color-gray-text);
+  color: var(--color-text-regular);
   flex-shrink: 0;
 }
 
 .detail-value {
-  color: var(--color-gray-dark);
+  color: var(--color-text-primary);
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -163,7 +163,7 @@ function formatDeviceType(type) {
 }
 
 .topic-text {
-  font-family: 'Courier New', monospace;
+  font-family: var(--font-family-mono);
   font-size: var(--font-size-xs);
 }
 
@@ -172,31 +172,5 @@ function formatDeviceType(type) {
   gap: var(--spacing-sm);
   padding-top: var(--spacing-md);
   border-top: 1px solid var(--border-color-light);
-}
-
-.btn-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  color: var(--color-primary);
-  background: none;
-  border: none;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  font-family: var(--font-family);
-}
-
-.btn-link-danger {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  color: var(--color-danger);
-  background: none;
-  border: none;
-  font-size: var(--font-size-sm);
-  cursor: pointer;
-  font-family: var(--font-family);
 }
 </style>

@@ -1,92 +1,119 @@
 <template>
   <div class="register-page">
-    <div class="register-card">
-      <div class="register-header">
-        <h1 class="register-title">注册账号</h1>
-        <p class="register-subtitle">创建您的MQTT云平台账号</p>
+    <div class="register-layout">
+      <!-- Left branding panel -->
+      <div class="register-brand">
+        <div class="brand-content">
+          <BrandLogo :size="48" :text-size="32" class="brand-logo" />
+          <p class="brand-desc">创建账号，<br>开始接入你的设备</p>
+          <div class="brand-features">
+            <div class="brand-feature">
+              <span class="brand-feature-icon">
+                <svg-icon name="device" :size="16" />
+              </span>
+              <span>设备接入管理</span>
+            </div>
+            <div class="brand-feature">
+              <span class="brand-feature-icon">
+                <svg-icon name="message" :size="16" />
+              </span>
+              <span>实时消息监控</span>
+            </div>
+            <div class="brand-feature">
+              <span class="brand-feature-icon">
+                <svg-icon name="shield" :size="16" />
+              </span>
+              <span>密钥与权限管控</span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <form @submit.prevent="handleRegister" class="register-form">
-        <div class="form-group">
-          <label class="form-label">用户名 <span class="required">*</span></label>
-          <input
-            v-model="form.username"
-            type="text"
-            placeholder="3-50个字符，字母数字下划线"
-            class="form-input"
-            :class="{ 'input-error': errors.username }"
-          />
-          <div v-if="errors.username" class="form-error">{{ errors.username }}</div>
+      <!-- Right register form -->
+      <div class="register-form-area">
+        <div class="register-form-wrapper">
+          <h2 class="form-title">注册账号</h2>
+          <p class="form-subtitle">填写以下信息创建您的平台账号</p>
+
+          <el-form label-position="top" class="register-form" @submit.prevent>
+            <el-form-item label="用户名" required :error="errors.username">
+              <el-input
+                v-model="form.username"
+                placeholder="3-50 个字符，字母数字下划线"
+                autocomplete="username"
+                size="large"
+              />
+            </el-form-item>
+
+            <el-form-item label="邮箱" :error="errors.email">
+              <el-input
+                v-model="form.email"
+                placeholder="选填"
+                autocomplete="email"
+                size="large"
+              />
+            </el-form-item>
+
+            <el-form-item label="手机号" :error="errors.phone">
+              <el-input
+                v-model="form.phone"
+                placeholder="选填"
+                autocomplete="tel"
+                size="large"
+              />
+            </el-form-item>
+
+            <el-form-item label="密码" required :error="errors.password">
+              <el-input
+                v-model="form.password"
+                type="password"
+                placeholder="6-100 个字符"
+                autocomplete="new-password"
+                size="large"
+                show-password
+              />
+            </el-form-item>
+
+            <el-form-item label="确认密码" required :error="errors.confirmPassword">
+              <el-input
+                v-model="form.confirmPassword"
+                type="password"
+                placeholder="再次输入密码"
+                autocomplete="new-password"
+                size="large"
+                show-password
+                @keyup.enter="handleRegister"
+              />
+            </el-form-item>
+
+            <el-button
+              type="primary"
+              size="large"
+              class="register-submit"
+              :loading="loading"
+              @click="handleRegister"
+            >
+              注册
+            </el-button>
+
+            <div v-if="submitError" class="error-message">{{ submitError }}</div>
+          </el-form>
+
+          <div class="register-footer">
+            <span>已有账号？</span>
+            <router-link to="/login">返回登录</router-link>
+          </div>
         </div>
-
-        <div class="form-group">
-          <label class="form-label">邮箱</label>
-          <input
-            v-model="form.email"
-            type="email"
-            placeholder="选填"
-            class="form-input"
-            :class="{ 'input-error': errors.email }"
-          />
-          <div v-if="errors.email" class="form-error">{{ errors.email }}</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">手机号</label>
-          <input
-            v-model="form.phone"
-            type="tel"
-            placeholder="选填"
-            class="form-input"
-            :class="{ 'input-error': errors.phone }"
-          />
-          <div v-if="errors.phone" class="form-error">{{ errors.phone }}</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">密码 <span class="required">*</span></label>
-          <input
-            v-model="form.password"
-            type="password"
-            placeholder="6-100个字符"
-            class="form-input"
-            :class="{ 'input-error': errors.password }"
-          />
-          <div v-if="errors.password" class="form-error">{{ errors.password }}</div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">确认密码 <span class="required">*</span></label>
-          <input
-            v-model="form.confirmPassword"
-            type="password"
-            placeholder="再次输入密码"
-            class="form-input"
-            :class="{ 'input-error': errors.confirmPassword }"
-          />
-          <div v-if="errors.confirmPassword" class="form-error">{{ errors.confirmPassword }}</div>
-        </div>
-
-        <button
-          type="submit"
-          class="btn-register"
-          :disabled="loading"
-        >
-          {{ loading ? '注册中...' : '注册' }}
-        </button>
-      </form>
-
-      <div class="register-footer">
-        <span>已有账号？</span>
-        <router-link to="/login">返回登录</router-link>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import SvgIcon from '@/components/Icon.vue'
+import BrandLogo from '@/components/common/BrandLogo.vue'
 
 const authStore = useAuthStore()
 
@@ -111,13 +138,13 @@ const submitError = ref('')
 
 function validateForm() {
   let isValid = true
-  Object.keys(errors).forEach(key => errors[key] = '')
+  Object.keys(errors).forEach((key) => { errors[key] = '' })
 
   if (!form.username) {
     errors.username = '请输入用户名'
     isValid = false
   } else if (form.username.length < 3 || form.username.length > 50) {
-    errors.username = '用户名长度3-50个字符'
+    errors.username = '用户名长度 3-50 个字符'
     isValid = false
   } else if (!/^[a-zA-Z0-9_]+$/.test(form.username)) {
     errors.username = '用户名只能包含字母、数字、下划线'
@@ -144,7 +171,7 @@ function validateForm() {
     errors.password = '请输入密码'
     isValid = false
   } else if (form.password.length < 6 || form.password.length > 100) {
-    errors.password = '密码长度6-100个字符'
+    errors.password = '密码长度 6-100 个字符'
     isValid = false
   }
 
@@ -171,8 +198,8 @@ async function handleRegister() {
       phone: form.phone || undefined,
       password: form.password
     })
-  } catch (error) {
-    // axios 拦截器已显示错误消息
+  } catch {
+    // axios 拦截器已显示错误消息，此处无需重复提示
   } finally {
     loading.value = false
   }
@@ -185,89 +212,145 @@ async function handleRegister() {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: var(--color-gray-light);
-  padding: var(--spacing-lg);
+  background: var(--color-bg);
 }
 
-.register-card {
+.register-layout {
+  display: flex;
   width: 100%;
-  max-width: 420px;
-  background: var(--color-white);
-  border-radius: var(--border-radius);
-  padding: 40px 32px;
-  box-shadow: var(--shadow-md);
+  max-width: 960px;
+  min-height: 560px;
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
 }
 
-.register-header {
-  text-align: center;
-  margin-bottom: 32px;
-}
-
-.register-title {
-  font-size: var(--font-size-xl);
-  font-weight: 600;
-  color: var(--color-gray-dark);
-  margin-bottom: 8px;
-}
-
-.register-subtitle {
-  font-size: var(--font-size-sm);
-  color: var(--color-gray-text);
-}
-
-.register-form {
-  margin-bottom: 24px;
-}
-
-.form-group {
-  margin-bottom: 20px;
-}
-
-.required {
-  color: var(--color-danger);
-  margin-left: 2px;
-}
-
-.btn-register {
-  width: 100%;
-  height: 44px;
-  background-color: var(--color-primary);
+.register-brand {
+  flex: 1;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-hover) 100%);
   color: var(--color-white);
-  border: none;
-  border-radius: var(--border-radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-4xl);
+}
+
+.brand-content {
+  max-width: 280px;
+}
+
+.brand-logo {
+  margin-bottom: var(--spacing-2xl);
+}
+
+.brand-logo :deep(.brand-logo__text) {
+  color: var(--color-white);
+}
+
+.brand-desc {
+  font-size: var(--font-size-lg);
+  opacity: 0.85;
+  line-height: 1.8;
+  margin-bottom: var(--spacing-3xl);
+}
+
+.brand-features {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.brand-feature {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
   font-size: var(--font-size-md);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color 0.2s;
-  font-family: var(--font-family);
-  margin-top: 8px;
+  opacity: 0.9;
 }
 
-.btn-register:hover {
-  background-color: var(--color-primary-hover);
+.brand-feature-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: var(--border-radius-sm);
 }
 
-.btn-register:disabled {
-  background-color: var(--color-gray-border);
-  cursor: not-allowed;
+.register-form-area {
+  flex: 1;
+  background: var(--color-white);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-4xl);
 }
 
-.input-error {
-  border-color: var(--color-danger) !important;
+.register-form-wrapper {
+  width: 100%;
+  max-width: 320px;
+}
+
+.form-title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--spacing-sm);
+}
+
+.form-subtitle {
+  font-size: var(--font-size-md);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--spacing-2xl);
+}
+
+.register-form :deep(.el-form-item) {
+  margin-bottom: var(--spacing-lg);
+}
+
+.register-submit {
+  width: 100%;
+  margin-top: var(--spacing-sm);
+}
+
+.error-message {
+  margin-top: var(--spacing-sm);
+  padding: 10px 12px;
+  background-color: var(--color-danger-light);
+  color: var(--color-danger);
+  border-radius: var(--border-radius-sm);
+  font-size: var(--font-size-sm);
 }
 
 .register-footer {
   text-align: center;
   font-size: var(--font-size-sm);
-  color: var(--color-gray-text);
+  color: var(--color-text-tertiary);
+  margin-top: var(--spacing-2xl);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
 }
 
 .register-footer a {
   color: var(--color-primary);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+@media (max-width: 768px) {
+  .register-brand {
+    display: none;
+  }
+
+  .register-form-area {
+    padding: var(--spacing-3xl) var(--spacing-2xl);
+  }
+
+  .register-layout {
+    max-width: 420px;
+  }
 }
 </style>

@@ -53,23 +53,28 @@ a:hover {
   background: var(--color-text-tertiary);
 }
 
-.page-container {
-  padding: var(--spacing-lg);
-  max-width: var(--page-max-width);
+/* ========== T-13 内容容器 ==========
+   职责划分：容器只负责内边距与宽度上限，不承担卡片间距。
+   - .page        工作台页面根容器：唯一提供 padding + 超宽居中
+   - .page--narrow 阅读型页面（文档正文）显式声明窄栏
+   - .site-container 公开站（官网/文档）内容容器 */
+.page {
+  width: 100%;
+  padding: var(--content-padding);
+  max-width: var(--content-max-width);
   margin: 0 auto;
 }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--spacing-lg);
+.page--narrow {
+  max-width: 960px;
 }
 
-.page-header h2 {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
+.site-container {
+  width: 100%;
+  max-width: var(--site-max-width);
+  margin: 0 auto;
+  padding-left: var(--content-padding);
+  padding-right: var(--content-padding);
 }
 
 .card {
@@ -105,7 +110,7 @@ a:hover {
 }
 
 .btn-primary:disabled {
-  background-color: var(--color-gray-border);
+  background-color: var(--color-border);
   cursor: not-allowed;
 }
 
@@ -135,7 +140,7 @@ a:hover {
   justify-content: center;
   gap: var(--spacing-xs);
   padding: 6px 14px;
-  background: #fff;
+  background: var(--color-white);
   color: var(--color-text-regular);
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-sm);
@@ -175,8 +180,8 @@ a:hover {
 }
 
 .status-badge.inactive {
-  background-color: var(--color-gray-light);
-  color: var(--color-gray-text);
+  background-color: var(--color-bg);
+  color: var(--color-text-regular);
 }
 
 .form-input {
@@ -186,7 +191,7 @@ a:hover {
   border-radius: var(--border-radius-sm);
   font-size: var(--font-size-sm);
   font-family: var(--font-family);
-  color: var(--color-gray-dark);
+  color: var(--color-text-primary);
   background-color: var(--color-white);
   transition: border-color 0.2s;
 }
@@ -197,13 +202,13 @@ a:hover {
 }
 
 .form-input::placeholder {
-  color: var(--color-gray-text);
+  color: var(--color-text-regular);
 }
 
 .form-label {
   display: block;
   font-size: var(--font-size-sm);
-  color: var(--color-gray-dark);
+  color: var(--color-text-primary);
   margin-bottom: var(--spacing-xs);
   font-weight: 500;
 }
@@ -219,7 +224,7 @@ a:hover {
   align-items: center;
   justify-content: center;
   padding: var(--spacing-xl);
-  color: var(--color-gray-text);
+  color: var(--color-text-regular);
   font-size: var(--font-size-sm);
 }
 
@@ -229,7 +234,7 @@ a:hover {
   align-items: center;
   justify-content: center;
   padding: var(--spacing-xl);
-  color: var(--color-gray-text);
+  color: var(--color-text-regular);
 }
 
 .empty-state-text {
