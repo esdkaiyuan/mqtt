@@ -45,11 +45,58 @@
 
       <el-tag class="topbar__env" size="small" type="info" effect="plain">{{ env }}</el-tag>
 
-      <el-badge :is-dot="hasUnread" class="topbar__badge">
-        <button class="topbar__icon-btn" title="通知">
-          <el-icon :size="18"><Bell /></el-icon>
-        </button>
-      </el-badge>
+      <el-popover
+        v-model:visible="notificationVisible"
+        trigger="click"
+        placement="bottom-end"
+        :width="340"
+        popper-class="topbar-notify-popper"
+      >
+        <template #reference>
+          <el-badge
+            :value="unreadCount"
+            :max="99"
+            :hidden="unreadCount === 0"
+            class="topbar__badge"
+          >
+            <button class="topbar__icon-btn" title="通知">
+              <el-icon :size="18"><Bell /></el-icon>
+            </button>
+          </el-badge>
+        </template>
+
+        <div class="notify">
+          <div class="notify__header">
+            <span class="notify__title">通知</span>
+            <span v-if="unreadCount > 0" class="notify__count">{{ unreadCount }} 条未处理</span>
+          </div>
+
+          <div v-if="recentLoading && recentAlerts.length === 0" class="notify__hint">加载中...</div>
+          <div v-else-if="recentAlerts.length === 0" class="notify__hint">暂无活动告警</div>
+          <ul v-else class="notify__list">
+            <li
+              v-for="alert in recentAlerts"
+              :key="alert.id"
+              class="notify__item"
+              @click="goToAlert(alert)"
+            >
+              <el-tag size="small" :type="SEVERITY_TAG_TYPES[alert.severity] || 'info'">
+                {{ SEVERITY_LABELS[alert.severity] || alert.severity }}
+              </el-tag>
+              <div class="notify__body">
+                <p class="notify__alert-title">{{ alert.title }}</p>
+                <p class="notify__meta">
+                  {{ alert.deviceKey }} · {{ formatRelativeTime(alert.lastTriggeredAt) }}
+                </p>
+              </div>
+            </li>
+          </ul>
+
+          <div class="notify__footer">
+            <button class="notify__more" @click="goToAllAlerts">查看全部</button>
+          </div>
+        </div>
+      </el-popover>
 
       <el-dropdown @command="handleUserCommand">
         <div class="topbar__user">
@@ -76,6 +123,8 @@ import { ElMessage } from 'element-plus'
 import { Fold, Expand, Search, Bell, ArrowDown, Menu, Operation } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
+import { useAlertUnreadCountQuery, useAlertRecentQuery } from '@/composables/useAlerts'
+import { SEVERITY_LABELS, SEVERITY_TAG_TYPES, formatRelativeTime } from '@/utils/alert'
 import SvgIcon from '@/components/Icon.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import AppBreadcrumb from '@/components/common/AppBreadcrumb.vue'
@@ -86,9 +135,21 @@ const ui = useUiStore()
 
 const keyword = ref('')
 const env = computed(() => import.meta.env.VITE_ENV || 'PROD')
-// 通知中心尚未接入，占位保持「无未读」
-const hasUnread = computed(() => false)
 const navCollapsed = computed(() => ui.navCollapsed)
+
+const { unreadCount } = useAlertUnreadCountQuery()
+const { recentAlerts, loading: recentLoading } = useAlertRecentQuery(10)
+const notificationVisible = ref(false)
+
+function goToAlert(alert) {
+  notificationVisible.value = false
+  router.push({ path: '/workbench/alerts', query: { alertId: alert.id } })
+}
+
+function goToAllAlerts() {
+  notificationVisible.value = false
+  router.push('/workbench/alerts')
+}
 
 const navToggleTitle = computed(() => {
   if (ui.isPhone) return '打开导航'
@@ -224,5 +285,97 @@ function handleUserCommand(command) {
   .topbar__divider {
     display: none;
   }
+}
+</style>
+
+<!-- 通知下拉内容被 teleport 到 body，scoped 样式无法命中，故用 popper-class 做全局限定 -->
+<style>
+.topbar-notify-popper {
+  padding: 0;
+}
+
+.notify__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-bottom: 1px solid var(--border-color-light);
+}
+
+.notify__title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.notify__count {
+  font-size: var(--font-size-xs);
+  color: var(--color-danger, #f56c6c);
+}
+
+.notify__hint {
+  padding: var(--spacing-lg) 0;
+  text-align: center;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.notify__list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notify__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.notify__item:hover {
+  background: var(--color-bg);
+}
+
+.notify__body {
+  min-width: 0;
+}
+
+.notify__alert-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notify__meta {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.notify__footer {
+  border-top: 1px solid var(--border-color-light);
+  text-align: center;
+}
+
+.notify__more {
+  width: 100%;
+  padding: var(--spacing-sm) 0;
+  border: none;
+  background: transparent;
+  font-size: var(--font-size-sm);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.notify__more:hover {
+  background: var(--color-bg);
 }
 </style>

@@ -69,6 +69,14 @@ const navGroups = [
     ]
   },
   {
+    key: 'alert',
+    label: '告警',
+    items: [
+      { path: '/workbench/alerts', title: '告警列表', icon: 'bell' },
+      { path: '/workbench/alerts/rules', title: '告警规则', icon: 'shield' }
+    ]
+  },
+  {
     key: 'access',
     label: '开发接入',
     items: [

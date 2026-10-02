@@ -148,5 +148,15 @@ export const webhookEvents = [
   { event: 'device.online', desc: '设备上线', payload: '{ deviceKey, status, lastSeen }' },
   { event: 'device.offline', desc: '设备离线', payload: '{ deviceKey, status, lastSeen }' },
   { event: 'device.created', desc: '设备创建', payload: '{ deviceKey, deviceName, deviceType }' },
-  { event: 'message.received', desc: '收到设备上报消息', payload: '{ deviceKey, topic, payload, timestamp }' }
+  { event: 'message.received', desc: '收到设备上报消息', payload: '{ deviceKey, topic, payload, timestamp }' },
+  {
+    event: 'alert.triggered',
+    desc: '告警触发（含抑制窗口内去重后的再次提醒）',
+    payload: '{ alertId, ruleId, ruleName, sourceType, severity, identifier, title, triggerValue, triggerCount, firstTriggeredAt, lastTriggeredAt }'
+  },
+  {
+    event: 'alert.recovered',
+    desc: '告警恢复',
+    payload: '{ alertId, ruleId, ruleName, sourceType, severity, title, triggerCount, recoveredAt }'
+  }
 ]

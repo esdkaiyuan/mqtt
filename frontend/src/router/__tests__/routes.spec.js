@@ -18,7 +18,7 @@ describe('router/routes 分区与兼容', () => {
     expect(workbench.redirect).toBe('/workbench/dashboard')
   })
 
-  it('工作台子路由覆盖监控与开发接入两个分区', () => {
+  it('工作台子路由覆盖监控、告警与开发接入三个分区', () => {
     const children = byPath('/workbench').children
     const names = children.map((child) => child.name)
     expect(names).toEqual([
@@ -30,11 +30,13 @@ describe('router/routes 分区与兼容', () => {
       'MessageMonitor',
       'HistoryQuery',
       'ApiKeyManagement',
-      'WebhookManagement'
+      'WebhookManagement',
+      'AlertList',
+      'AlertRules'
     ])
 
     const groups = new Set(children.map((child) => child.meta?.group))
-    expect(groups).toEqual(new Set(['monitor', 'access']))
+    expect(groups).toEqual(new Set(['monitor', 'access', 'alert']))
 
     // 设备详情 / 物模型不在导航中展示
     for (const name of ['DeviceDetail', 'ProductThingModel']) {

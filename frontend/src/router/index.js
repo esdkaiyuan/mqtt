@@ -123,6 +123,18 @@ export const routes = [
         name: 'WebhookManagement',
         component: () => import('@/views/workbench/access/Webhooks.vue'),
         meta: { title: 'Webhook', icon: 'settings', group: 'access' }
+      },
+      {
+        path: 'alerts',
+        name: 'AlertList',
+        component: () => import('@/views/workbench/alert/AlertList.vue'),
+        meta: { title: '告警列表', icon: 'bell', group: 'alert' }
+      },
+      {
+        path: 'alerts/rules',
+        name: 'AlertRules',
+        component: () => import('@/views/workbench/alert/AlertRules.vue'),
+        meta: { title: '告警规则', icon: 'shield', group: 'alert' }
       }
     ]
   },
