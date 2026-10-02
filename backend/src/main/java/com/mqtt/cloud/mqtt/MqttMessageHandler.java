@@ -69,6 +69,8 @@ public class MqttMessageHandler implements MqttCallback {
         topics.put("$share/" + group + "/device/+/data", 1);
         topics.put("$share/" + group + "/device/+/heartbeat", 0);
         topics.put("$share/" + group + "/device/+/lwt", 1);
+        // 命令回执：设备对下行命令的应答，落库后由 IngestDispatcher 旁路更新命令状态
+        topics.put("$share/" + group + "/device/+/reply", 1);
         mqttClientManager.register(this, topics);
     }
 

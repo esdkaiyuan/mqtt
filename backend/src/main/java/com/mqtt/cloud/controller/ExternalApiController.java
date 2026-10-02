@@ -1,15 +1,17 @@
 package com.mqtt.cloud.controller;
 
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.security.SecurityUtils;
-import com.mqtt.cloud.dto.request.SendCommandRequest;
+import com.mqtt.cloud.dto.request.CommandInvokeRequest;
 import com.mqtt.cloud.entity.ApiKey;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.DeviceCommandRecord;
 import com.mqtt.cloud.filter.UserPrincipal;
-import com.mqtt.cloud.mqtt.MqttClientManager;
 import com.mqtt.cloud.service.ApiKeyService;
+import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -17,7 +19,6 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.eclipse.paho.client.mqttv3.MqttException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -29,6 +30,9 @@ import java.util.Map;
  * <p>
  * 认证由 {@code ApiKeyAuthFilter} 完成，本控制器只负责数据隔离与业务处理：
  * 所有查询与操作都被限制在当前 API Key 所属用户的名下设备范围内。
+ * <p>
+ * 命令下发与控制台同语义（T-15 设计文档 §10.2），仅 {@code source=OPEN_API}、无操作者 ID；
+ * 原 {@code {payload, qos, retain}} 直发契约因主题与 ACL 冲突本就不可用，已被结构化命令契约替换。
  */
 @Slf4j
 @Tag(name = "外部API", description = "供第三方系统调用的开放接口，使用 X-API-Key 请求头认证，数据范围限定为密钥所属用户")
@@ -39,7 +43,7 @@ public class ExternalApiController {
 
     private final ApiKeyService apiKeyService;
     private final DeviceService deviceService;
-    private final MqttClientManager mqttClientManager;
+    private final DeviceCommandService deviceCommandService;
 
     @Operation(summary = "外部-查询设备列表", description = "返回密钥所属用户的名下设备列表；传入 deviceKey 时精确返回单个设备")
     @GetMapping("/devices")
@@ -82,22 +86,29 @@ public class ExternalApiController {
         return Result.success(result);
     }
 
-    @Operation(summary = "外部-发送设备指令", description = "将设备上行 Topic 的 /data 或 /heartbeat 替换为 /command 后下发消息，发布失败返回 MQTT 错误码")
+    @Operation(summary = "外部-下发设备命令", description = "与控制台同语义：按物模型校验参数后下发到 device/{deviceKey}/cmd/down；"
+            + "type=property_set / service，callType=sync 等待回执到终态。物模型缺失 6201 / 属性不可写 6202 / "
+            + "标识符未定义 6203 / 参数非法 6204 / 发布失败 4001")
     @PostMapping("/devices/{deviceKey}/command")
-    public Result<String> sendCommand(
+    public Result<DeviceCommandRecord> sendCommand(
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
-            @Valid @RequestBody SendCommandRequest request) {
+            @Valid @RequestBody CommandInvokeRequest request) {
         Device device = requireOwnedDevice(deviceKey, currentUserId());
-        String commandTopic = resolveCommandTopic(device.getTopic());
+        DeviceCommandRecord record = deviceCommandService.invoke(new DeviceCommandService.CommandInvoke(
+                device.getId(), device.getProductId(), request.getType(), request.getIdentifier(),
+                request.getParams() == null ? null : request.getParams().toString(),
+                request.getCallType(), DeviceCommandService.SOURCE_OPEN_API, null));
+        return Result.success(record);
+    }
 
-        try {
-            mqttClientManager.publish(commandTopic, request.getPayload(), request.getQos());
-        } catch (MqttException e) {
-            log.error("开放接口下发指令失败: deviceKey={}, topic={}", deviceKey, commandTopic, e);
-            throw new BusinessException(ResultCode.MQTT_PUBLISH_FAILED);
-        }
-
-        return Result.success("指令发送成功");
+    @Operation(summary = "外部-查询命令记录", description = "按 deviceKey 分页返回命令记录，按创建时间倒序")
+    @GetMapping("/devices/{deviceKey}/commands")
+    public Result<IPage<DeviceCommandRecord>> getCommandRecords(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @Parameter(description = "页码，从 1 起") @RequestParam(defaultValue = "1") long page,
+            @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
+        Device device = requireOwnedDevice(deviceKey, currentUserId());
+        return Result.success(deviceCommandService.listCommands(device.getId(), page, size));
     }
 
     @Operation(summary = "外部-获取统计信息", description = "返回 totalDevices/onlineDevices/apiKeyName/permissions")
@@ -142,19 +153,5 @@ public class ExternalApiController {
         map.put("status", device.getStatus());
         map.put("lastSeen", device.getLastSeen());
         return map;
-    }
-
-    /**
-     * 由设备上行 Topic 推导下行指令 Topic：device/{key}/data → device/{key}/command
-     */
-    private String resolveCommandTopic(String deviceTopic) {
-        if (deviceTopic == null || deviceTopic.isBlank()) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "设备未配置 Topic");
-        }
-        int lastSlash = deviceTopic.lastIndexOf('/');
-        if (lastSlash < 0) {
-            return deviceTopic + "/command";
-        }
-        return deviceTopic.substring(0, lastSlash) + "/command";
     }
 }

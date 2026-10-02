@@ -50,7 +50,13 @@ public enum ResultCode {
 
     THING_MODEL_PARSE_FAILED(6101, "物模型 JSON 解析失败", HttpStatus.BAD_REQUEST),
     THING_MODEL_INVALID(6102, "物模型校验不通过", HttpStatus.BAD_REQUEST),
-    THING_MODEL_TOO_LARGE(6103, "物模型内容超过大小上限", HttpStatus.PAYLOAD_TOO_LARGE);
+    THING_MODEL_TOO_LARGE(6103, "物模型内容超过大小上限", HttpStatus.PAYLOAD_TOO_LARGE),
+
+    COMMAND_MODEL_MISSING(6201, "产品未定义物模型，无法下发命令", HttpStatus.BAD_REQUEST),
+    COMMAND_PROPERTY_READONLY(6202, "属性不可写", HttpStatus.BAD_REQUEST),
+    COMMAND_IDENTIFIER_UNKNOWN(6203, "标识符未在物模型中定义", HttpStatus.BAD_REQUEST),
+    COMMAND_PARAM_INVALID(6204, "参数不符合物模型定义", HttpStatus.BAD_REQUEST),
+    COMMAND_NOT_FOUND(6205, "命令记录不存在", HttpStatus.NOT_FOUND);
 
     private final Integer code;
     private final String message;

@@ -253,7 +253,11 @@ $r = Check '33c' 'DELETE /webhooks/{id} (reachable target)' (Call -Method DELETE
 $r = Check '34' 'GET /external/v1/devices' (Call -Method GET -Path '/external/v1/devices' -ApiKey $APIKEY) 200 200
 $r = Check '35' 'GET /external/v1/devices/{key}' (Call -Method GET -Path "/external/v1/devices/$dk" -ApiKey $APIKEY) 200 200
 $r = Check '37' 'GET /external/v1/devices/{key}/status' (Call -Method GET -Path "/external/v1/devices/$dk/status" -ApiKey $APIKEY) 200 200
-$r = Check '36' 'POST /external/v1/devices/{key}/command' (Call -Method POST -Path "/external/v1/devices/$dk/command" -Body @{ payload = '{"action":"restart"}'; qos = 1 } -ApiKey $APIKEY) 200 200
+# 命令下发依赖物模型：先给产品写入含 rw 属性的最小 TSL，再验新契约
+$tsl = '{"schemaVersion":"1.0","properties":[{"identifier":"power","name":"开关","dataType":{"type":"bool"},"accessMode":"rw"}],"events":[],"services":[]}'
+$r = Check '36a' 'PUT /products/{id}/thing-model (setup for command)' (Call -Method PUT -Path "/products/$prodId/thing-model" -Body @{ thingModel = $tsl } -Token $TOKEN) 200 200
+$r = Check '36' 'POST /external/v1/devices/{key}/command (type/params/callType)' (Call -Method POST -Path "/external/v1/devices/$dk/command" -Body @{ type = 'property_set'; params = @{ power = $true }; callType = 'async' } -ApiKey $APIKEY) 200 200
+$r = Check '36b' 'POST command with unknown identifier -> 400/6203' (Call -Method POST -Path "/external/v1/devices/$dk/command" -Body @{ type = 'property_set'; params = @{ nope = 1 }; callType = 'async' } -ApiKey $APIKEY) 400 6203
 $r = Check '38' 'GET /external/v1/stats' (Call -Method GET -Path '/external/v1/stats' -ApiKey $APIKEY) 200 200
 
 # ---------- 异常路径 ----------

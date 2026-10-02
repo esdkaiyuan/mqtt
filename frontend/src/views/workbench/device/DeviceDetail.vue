@@ -70,34 +70,25 @@
         />
       </div>
 
+      <div id="device-control-section" class="info-card card">
+        <DeviceControlPanel
+          :capability="capability"
+          :device-key="device.deviceKey || ''"
+          :loading="capabilityLoading"
+          :sending="sending"
+          @send="handleSendCommand"
+        />
+      </div>
+
       <div id="device-command-section" class="info-card card">
-        <h3 class="card-title">发送指令</h3>
-        <p class="card-desc">通过 MQTT 向设备发送控制指令，设备侧 Topic 与摘要见右侧上下文栏</p>
-        <el-form label-position="top" class="command-form" @submit.prevent>
-          <el-form-item label="指令 Topic">
-            <el-input v-model="commandForm.topic" placeholder="自动生成，或手动输入" />
-          </el-form-item>
-          <el-form-item label="指令内容 (JSON)">
-            <el-input
-              v-model="commandForm.payload"
-              type="textarea"
-              :rows="4"
-              :placeholder="PAYLOAD_PLACEHOLDER"
-            />
-          </el-form-item>
-          <el-form-item label="QoS">
-            <el-select v-model="commandForm.qos">
-              <el-option :value="0" label="QoS 0 - 最多一次" />
-              <el-option :value="1" label="QoS 1 - 至少一次" />
-              <el-option :value="2" label="QoS 2 - 恰好一次" />
-            </el-select>
-          </el-form-item>
-          <div class="command-form__actions">
-            <el-button type="primary" :loading="commandLoading" @click="handleSendCommand">
-              发送指令
-            </el-button>
-          </div>
-        </el-form>
+        <DeviceCommandHistory
+          :records="records"
+          :total="recordsTotal"
+          :loading="recordsLoading"
+          :page="commandPage"
+          :size="commandSize"
+          @page-change="handleCommandPageChange"
+        />
       </div>
     </div>
 
@@ -111,7 +102,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { useUiStore } from '@/stores/ui'
@@ -120,8 +111,10 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import EditDeviceDialog from '@/components/device/EditDeviceDialog.vue'
 import DevicePropertyPanel from '@/components/device/DevicePropertyPanel.vue'
 import DeviceEventPanel from '@/components/device/DeviceEventPanel.vue'
+import DeviceControlPanel from '@/components/device/DeviceControlPanel.vue'
+import DeviceCommandHistory from '@/components/device/DeviceCommandHistory.vue'
 import { useDeviceData } from '@/composables/useDeviceData'
-import api from '@/api/axios'
+import { useDeviceCommand } from '@/composables/useDeviceCommand'
 
 const route = useRoute()
 const router = useRouter()
@@ -129,7 +122,6 @@ const deviceStore = useDeviceStore()
 const ui = useUiStore()
 
 const device = ref({})
-const commandLoading = ref(false)
 const showEdit = ref(false)
 const editLoading = ref(false)
 
@@ -143,21 +135,18 @@ const { properties, propertiesLoading, events, eventsTotal, eventsLoading } = us
   eventSize
 )
 
-const PAYLOAD_PLACEHOLDER = '{"action": "restart"}'
-
-const commandForm = reactive({
-  topic: '',
-  payload: '',
-  qos: 1
-})
-
-const commandTopic = computed(() => {
-  if (!device.value.topic) return ''
-  return device.value.topic.replace('/data', '/command').replace('/heartbeat', '/command')
-})
+// 命令下发与服务调用（T-15）
+const commandPage = ref(1)
+const commandSize = ref(10)
+const { capability, capabilityLoading, records, recordsTotal, recordsLoading, sending, sendCommand } =
+  useDeviceCommand(deviceKey, commandPage, commandSize)
 
 function handleEventPageChange(page) {
   eventPage.value = page
+}
+
+function handleCommandPageChange(page) {
+  commandPage.value = page
 }
 
 // 右上下文栏只读消费该上下文，页面卸载时清空避免残留上一台设备
@@ -166,7 +155,6 @@ watch(device, (value) => ui.setRailContext({ device: value }), { immediate: true
 onMounted(async () => {
   const deviceId = route.params.id
   device.value = await deviceStore.fetchDeviceById(deviceId)
-  commandForm.topic = commandTopic.value
 })
 
 onUnmounted(() => ui.setRailContext({}))
@@ -185,7 +173,6 @@ async function handleEditSubmit(payload) {
     await deviceStore.updateDevice(payload.id, payload)
     showEdit.value = false
     device.value = await deviceStore.fetchDeviceById(route.params.id)
-    commandForm.topic = commandTopic.value
   } finally {
     editLoading.value = false
   }
@@ -205,24 +192,21 @@ async function deleteDevice() {
   router.push('/workbench/devices')
 }
 
-async function handleSendCommand() {
-  if (!commandForm.payload) {
-    ElMessage.warning('请输入指令内容')
-    return
-  }
-  commandLoading.value = true
+async function handleSendCommand(payload) {
   try {
-    await api.post('/messages/publish', {
-      topic: commandForm.topic,
-      payload: commandForm.payload,
-      qos: commandForm.qos
-    })
-    ElMessage.success('指令发送成功')
-    commandForm.payload = ''
+    const record = await sendCommand(payload)
+    if (!record) return
+    if (payload.callType === 'sync') {
+      if (record.status === 'ACKED') {
+        ElMessage.success('命令执行成功')
+      } else {
+        ElMessage.warning(`命令未成功，状态：${record.status}`)
+      }
+    } else {
+      ElMessage.success('命令已下发')
+    }
   } catch {
-    ElMessage.error('发送指令失败')
-  } finally {
-    commandLoading.value = false
+    // 失败提示由 axios 拦截器统一给出（含 6201~6205 业务错误）
   }
 }
 
@@ -273,12 +257,6 @@ function formatTime(timeStr) {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--color-text-primary);
-  margin-bottom: var(--spacing-md);
-}
-
-.card-desc {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
   margin-bottom: var(--spacing-md);
 }
 
@@ -340,15 +318,6 @@ function formatTime(timeStr) {
   padding: 2px 6px;
   border-radius: var(--border-radius-sm);
   align-self: flex-start;
-}
-
-.command-form :deep(.el-form-item) {
-  margin-bottom: var(--spacing-md);
-}
-
-.command-form__actions {
-  display: flex;
-  justify-content: flex-end;
 }
 
 @media (max-width: 768px) {

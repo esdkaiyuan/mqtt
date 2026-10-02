@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DeviceCommandRecordMapper">
+
+    <!-- 状态迁移一律带 status IN ('PENDING','SENT') 守卫，保证终态只写一次 -->
+
+    <update id="markSent">
+        UPDATE device_command_record
+        SET status = 'SENT', sent_at = #{sentAt,jdbcType=TIMESTAMP}
+        WHERE command_id = #{commandId} AND status IN ('PENDING', 'SENT')
+    </update>
+
+    <update id="markAcked">
+        UPDATE device_command_record
+        SET status = 'ACKED', result = #{result}, finished_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE command_id = #{commandId} AND status IN ('PENDING', 'SENT')
+    </update>
+
+    <update id="markFailed">
+        UPDATE device_command_record
+        SET status = 'FAILED', error_message = #{errorMessage}, finished_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE command_id = #{commandId} AND status IN ('PENDING', 'SENT')
+    </update>
+
+    <update id="markTimeout">
+        UPDATE device_command_record
+        SET status = 'TIMEOUT', error_message = #{errorMessage}, finished_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE command_id = #{commandId} AND status IN ('PENDING', 'SENT')
+    </update>
+
+    <update id="sweepTimeout">
+        UPDATE device_command_record
+        SET status = 'TIMEOUT', error_message = #{errorMessage}, finished_at = NOW(3)
+        WHERE status IN ('PENDING', 'SENT') AND call_type = #{callType} AND created_at &lt; #{before,jdbcType=TIMESTAMP}
+        LIMIT #{limit}
+    </update>
+
+</mapper>

@@ -75,15 +75,37 @@ export const endpointGroups = [
       {
         method: 'POST',
         path: '/external/v1/devices/{deviceKey}/command',
-        desc: '向设备发送控制指令，通过 MQTT 发布到设备的 command Topic',
+        desc: '按物模型校验后向设备下发命令，MQTT 发布到 device/{deviceKey}/cmd/down',
         example: `curl -X POST \\
   https://your-server/api/external/v1/devices/switch-001/command \\
   -H "X-API-Key: your-api-key" \\
   -H "Content-Type: application/json" \\
-  -d '{"payload": "{\\"action\\": \\"turn_on\\"}", "qos": 1}'`,
+  -d '{"type": "property_set", "params": {"power": true}, "callType": "async"}'`,
         response: `{
   "code": 200,
-  "data": "指令发送成功"
+  "data": {
+    "commandId": "8f1c0b6e-...-a1",
+    "commandType": "property_set",
+    "status": "SENT",
+    "callType": "async"
+  }
+}`
+      },
+      {
+        method: 'GET',
+        path: '/external/v1/devices/{deviceKey}/commands',
+        desc: '命令记录分页，按创建时间倒序',
+        example: `curl -X GET \\
+  https://your-server/api/external/v1/devices/switch-001/commands?page=1&size=10 \\
+  -H "X-API-Key: your-api-key"`,
+        response: `{
+  "code": 200,
+  "data": {
+    "records": [
+      { "commandId": "8f1c0b6e-...-a1", "commandType": "property_set", "status": "ACKED" }
+    ],
+    "total": 1
+  }
 }`
       }
     ]

@@ -46,5 +46,23 @@ export const deviceApi = {
   /**
    * 事件记录分页（按 deviceKey 归属校验，size 上限 100）
    */
-  getEvents: (deviceKey, params) => api.get(`/devices/${deviceKey}/events`, { params })
+  getEvents: (deviceKey, params) => api.get(`/devices/${deviceKey}/events`, { params }),
+
+  // ---------- 命令下发与服务调用（T-15） ----------
+
+  /**
+   * 可下发能力：rw 属性与服务入参，供前端生成动态表单
+   * 无物模型时 modeled=false 且两个集合为空
+   */
+  getCommandCapability: (deviceKey) => api.get(`/devices/${deviceKey}/command-capability`),
+
+  /**
+   * 下发命令：type=property_set / service，callType=sync 等待回执到终态
+   */
+  sendCommand: (deviceKey, data) => api.post(`/devices/${deviceKey}/commands`, data),
+
+  /**
+   * 命令记录分页（按创建时间倒序）
+   */
+  getCommandRecords: (deviceKey, params) => api.get(`/devices/${deviceKey}/commands`, { params })
 }

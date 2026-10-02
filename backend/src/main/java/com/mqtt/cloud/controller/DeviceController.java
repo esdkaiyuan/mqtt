@@ -5,15 +5,19 @@ import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.security.SecurityUtils;
+import com.mqtt.cloud.dto.request.CommandInvokeRequest;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
+import com.mqtt.cloud.dto.response.CommandCapabilityResponse;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.DeviceCommandRecord;
 import com.mqtt.cloud.entity.DeviceEventRecord;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.DeviceStatus;
 import com.mqtt.cloud.filter.UserPrincipal;
+import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceDataService;
 import com.mqtt.cloud.service.DeviceService;
@@ -39,15 +43,18 @@ public class DeviceController {
     private final DeviceStatusHistoryService deviceStatusHistoryService;
     private final DeviceCredentialService deviceCredentialService;
     private final DeviceDataService deviceDataService;
+    private final DeviceCommandService deviceCommandService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceStatusHistoryService deviceStatusHistoryService,
                             DeviceCredentialService deviceCredentialService,
-                            DeviceDataService deviceDataService) {
+                            DeviceDataService deviceDataService,
+                            DeviceCommandService deviceCommandService) {
         this.deviceService = deviceService;
         this.deviceStatusHistoryService = deviceStatusHistoryService;
         this.deviceCredentialService = deviceCredentialService;
         this.deviceDataService = deviceDataService;
+        this.deviceCommandService = deviceCommandService;
     }
 
     @Operation(summary = "创建设备", description = "为当前用户创建设备，初始状态为 INACTIVE；"
@@ -158,6 +165,57 @@ public class DeviceController {
             @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
         Device device = requireOwnedDevice(deviceKey);
         return Result.success(deviceDataService.getEvents(device.getId(), page, size));
+    }
+
+    @Operation(summary = "获取设备可下发能力", description = "返回产品物模型中可写属性与服务（含入参），供前端生成命令表单；"
+            + "无物模型时 modeled=false 且两个集合为空；非归属用户访问返回 2003")
+    @GetMapping("/{deviceKey}/command-capability")
+    public Result<CommandCapabilityResponse> getCommandCapability(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
+        Device device = requireOwnedDevice(deviceKey);
+        return Result.success(toCapabilityResponse(deviceCommandService.getCapability(device.getProductId())));
+    }
+
+    @Operation(summary = "下发命令", description = "按物模型校验参数后下发到 device/{deviceKey}/cmd/down；"
+            + "type=property_set 做属性设置、type=service 做服务调用；callType=sync 等待回执到终态。"
+            + "物模型缺失 6201 / 属性不可写 6202 / 标识符未定义 6203 / 参数非法 6204 / 发布失败 4001")
+    @PostMapping("/{deviceKey}/commands")
+    public Result<DeviceCommandRecord> sendCommand(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @Valid @RequestBody CommandInvokeRequest request) {
+        Device device = requireOwnedDevice(deviceKey);
+        DeviceCommandRecord record = deviceCommandService.invoke(new DeviceCommandService.CommandInvoke(
+                device.getId(), device.getProductId(), request.getType(), request.getIdentifier(),
+                request.getParams() == null ? null : request.getParams().toString(),
+                request.getCallType(), DeviceCommandService.SOURCE_CONSOLE, SecurityUtils.requireUserId()));
+        return Result.success(record);
+    }
+
+    @Operation(summary = "获取命令记录", description = "按 deviceKey 分页返回命令记录，按创建时间倒序；非归属用户访问返回 2003")
+    @GetMapping("/{deviceKey}/commands")
+    public Result<IPage<DeviceCommandRecord>> getCommandRecords(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @Parameter(description = "页码，从 1 起") @RequestParam(defaultValue = "1") long page,
+            @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
+        Device device = requireOwnedDevice(deviceKey);
+        return Result.success(deviceCommandService.listCommands(device.getId(), page, size));
+    }
+
+    /** 物模型能力投影 → 前端表单契约（只暴露可下发所需的字段）。 */
+    private CommandCapabilityResponse toCapabilityResponse(DeviceCommandService.CommandCapability capability) {
+        List<CommandCapabilityResponse.Property> properties = capability.properties().stream()
+                .map(spec -> new CommandCapabilityResponse.Property(spec.identifier(), spec.type(), spec.min(),
+                        spec.max(), spec.integer(), List.copyOf(spec.enumKeys()), spec.textLength()))
+                .toList();
+        List<CommandCapabilityResponse.Service> services = capability.services().stream()
+                .map(service -> new CommandCapabilityResponse.Service(service.identifier(), service.callType(),
+                        service.input().values().stream()
+                                .map(param -> new CommandCapabilityResponse.Param(param.identifier(), param.type(),
+                                        param.min(), param.max(), param.integer(), List.copyOf(param.enumKeys()),
+                                        param.textLength(), param.required()))
+                                .toList()))
+                .toList();
+        return new CommandCapabilityResponse(capability.modeled(), capability.version(), properties, services);
     }
 
     /**
