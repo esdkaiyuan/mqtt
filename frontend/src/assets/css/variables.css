@@ -66,6 +66,23 @@
   --border-color: #E5E6EB;
   --border-color-light: #F2F3F5;
 
+  /* ========== 代码块（文档站） ==========
+     深蓝灰底与品牌蓝同色系，头部与代码同底避免明暗断层。
+     语法色按 highlight.js 输出的 class 语义分组，勿复用于其他场景。 */
+  --code-bg: #0F1B2D;                              /* 代码底 */
+  --code-header-bg: #16253C;                       /* 头部底，略亮于代码底 */
+  --code-border: #24344E;                          /* 边框与分隔线 */
+  --code-control-hover: rgba(255, 255, 255, 0.08); /* 复制按钮悬停底 */
+  --code-text: #C6D3E6;                            /* 默认代码文字 */
+  --code-muted: #7C8CA6;                           /* 语言标签、标点 */
+  --code-comment: #7E90A8;                         /* 注释 */
+  --code-key: #7FB0FF;                             /* JSON 键、HTTP 头名 */
+  --code-string: #7BD9A4;                          /* 字符串 */
+  --code-number: #F0A868;                          /* 数字 */
+  --code-keyword: #FF8FA6;                         /* 关键字、预处理器 */
+  --code-type: #5FD3D0;                            /* 类型 */
+  --code-function: #E8C07D;                        /* 函数名、内置函数 */
+
   /* ========== 布局（T-13 骨架令牌） ========== */
   /* 骨架尺寸 */
   --topbar-height: 56px;

@@ -39,6 +39,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import SvgIcon from '@/components/Icon.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -55,12 +56,20 @@ defineProps({
 const emit = defineEmits(['toggleToc'])
 
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const { isScrolled } = useScrollIndicator()
 const mobileMenuOpen = ref(false)
 
+// 三个锚点区块只存在于首页：在首页内平滑滚动，
+// 其余页面（如文档站）先回首页并带上 hash，交由路由 scrollBehavior 定位
 function handleNavClick(id) {
-  scrollToSection(id)
   mobileMenuOpen.value = false
+  if (route.name === 'Home') {
+    scrollToSection(id)
+  } else {
+    router.push({ path: '/', hash: `#${id}` })
+  }
 }
 </script>
 

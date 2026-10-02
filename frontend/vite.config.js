@@ -4,25 +4,7 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Components from 'unplugin-vue-components/vite'
 import path from 'path'
 import fs from 'node:fs'
-
-/**
- * 少数 <el-*> 组件并非独立目录，而是父组件的子导出，这里给出目录归并表。
- * 例如 ElOption 由 select 目录导出，ElDropdownItem/ElDropdownMenu 由 dropdown 目录导出。
- * 子组件目录（如 form-item/）下只有 style，没有 index.mjs，必须回指父组件目录，
- * 否则组件解析失败会退化成未注册的自定义元素，导致表单/表格/面包屑结构塌陷。
- */
-const EP_DIR_ALIAS = {
-  option: 'select',
-  'option-group': 'select',
-  'menu-item': 'menu',
-  'menu-item-group': 'menu',
-  'sub-menu': 'menu',
-  'dropdown-item': 'dropdown',
-  'dropdown-menu': 'dropdown',
-  'form-item': 'form',
-  'table-column': 'table',
-  'breadcrumb-item': 'breadcrumb'
-}
+import { EP_DIR_ALIAS } from './element-plus-alias.js'
 
 function kebab(str) {
   return str.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
@@ -89,6 +71,9 @@ export default defineConfig({
           if (!id.includes('node_modules')) return
           if (id.includes('echarts') || id.includes('zrender')) return 'echarts'
           if (id.includes('element-plus') || id.includes('@element-plus')) return 'element-plus'
+          // 高亮库仅文档站代码块使用；不单列会被并入 vendor，
+          // 而 vendor 由入口 modulepreload，会让工作台首屏白背这份体积
+          if (id.includes('highlight.js')) return 'highlight'
           return 'vendor'
         }
       }

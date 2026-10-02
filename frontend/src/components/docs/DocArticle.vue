@@ -97,7 +97,9 @@ defineProps({
   text-decoration: underline;
 }
 
-.doc-article__body :deep(code) {
+/* 仅行内代码。排除 <pre> 内的代码，否则会给代码块的 <code> 套上浅灰底与圆角内边距，
+   与 CodeBlock 的深色 <pre> 叠加成「深色框里嵌浅色块」的突兀观感 */
+.doc-article__body :deep(:not(pre) > code) {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
   padding: 2px 6px;
