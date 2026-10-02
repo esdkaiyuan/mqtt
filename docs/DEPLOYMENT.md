@@ -626,6 +626,63 @@ ORDER BY next_attempt_at;
 - **`6206`（`SHADOW_DESIRED_INVALID`）**：期望值端点入参兜底（`params` 缺失 / 非对象 / 空），未进入命令通道；属性级校验失败仍用 `6201`~`6204`。
 - **影子长期不更新**：`reported` 由属性上行驱动，若设备无上报则影子不变；`desired` 由下发驱动、`version` 随任意变更递增。
 
+### 9.12 告警中心运维（T-17）
+
+**迁移 `V7__alert_center.sql`**：新建 `alert_rule`（告警规则）与 `alert_record`（告警记录）两张表。迁移**只加表、不改既有表**，可安全回滚应用版本（回滚后新旧表共存，旧代码忽略新表）。重建后端即触发：
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：Flyway schema history 出现 V7，且两张告警表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
+  -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'alert_%';"
+```
+
+**告警来源与出口**：告警中心**完全运行在服务端**，不新增任何 MQTT 主题、不改 ACL。三类来源——阈值（属性越限）与事件（事件上报）为**推**（由上行解析旁路 `onProperties` / `onEvents` 驱动），离线为**拉**（`AlertSweeper` 定时巡检）；通知出口复用既有 Webhook（`WebhookDispatcher`），事件名 `alert.triggered` / `alert.recovered`，需在 Webhook 配置中订阅才会实际投递。
+
+**抑制窗口**：同一「规则 + 设备」在窗口内的重复触发只累加 `trigger_count` 并刷新 `last_triggered_at`，不落新行、不重复通知；超出窗口后再次通知。窗口取规则自身 `suppress_window_seconds`（`>0` 生效），否则用全局默认 `ALERT_SUPPRESS_WINDOW_SECONDS`。
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.alert`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `ALERT_ENABLED` | `true` | 告警评估总开关；置 `false` 时不评估且离线巡检不注册（已有活动告警保持原状） |
+| `ALERT_NOTIFY_ENABLED` | `true` | 触发通知开关；置 `false` 时仍落库但不投递 `alert.triggered` |
+| `ALERT_RECOVER_NOTIFY_ENABLED` | `true` | 恢复通知开关；置 `false` 时仍置 `RECOVERED` 但不投递 `alert.recovered` |
+| `ALERT_SUPPRESS_WINDOW_SECONDS` | `300` | 全局默认抑制窗口（秒），规则未单独配置时使用 |
+| `ALERT_SWEEP_INTERVAL_MS` | `30000` | 离线巡检间隔（毫秒），`<=0` 关闭 |
+| `ALERT_SWEEP_BATCH_SIZE` | `200` | 单轮巡检规则 / 记录处理上限 |
+
+> 翻转上述任一变量后 `docker compose ... up -d --force-recreate backend`，无需重跑 `emqx-init`。`ALERT_ENABLED=false` 时离线巡检不注册、阈值 / 事件评估直接返回，但已有告警不会被自动恢复。
+
+**告警排查**：
+
+```sql
+-- 某用户的活动告警（未恢复）
+SELECT id, device_key, rule_name, source_type, severity, status,
+       trigger_count, last_triggered_at, notified_at
+FROM alert_record
+WHERE user_id = <userId> AND status <> 'RECOVERED'
+ORDER BY last_triggered_at DESC;
+-- 顶栏未读数（活动告警数）
+SELECT COUNT(*) FROM alert_record WHERE user_id = <userId> AND status <> 'RECOVERED';
+-- 启用中的离线规则（巡检对象）
+SELECT id, name, device_id, offline_seconds, suppress_window_seconds
+FROM alert_rule WHERE source_type = 'OFFLINE' AND enabled = 1 AND deleted = 0;
+-- 逻辑删除但仍有活动告警的规则（巡检兜底会将其告警置恢复）
+SELECT r.id, r.name, COUNT(a.id) AS open_alerts
+FROM alert_rule r JOIN alert_record a ON a.rule_id = r.id AND a.status <> 'RECOVERED'
+WHERE r.deleted = 1 GROUP BY r.id, r.name;
+```
+
+**常见排障**：
+
+- **属性越限但没有告警**：确认规则 `enabled=1`、`deleted=0`，且规则作用域（`device_id`）覆盖该设备；确认设备已按物模型上报该 `identifier` 且值可解析（`GT`/`GTE`/`LT`/`LTE` 两侧须为十进制数，不可解析值会跳过并记 WARN）；确认 `ALERT_ENABLED=true`。
+- **有告警记录但没收到 Webhook**：`ALERT_NOTIFY_ENABLED` / `ALERT_RECOVER_NOTIFY_ENABLED` 是否开启；Webhook 配置是否订阅了 `alert.triggered` / `alert.recovered`；查询 `notified_at` 是否为最近时间以确认已尝试投递。
+- **离线告警不触发 / 不恢复**：确认 `OFFLINE` 规则已启用且 `offline_seconds` 合理；确认 `ALERT_SWEEP_INTERVAL_MS>0`（巡检已注册）；设备重新上线（`data` / `heartbeat`）后由巡检的在线集差集置恢复，恢复延迟最多一个巡检周期。
+- **重复告警刷屏**：属抑制窗口内计数累加，`trigger_count` 增长但只有 `last_triggered_at` 变化、不重复通知；如需更长静默期，调大规则或全局 `ALERT_SUPPRESS_WINDOW_SECONDS`。
+- **`6207`~`6211`**：`6207` 规则不存在 / `6208` 规则配置非法 / `6209` 告警记录不存在 / `6210` 状态不允许该操作（如对已恢复告警再确认 / 恢复）/ `6211` 不支持的来源类型；规则与告警越权访问统一返回 `403`。
+- **顶栏角标不更新**：未读数由前端 `useAlertUnreadCountQuery` 每 30s 轮询；确认登录用户与告警归属一致（告警按用户隔离）。
+
 ---
 
 ## 10. 依赖版本与安全扫描
