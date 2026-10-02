@@ -57,7 +57,13 @@ public enum ResultCode {
     COMMAND_IDENTIFIER_UNKNOWN(6203, "标识符未在物模型中定义", HttpStatus.BAD_REQUEST),
     COMMAND_PARAM_INVALID(6204, "参数不符合物模型定义", HttpStatus.BAD_REQUEST),
     COMMAND_NOT_FOUND(6205, "命令记录不存在", HttpStatus.NOT_FOUND),
-    SHADOW_DESIRED_INVALID(6206, "影子期望状态非法", HttpStatus.BAD_REQUEST);
+    SHADOW_DESIRED_INVALID(6206, "影子期望状态非法", HttpStatus.BAD_REQUEST),
+
+    ALERT_RULE_NOT_FOUND(6207, "告警规则不存在", HttpStatus.NOT_FOUND),
+    ALERT_RULE_INVALID(6208, "告警规则配置非法", HttpStatus.BAD_REQUEST),
+    ALERT_NOT_FOUND(6209, "告警记录不存在", HttpStatus.NOT_FOUND),
+    ALERT_STATUS_INVALID(6210, "告警状态不允许该操作", HttpStatus.CONFLICT),
+    ALERT_SOURCE_UNSUPPORTED(6211, "不支持的告警来源类型", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;

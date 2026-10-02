@@ -5,11 +5,16 @@ import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.security.SecurityUtils;
+import com.mqtt.cloud.dto.request.AlertQuery;
 import com.mqtt.cloud.dto.request.CommandInvokeRequest;
+import com.mqtt.cloud.entity.AlertRecord;
+import com.mqtt.cloud.entity.AlertRule;
 import com.mqtt.cloud.entity.ApiKey;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceCommandRecord;
 import com.mqtt.cloud.filter.UserPrincipal;
+import com.mqtt.cloud.service.AlertRuleService;
+import com.mqtt.cloud.service.AlertService;
 import com.mqtt.cloud.service.ApiKeyService;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceService;
@@ -47,6 +52,8 @@ public class ExternalApiController {
     private final DeviceService deviceService;
     private final DeviceCommandService deviceCommandService;
     private final DeviceShadowService deviceShadowService;
+    private final AlertRuleService alertRuleService;
+    private final AlertService alertService;
 
     @Operation(summary = "外部-查询设备列表", description = "返回密钥所属用户的名下设备列表；传入 deviceKey 时精确返回单个设备")
     @GetMapping("/devices")
@@ -155,6 +162,34 @@ public class ExternalApiController {
         stats.put("apiKeyName", apiKey != null ? apiKey.getName() : null);
         stats.put("permissions", apiKey != null ? apiKey.getPermissions() : null);
         return Result.success(stats);
+    }
+
+    @Operation(summary = "外部-查询告警列表", description = "分页返回密钥所属用户的告警记录，按 last_triggered_at 倒序；"
+            + "过滤参数同控制台（status / sourceType / severity / deviceId）")
+    @GetMapping("/alerts")
+    public Result<IPage<AlertRecord>> listAlerts(AlertQuery query) {
+        return Result.success(alertService.page(currentUserId(), query));
+    }
+
+    @Operation(summary = "外部-查询告警详情", description = "按 ID 返回本人告警详情，不存在 6209 / 越权 403")
+    @GetMapping("/alerts/{id}")
+    public Result<AlertRecord> getAlert(
+            @Parameter(description = "告警 ID", required = true) @PathVariable Long id) {
+        return Result.success(alertService.getOwned(currentUserId(), id));
+    }
+
+    @Operation(summary = "外部-查询告警未读数", description = "本人活动告警数")
+    @GetMapping("/alerts/unread-count")
+    public Result<Long> getAlertUnreadCount() {
+        return Result.success(alertService.unreadCount(currentUserId()));
+    }
+
+    @Operation(summary = "外部-查询告警规则列表", description = "只读返回本人告警规则，可按来源与启用状态过滤；不提供规则写操作")
+    @GetMapping("/alerts/rules")
+    public Result<List<AlertRule>> listAlertRules(
+            @Parameter(description = "来源过滤：THRESHOLD / OFFLINE / EVENT") @RequestParam(required = false) String sourceType,
+            @Parameter(description = "启用状态过滤") @RequestParam(required = false) Boolean enabled) {
+        return Result.success(alertRuleService.list(currentUserId(), sourceType, enabled));
     }
 
     private Long currentUserId() {

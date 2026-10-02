@@ -7,6 +7,7 @@ import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.ingest.ResolvedEvent;
 import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
+import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelInterpretService;
@@ -18,6 +19,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -52,6 +54,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
     private final DevicePropertyLatestMapper propertyLatestMapper;
     private final DeviceEventRecordMapper eventRecordMapper;
     private final DeviceShadowService deviceShadowService;
+    private final AlertEvaluationService alertEvaluationService;
     private final ThingModelInterpretMetrics metrics;
     private final ThingModelProperties properties;
     private final ObjectMapper objectMapper;
@@ -115,6 +118,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
             return;
         }
         List<String> applied = new ArrayList<>();
+        List<AlertEvaluationService.PropertySample> samples = new ArrayList<>();
         for (Map.Entry<String, JsonNode> entry : params.properties()) {
             String identifier = entry.getKey();
             ThingModelDefinition.PropertySpec spec = definition.properties().get(identifier);
@@ -131,9 +135,24 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
                     record.receivedAt());
             metrics.count(RESULT_PROPERTY);
             applied.add(identifier);
+            samples.add(new AlertEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
         }
         // T-16：上报收敛。回读权威库合并进影子 reported，异常只记 WARN，不影响本批其余消息。
         applyReported(device, applied);
+        // T-17：阈值告警旁路，复用已归一化的属性样本，避免重复解析与额外查询。
+        evaluateProperties(device, samples);
+    }
+
+    /** 阈值告警旁路（T-17 设计文档 §8.5）；异常只记 WARN，不冒泡到解析链路。 */
+    private void evaluateProperties(Device device, List<AlertEvaluationService.PropertySample> samples) {
+        if (samples.isEmpty()) {
+            return;
+        }
+        try {
+            alertEvaluationService.onProperties(device.getId(), device.getProductId(), samples);
+        } catch (Exception e) {
+            log.warn("阈值告警评估失败，跳过: deviceId={}", device.getId(), e);
+        }
     }
 
     /** 上报后的影子收敛；单条合并异常只记 WARN，不冒泡（沿用 T-14 逐条隔离）。 */
@@ -185,6 +204,29 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         } catch (Exception e) {
             metrics.count(RESULT_ERROR);
             log.warn("事件记录批量写入失败，丢弃本批 {} 条事件", eventRecords.size(), e);
+            return;
+        }
+        // T-17：仅在事件真正落库后才做告警评估，避免「未落库却已触发」。
+        evaluateEvents(eventRecords);
+    }
+
+    /** 事件告警旁路（T-17 设计文档 §8.5）：按设备分组后逐设备评估；异常只记 WARN。 */
+    private void evaluateEvents(List<DeviceEventRecord> eventRecords) {
+        Map<Long, List<AlertEvaluationService.EventSample>> byDevice = new LinkedHashMap<>();
+        for (DeviceEventRecord record : eventRecords) {
+            if (record.getDeviceId() == null) {
+                continue;
+            }
+            byDevice.computeIfAbsent(record.getDeviceId(), key -> new ArrayList<>())
+                    .add(new AlertEvaluationService.EventSample(record.getIdentifier(), record.getEventType(),
+                            record.getOutputData(), record.getReportedAt()));
+        }
+        for (Map.Entry<Long, List<AlertEvaluationService.EventSample>> entry : byDevice.entrySet()) {
+            try {
+                alertEvaluationService.onEvents(entry.getKey(), entry.getValue());
+            } catch (Exception e) {
+                log.warn("事件告警评估失败，跳过: deviceId={}", entry.getKey(), e);
+            }
         }
     }
 

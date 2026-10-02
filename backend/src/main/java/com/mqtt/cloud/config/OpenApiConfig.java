@@ -150,4 +150,15 @@ public class OpenApiConfig {
                 .pathsToMatch("/api/health")
                 .build();
     }
+
+    /**
+     * 告警中心API分组
+     */
+    @Bean
+    public GroupedOpenApi alertApi() {
+        return GroupedOpenApi.builder()
+                .group("告警中心")
+                .pathsToMatch("/api/alerts", "/api/alerts/**")
+                .build();
+    }
 }
