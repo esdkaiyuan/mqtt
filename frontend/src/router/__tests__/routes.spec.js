@@ -25,6 +25,8 @@ describe('router/routes 分区与兼容', () => {
       'Dashboard',
       'DeviceList',
       'DeviceDetail',
+      'ProductList',
+      'ProductThingModel',
       'MessageMonitor',
       'HistoryQuery',
       'ApiKeyManagement',
@@ -34,9 +36,16 @@ describe('router/routes 分区与兼容', () => {
     const groups = new Set(children.map((child) => child.meta?.group))
     expect(groups).toEqual(new Set(['monitor', 'access']))
 
-    // 设备详情不在导航中展示
-    const detail = children.find((child) => child.name === 'DeviceDetail')
-    expect(detail.meta?.hidden).toBe(true)
+    // 设备详情 / 物模型不在导航中展示
+    for (const name of ['DeviceDetail', 'ProductThingModel']) {
+      const hidden = children.find((child) => child.name === name)
+      expect(hidden.meta?.hidden).toBe(true)
+    }
+
+    // 产品管理与设备管理同组（monitor）
+    const productList = children.find((child) => child.name === 'ProductList')
+    expect(productList.path).toBe('products')
+    expect(productList.meta?.group).toBe('monitor')
   })
 
   it('实时消息仅对 ADMIN / OPERATOR 可见', () => {

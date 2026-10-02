@@ -46,7 +46,11 @@ public enum ResultCode {
     PRODUCT_HAS_DEVICES(6003, "该产品下存在设备，无法删除", HttpStatus.CONFLICT),
     PRODUCT_DISABLED(6004, "产品已停用", HttpStatus.CONFLICT),
     DEVICE_DISABLED(6005, "设备已被禁用", HttpStatus.FORBIDDEN),
-    INTERNAL_TOKEN_INVALID(6006, "内部调用令牌无效", HttpStatus.UNAUTHORIZED);
+    INTERNAL_TOKEN_INVALID(6006, "内部调用令牌无效", HttpStatus.UNAUTHORIZED),
+
+    THING_MODEL_PARSE_FAILED(6101, "物模型 JSON 解析失败", HttpStatus.BAD_REQUEST),
+    THING_MODEL_INVALID(6102, "物模型校验不通过", HttpStatus.BAD_REQUEST),
+    THING_MODEL_TOO_LARGE(6103, "物模型内容超过大小上限", HttpStatus.PAYLOAD_TOO_LARGE);
 
     private final Integer code;
     private final String message;

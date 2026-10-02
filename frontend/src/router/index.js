@@ -89,6 +89,18 @@ export const routes = [
         meta: { title: '设备详情', hidden: true, group: 'monitor' }
       },
       {
+        path: 'products',
+        name: 'ProductList',
+        component: () => import('@/views/workbench/product/ProductList.vue'),
+        meta: { title: '产品管理', icon: 'package', group: 'monitor' }
+      },
+      {
+        path: 'products/:id/thing-model',
+        name: 'ProductThingModel',
+        component: () => import('@/views/workbench/product/ThingModel.vue'),
+        meta: { title: '物模型', hidden: true, group: 'monitor' }
+      },
+      {
         path: 'messages',
         name: 'MessageMonitor',
         component: () => import('@/views/workbench/message/MessageMonitor.vue'),

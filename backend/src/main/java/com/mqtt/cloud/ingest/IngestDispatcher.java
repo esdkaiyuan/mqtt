@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.WebhookConfig;
 import com.mqtt.cloud.service.RealtimeBroadcaster;
+import com.mqtt.cloud.service.ThingModelInterpretService;
 import com.mqtt.cloud.service.WebhookConfigService;
 import com.mqtt.cloud.service.WebhookDispatcher;
 import lombok.RequiredArgsConstructor;
@@ -16,11 +17,13 @@ import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
- * 落库成功后的下游分发：Webhook 事件与实时推送。
+ * 落库成功后的下游分发：Webhook 事件、实时推送与物模型解析。
  * <p>
  * 由 worker 在落库事务提交后调用，保证「推送出去的，库里一定已经有」。
  * 实时推送经 {@link RealtimeBroadcaster} 出口，多副本时走 Redis 广播；
  * Webhook 配置按整批涉及用户一次性取回，替代原先的逐事件查询。
+ * 物模型解析作为第三路 fan-out，逐条隔离失败，绝不让异常冒泡
+ * （否则 worker 会整批重试导致消息重复落库）。
  */
 @Slf4j
 @Component
@@ -39,6 +42,7 @@ public class IngestDispatcher {
     private final WebhookDispatcher webhookDispatcher;
     private final WebhookConfigService webhookConfigService;
     private final RealtimeBroadcaster realtimeBroadcaster;
+    private final ThingModelInterpretService thingModelInterpretService;
 
     public void dispatch(List<ResolvedEvent> events) {
         if (events.isEmpty()) {
@@ -59,6 +63,11 @@ public class IngestDispatcher {
             } catch (Exception e) {
                 log.warn("推送实时数据失败: topic={}", record.topic(), e);
             }
+        }
+        try {
+            thingModelInterpretService.interpret(events);
+        } catch (Exception e) {
+            log.warn("物模型解析分发失败，跳过本批解析: size={}", events.size(), e);
         }
     }
 

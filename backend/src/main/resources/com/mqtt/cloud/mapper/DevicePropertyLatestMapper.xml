@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DevicePropertyLatestMapper">
+
+    <!-- 时间戳守卫 upsert：唯一键 (device_id, identifier) 命中时，仅当本次上报时间不早于库中值才覆盖，
+         防止共享订阅跨副本乱序时旧包覆盖新值。reported_at 最后赋值，故前两个 IF 读到的是原始值。
+         updated_at 由表 ON UPDATE 维护，此处不显式赋值。 -->
+    <insert id="upsertIfNewer">
+        INSERT INTO device_property_latest (device_id, identifier, data_type, value_text, reported_at)
+        VALUES (#{deviceId}, #{identifier}, #{dataType}, #{valueText}, #{reportedAt,jdbcType=TIMESTAMP})
+        ON DUPLICATE KEY UPDATE
+            data_type = IF(#{reportedAt,jdbcType=TIMESTAMP} &gt;= reported_at, #{dataType}, data_type),
+            value_text = IF(#{reportedAt,jdbcType=TIMESTAMP} &gt;= reported_at, #{valueText}, value_text),
+            reported_at = IF(#{reportedAt,jdbcType=TIMESTAMP} &gt;= reported_at, #{reportedAt,jdbcType=TIMESTAMP}, reported_at)
+    </insert>
+
+</mapper>

@@ -55,6 +55,21 @@
         </div>
       </div>
 
+      <div id="device-property-section" class="info-card card">
+        <DevicePropertyPanel :properties="properties" :loading="propertiesLoading" />
+      </div>
+
+      <div id="device-event-section" class="info-card card">
+        <DeviceEventPanel
+          :events="events"
+          :total="eventsTotal"
+          :loading="eventsLoading"
+          :page="eventPage"
+          :size="eventSize"
+          @page-change="handleEventPageChange"
+        />
+      </div>
+
       <div id="device-command-section" class="info-card card">
         <h3 class="card-title">发送指令</h3>
         <p class="card-desc">通过 MQTT 向设备发送控制指令，设备侧 Topic 与摘要见右侧上下文栏</p>
@@ -103,6 +118,9 @@ import { useUiStore } from '@/stores/ui'
 import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EditDeviceDialog from '@/components/device/EditDeviceDialog.vue'
+import DevicePropertyPanel from '@/components/device/DevicePropertyPanel.vue'
+import DeviceEventPanel from '@/components/device/DeviceEventPanel.vue'
+import { useDeviceData } from '@/composables/useDeviceData'
 import api from '@/api/axios'
 
 const route = useRoute()
@@ -114,6 +132,16 @@ const device = ref({})
 const commandLoading = ref(false)
 const showEdit = ref(false)
 const editLoading = ref(false)
+
+// 物模型派生数据（只读）：deviceKey 待设备详情加载后才有值
+const deviceKey = computed(() => device.value.deviceKey || '')
+const eventPage = ref(1)
+const eventSize = ref(10)
+const { properties, propertiesLoading, events, eventsTotal, eventsLoading } = useDeviceData(
+  deviceKey,
+  eventPage,
+  eventSize
+)
 
 const PAYLOAD_PLACEHOLDER = '{"action": "restart"}'
 
@@ -127,6 +155,10 @@ const commandTopic = computed(() => {
   if (!device.value.topic) return ''
   return device.value.topic.replace('/data', '/command').replace('/heartbeat', '/command')
 })
+
+function handleEventPageChange(page) {
+  eventPage.value = page
+}
 
 // 右上下文栏只读消费该上下文，页面卸载时清空避免残留上一台设备
 watch(device, (value) => ui.setRailContext({ device: value }), { immediate: true })

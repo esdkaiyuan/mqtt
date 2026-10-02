@@ -10,9 +10,12 @@ import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.DeviceEventRecord;
+import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.DeviceStatus;
 import com.mqtt.cloud.filter.UserPrincipal;
 import com.mqtt.cloud.service.DeviceCredentialService;
+import com.mqtt.cloud.service.DeviceDataService;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -35,13 +38,16 @@ public class DeviceController {
     private final DeviceService deviceService;
     private final DeviceStatusHistoryService deviceStatusHistoryService;
     private final DeviceCredentialService deviceCredentialService;
+    private final DeviceDataService deviceDataService;
 
     public DeviceController(DeviceService deviceService,
                             DeviceStatusHistoryService deviceStatusHistoryService,
-                            DeviceCredentialService deviceCredentialService) {
+                            DeviceCredentialService deviceCredentialService,
+                            DeviceDataService deviceDataService) {
         this.deviceService = deviceService;
         this.deviceStatusHistoryService = deviceStatusHistoryService;
         this.deviceCredentialService = deviceCredentialService;
+        this.deviceDataService = deviceDataService;
     }
 
     @Operation(summary = "创建设备", description = "为当前用户创建设备，初始状态为 INACTIVE；"
@@ -136,11 +142,39 @@ public class DeviceController {
         return Result.success(deviceStatusHistoryService.getHistoryByDeviceId(deviceId));
     }
 
+    @Operation(summary = "获取设备属性最新值", description = "按 deviceKey 返回物模型解析出的属性最新值列表；非归属用户访问返回 2003")
+    @GetMapping("/{deviceKey}/properties")
+    public Result<List<DevicePropertyLatest>> getDeviceProperties(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
+        Device device = requireOwnedDevice(deviceKey);
+        return Result.success(deviceDataService.getPropertyLatest(device.getId()));
+    }
+
+    @Operation(summary = "获取设备事件记录", description = "按 deviceKey 分页返回物模型解析出的事件记录，按上报时间倒序；非归属用户访问返回 2003")
+    @GetMapping("/{deviceKey}/events")
+    public Result<IPage<DeviceEventRecord>> getDeviceEvents(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @Parameter(description = "页码，从 1 起") @RequestParam(defaultValue = "1") long page,
+            @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
+        Device device = requireOwnedDevice(deviceKey);
+        return Result.success(deviceDataService.getEvents(device.getId(), page, size));
+    }
+
     /**
      * 校验设备归属：ADMIN 可访问任意设备，其他角色仅能访问自己名下的设备。
      */
     private void checkDeviceOwnership(Long deviceId) {
-        Device device = deviceService.getById(deviceId);
+        checkOwnership(deviceService.getById(deviceId));
+    }
+
+    /** 按 deviceKey 取设备并校验归属，供设备详情下的物模型数据只读接口使用。 */
+    private Device requireOwnedDevice(String deviceKey) {
+        Device device = deviceService.getDeviceByKey(deviceKey);
+        checkOwnership(device);
+        return device;
+    }
+
+    private void checkOwnership(Device device) {
         if (device == null || Boolean.TRUE.equals(device.getDeleted())) {
             throw new BusinessException(ResultCode.DEVICE_NOT_FOUND);
         }

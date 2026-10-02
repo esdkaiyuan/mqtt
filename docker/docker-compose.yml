@@ -177,6 +177,12 @@ services:
       # 停机排空摄取队列的最长等待（毫秒）。必须小于 stop_grace_period(30s)，
       # 否则容器会被强杀，未排空的消息来不及转死信。
       INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS: ${INGEST_SHUTDOWN_DRAIN_TIMEOUT_MS:-10000}
+      # 物模型上行解析开关（T-14）；置 false 时只落原始消息，解析链路整体退化为现状
+      THING_MODEL_INTERPRET_ENABLED: ${THING_MODEL_INTERPRET_ENABLED:-true}
+      # 物模型定义缓存 TTL（秒）；0 关闭缓存。保存只失效本副本，多副本收敛窗口 = 该 TTL
+      THING_MODEL_CACHE_TTL_SECONDS: ${THING_MODEL_CACHE_TTL_SECONDS:-60}
+      # 物模型 TSL 大小上限（字节），保存与导入共用
+      THING_MODEL_MAX_SIZE_BYTES: ${THING_MODEL_MAX_SIZE_BYTES:-262144}
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
       interval: 30s

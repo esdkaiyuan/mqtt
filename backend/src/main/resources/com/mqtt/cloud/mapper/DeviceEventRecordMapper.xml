@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DeviceEventRecordMapper">
+
+    <!-- 事件追加写入：解析链路按批一次提交，不去重。created_at 由表默认值维护。 -->
+    <insert id="insertBatch">
+        INSERT INTO device_event_record (device_id, identifier, event_type, output_data, reported_at)
+        VALUES
+        <foreach collection="list" item="e" separator=",">
+            (#{e.deviceId}, #{e.identifier}, #{e.eventType}, #{e.outputData}, #{e.reportedAt,jdbcType=TIMESTAMP})
+        </foreach>
+    </insert>
+
+</mapper>
