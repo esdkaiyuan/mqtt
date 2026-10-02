@@ -188,6 +188,20 @@ app:
     cas-retry: ${SHADOW_CAS_RETRY:3}
     # QUEUED 过期时长（毫秒），0 表示不过期
     queue-ttl-ms: ${SHADOW_QUEUE_TTL_MS:0}
+  # 告警中心（T-17）
+  alert:
+    # 告警评估总开关；置 false 时不评估，离线巡检也不注册
+    enabled: ${ALERT_ENABLED:true}
+    # 触发通知开关；置 false 时仍落库但不投递 alert.triggered
+    notify-enabled: ${ALERT_NOTIFY_ENABLED:true}
+    # 恢复通知开关；置 false 时仍置 RECOVERED 但不投递 alert.recovered
+    recover-notify-enabled: ${ALERT_RECOVER_NOTIFY_ENABLED:true}
+    # 全局默认抑制窗口（秒），规则未单独配置时使用
+    suppress-window-seconds: ${ALERT_SUPPRESS_WINDOW_SECONDS:300}
+    # 离线巡检间隔（毫秒），0 关闭
+    sweep-interval-ms: ${ALERT_SWEEP_INTERVAL_MS:30000}
+    # 单轮巡检规则 / 记录处理上限
+    sweep-batch-size: ${ALERT_SWEEP_BATCH_SIZE:200}
 
 # 日志配置
 logging:
