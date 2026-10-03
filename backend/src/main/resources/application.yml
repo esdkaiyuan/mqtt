@@ -251,6 +251,30 @@ app:
     max-page-size: ${DEVICE_LOG_MAX_PAGE_SIZE:100}
     # 单次查询时间跨度上限（天）
     max-range-days: ${DEVICE_LOG_MAX_RANGE_DAYS:31}
+  # 属性时序（T-21）：历史落库、聚合查询与保留清理
+  property-history:
+    # 是否写入属性历史（关闭后趋势图无新数据）
+    enabled: ${PROPERTY_HISTORY_ENABLED:true}
+    # 聚合查询时间窗跨度上限（天）
+    max-range-days: ${PROPERTY_HISTORY_MAX_RANGE_DAYS:31}
+    # 单次查询序列数上限（deviceIds × identifiers）
+    max-series: ${PROPERTY_HISTORY_MAX_SERIES:20}
+    # 单序列数据点上限（时间跨度 / 桶）
+    max-points: ${PROPERTY_HISTORY_MAX_POINTS:500}
+    # 历史保留天数（R5 门槛复核输入）
+    retention-days: ${PROPERTY_HISTORY_RETENTION_DAYS:30}
+    # 是否启用过期历史清理
+    cleanup-enabled: ${PROPERTY_HISTORY_CLEANUP_ENABLED:true}
+    # 清理巡检间隔（毫秒）
+    cleanup-interval-ms: ${PROPERTY_HISTORY_CLEANUP_INTERVAL_MS:3600000}
+    # 单批删除行数
+    cleanup-batch-size: ${PROPERTY_HISTORY_CLEANUP_BATCH_SIZE:1000}
+  # 可保存看板（T-21）
+  dashboard:
+    # 每用户看板数量上限
+    max-count: ${DASHBOARD_MAX_COUNT:20}
+    # 单看板面板数上限
+    max-panels: ${DASHBOARD_MAX_PANELS:12}
 
 # 日志配置
 logging:

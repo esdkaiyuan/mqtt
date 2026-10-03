@@ -9,6 +9,7 @@ import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
+import com.mqtt.cloud.service.PropertyHistoryService;
 import com.mqtt.cloud.service.RuleEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelInterpretService;
@@ -30,6 +31,9 @@ import java.util.Map;
  * 逐条隔离：单条消息的解析 / 写库异常只记 WARN 与 error 指标，不抛出、不中断本批其余消息、
  * 不进死信（死信只兜「落库失败」，解析产物可由后续上行自然覆盖）。因此本类<b>不开启事务</b>，
  * 让每条 upsert 独立提交，避免一条脏数据回滚整批。
+ * <p>
+ * 属性上报成功后依次挂四条旁路，均复用同一份归一化样本、各自 {@code try/catch} 隔离：
+ * T-16 影子收敛 → T-17 阈值告警 → T-19 消息规则 → T-21 属性历史（{@code appendHistory}）。
  */
 @Slf4j
 @Service
@@ -57,6 +61,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
     private final DeviceShadowService deviceShadowService;
     private final AlertEvaluationService alertEvaluationService;
     private final RuleEvaluationService ruleEvaluationService;
+    private final PropertyHistoryService propertyHistoryService;
     private final ThingModelInterpretMetrics metrics;
     private final ThingModelProperties properties;
     private final ObjectMapper objectMapper;
@@ -122,6 +127,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         List<String> applied = new ArrayList<>();
         List<AlertEvaluationService.PropertySample> samples = new ArrayList<>();
         List<RuleEvaluationService.PropertySample> ruleSamples = new ArrayList<>();
+        List<PropertyHistoryService.Sample> historySamples = new ArrayList<>();
         for (Map.Entry<String, JsonNode> entry : params.properties()) {
             String identifier = entry.getKey();
             ThingModelDefinition.PropertySpec spec = definition.properties().get(identifier);
@@ -140,6 +146,9 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
             applied.add(identifier);
             samples.add(new AlertEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
             ruleSamples.add(new RuleEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
+            // T-21：同一份归一化样本追加进历史列表，循环结束后批量落库（不额外解析）。
+            historySamples.add(new PropertyHistoryService.Sample(identifier, spec.type(), valueText,
+                    record.receivedAt()));
         }
         // T-16：上报收敛。回读权威库合并进影子 reported，异常只记 WARN，不影响本批其余消息。
         applyReported(device, applied);
@@ -147,6 +156,20 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         evaluateProperties(device, samples);
         // T-19：消息规则旁路，与影子 / 告警并列的第三处内部旁路，复用同一份归一化样本。
         evaluateRules(device, ruleSamples);
+        // T-21：属性历史旁路，复用同一份归一化样本，批量追加。
+        appendHistory(device, historySamples);
+    }
+
+    /** 属性历史旁路（T-21 设计文档 §4.4）；异常只记 WARN，不冒泡到解析链路。 */
+    private void appendHistory(Device device, List<PropertyHistoryService.Sample> samples) {
+        if (samples.isEmpty()) {
+            return;
+        }
+        try {
+            propertyHistoryService.append(device.getId(), samples);
+        } catch (Exception e) {
+            log.warn("属性历史写入失败，跳过本批 {} 条: deviceId={}", samples.size(), device.getId(), e);
+        }
     }
 
     /** 阈值告警旁路（T-17 设计文档 §8.5）；异常只记 WARN，不冒泡到解析链路。 */

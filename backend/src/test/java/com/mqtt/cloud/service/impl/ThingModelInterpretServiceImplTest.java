@@ -9,6 +9,7 @@ import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
+import com.mqtt.cloud.service.PropertyHistoryService;
 import com.mqtt.cloud.service.RuleEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
@@ -57,6 +58,7 @@ class ThingModelInterpretServiceImplTest {
     private DeviceShadowService deviceShadowService;
     private AlertEvaluationService alertEvaluationService;
     private RuleEvaluationService ruleEvaluationService;
+    private PropertyHistoryService propertyHistoryService;
     private ThingModelProperties properties;
     private SimpleMeterRegistry registry;
     private ThingModelInterpretServiceImpl service;
@@ -69,11 +71,12 @@ class ThingModelInterpretServiceImplTest {
         deviceShadowService = mock(DeviceShadowService.class);
         alertEvaluationService = mock(AlertEvaluationService.class);
         ruleEvaluationService = mock(RuleEvaluationService.class);
+        propertyHistoryService = mock(PropertyHistoryService.class);
         properties = new ThingModelProperties();
         registry = new SimpleMeterRegistry();
         service = new ThingModelInterpretServiceImpl(thingModelService, propertyLatestMapper,
                 eventRecordMapper, deviceShadowService, alertEvaluationService, ruleEvaluationService,
-                new ThingModelInterpretMetrics(registry), properties, new ObjectMapper());
+                propertyHistoryService, new ThingModelInterpretMetrics(registry), properties, new ObjectMapper());
     }
 
     @Test
@@ -365,6 +368,56 @@ class ThingModelInterpretServiceImplTest {
         // 规则评估异常不冒泡，属性 upsert 仍正常完成
         verify(propertyLatestMapper).upsertIfNewer(DEVICE_ID, "temperature", "double", "25.5", RECEIVED_AT);
         assertThat(count("property")).isEqualTo(1);
+    }
+
+    // ---------- T-21 属性历史旁路 ----------
+
+    @Test
+    void interpret_should_append_property_history_for_properties() {
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWithTemperature());
+
+        service.interpret(List.of(dataEvent("{\"method\":\"thing.event.property.post\",\"params\":{\"temperature\":25.5}}")));
+
+        verify(propertyHistoryService).append(eq(DEVICE_ID), argThat(samples ->
+                samples.size() == 1
+                        && "temperature".equals(samples.get(0).identifier())
+                        && "double".equals(samples.get(0).dataType())
+                        && "25.5".equals(samples.get(0).valueText())
+                        && RECEIVED_AT.equals(samples.get(0).reportedAt())));
+    }
+
+    @Test
+    void interpret_should_isolate_property_history_failure() {
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWithTemperature());
+        doThrow(new RuntimeException("history down"))
+                .when(propertyHistoryService).append(any(), any());
+
+        service.interpret(List.of(dataEvent("{\"method\":\"thing.event.property.post\",\"params\":{\"temperature\":25.5}}")));
+
+        // 属性历史写入异常不冒泡，属性 upsert 仍正常完成
+        verify(propertyLatestMapper).upsertIfNewer(DEVICE_ID, "temperature", "double", "25.5", RECEIVED_AT);
+        assertThat(count("property")).isEqualTo(1);
+    }
+
+    @Test
+    void interpret_should_skip_property_history_when_no_property_applied() {
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWithTemperature());
+
+        service.interpret(List.of(dataEvent("{\"method\":\"thing.event.property.post\",\"params\":{\"humidity\":60}}")));
+
+        verifyNoInteractions(propertyHistoryService);
+    }
+
+    @Test
+    void interpret_should_not_append_property_history_for_events() {
+        ThingModelDefinition definition = new ThingModelDefinition(1, Map.of(),
+                Map.of("fall", new ThingModelDefinition.EventSpec("fall", "alert")), Map.of());
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(definition);
+
+        service.interpret(List.of(dataEvent("{\"method\":\"thing.event.post\","
+                + "\"params\":{\"eventId\":\"fall\",\"value\":{\"level\":3}}}")));
+
+        verifyNoInteractions(propertyHistoryService);
     }
 
     private ThingModelDefinition modelWithTemperature() {
