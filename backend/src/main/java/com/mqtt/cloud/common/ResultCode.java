@@ -76,7 +76,10 @@ public enum ResultCode {
     RULE_INVALID(6219, "规则配置非法", HttpStatus.BAD_REQUEST),
     RULE_ACTION_UNSUPPORTED(6220, "不支持的规则动作类型", HttpStatus.BAD_REQUEST),
     RULE_EXECUTION_NOT_FOUND(6221, "规则执行记录不存在", HttpStatus.NOT_FOUND),
-    RULE_LIMIT_EXCEEDED(6222, "规则数量超出上限", HttpStatus.BAD_REQUEST);
+    RULE_LIMIT_EXCEEDED(6222, "规则数量超出上限", HttpStatus.BAD_REQUEST),
+
+    DEVICE_LOG_RANGE_INVALID(6223, "日志查询时间范围非法或超出上限", HttpStatus.BAD_REQUEST),
+    DEVICE_LOG_TYPE_UNSUPPORTED(6224, "不支持的日志类型", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;
