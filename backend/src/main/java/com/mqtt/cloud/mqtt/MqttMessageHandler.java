@@ -39,10 +39,14 @@ public class MqttMessageHandler implements MqttCallback {
     private static final String TOPIC_DATA = "data";
     private static final String TOPIC_HEARTBEAT = "heartbeat";
     private static final String TOPIC_LWT = "lwt";
+    /** T-22：设备 OTA 升级进度回传（{@code device/{key}/ota}）。 */
+    private static final String TOPIC_OTA = "ota";
 
     private static final String EVENT_DATA = "device.data";
     private static final String EVENT_HEARTBEAT = "device.heartbeat";
     private static final String EVENT_LWT = "device.lwt";
+    /** T-22：OTA 进度 Webhook 事件类型。 */
+    private static final String EVENT_OTA = "device.ota";
 
     private final MqttClientManager mqttClientManager;
     private final MqttProperties mqttProperties;
@@ -71,6 +75,8 @@ public class MqttMessageHandler implements MqttCallback {
         topics.put("$share/" + group + "/device/+/lwt", 1);
         // 命令回执：设备对下行命令的应答，落库后由 IngestDispatcher 旁路更新命令状态
         topics.put("$share/" + group + "/device/+/reply", 1);
+        // OTA 升级进度回传（T-22）：落库后由 IngestDispatcher 第 6 路旁路推进记录状态机
+        topics.put("$share/" + group + "/device/+/ota", 1);
         mqttClientManager.register(this, topics);
     }
 
@@ -131,7 +137,8 @@ public class MqttMessageHandler implements MqttCallback {
      */
     private void refreshDeviceStatus(Long deviceId, String messageType) {
         switch (messageType) {
-            case TOPIC_DATA, TOPIC_HEARTBEAT -> deviceService.updateDeviceStatus(deviceId, DeviceStatusValue.ONLINE);
+            case TOPIC_DATA, TOPIC_HEARTBEAT, TOPIC_OTA ->
+                    deviceService.updateDeviceStatus(deviceId, DeviceStatusValue.ONLINE);
             case TOPIC_LWT -> deviceService.updateDeviceStatus(deviceId, DeviceStatusValue.OFFLINE);
             default -> log.debug("无需刷新设备状态的消息类型: {}", messageType);
         }
@@ -141,6 +148,7 @@ public class MqttMessageHandler implements MqttCallback {
         return switch (messageType) {
             case TOPIC_HEARTBEAT -> EVENT_HEARTBEAT;
             case TOPIC_LWT -> EVENT_LWT;
+            case TOPIC_OTA -> EVENT_OTA;
             default -> EVENT_DATA;
         };
     }

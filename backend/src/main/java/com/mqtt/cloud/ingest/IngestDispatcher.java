@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.WebhookConfig;
 import com.mqtt.cloud.service.CommandReplyService;
+import com.mqtt.cloud.service.OtaProgressService;
 import com.mqtt.cloud.service.RealtimeBroadcaster;
 import com.mqtt.cloud.service.ShadowDeliveryService;
 import com.mqtt.cloud.service.ThingModelInterpretService;
@@ -25,6 +26,7 @@ import java.util.stream.Collectors;
  * 实时推送经 {@link RealtimeBroadcaster} 出口，多副本时走 Redis 广播；
  * Webhook 配置按整批涉及用户一次性取回，替代原先的逐事件查询。
  * 物模型解析作为第三路 fan-out、命令回执作为第四路 fan-out、上线补发作为第五路 fan-out，
+ * OTA 进度回传作为第六路 fan-out（T-22），
  * 逐条隔离失败，绝不让异常冒泡（否则 worker 会整批重试导致消息重复落库）。
  */
 @Slf4j
@@ -34,10 +36,14 @@ public class IngestDispatcher {
 
     private static final String TOPIC_HEARTBEAT = "heartbeat";
     private static final String TOPIC_LWT = "lwt";
+    /** T-22：OTA 升级进度回传。 */
+    private static final String TOPIC_OTA = "ota";
 
     private static final String EVENT_DATA = "device.data";
     private static final String EVENT_HEARTBEAT = "device.heartbeat";
     private static final String EVENT_LWT = "device.lwt";
+    /** T-22：OTA 进度 Webhook 事件类型。 */
+    private static final String EVENT_OTA = "device.ota";
 
     private static final int ACTIVE = 1;
 
@@ -47,6 +53,7 @@ public class IngestDispatcher {
     private final ThingModelInterpretService thingModelInterpretService;
     private final CommandReplyService commandReplyService;
     private final ShadowDeliveryService shadowDeliveryService;
+    private final OtaProgressService otaProgressService;
 
     public void dispatch(List<ResolvedEvent> events) {
         if (events.isEmpty()) {
@@ -83,6 +90,11 @@ public class IngestDispatcher {
         } catch (Exception e) {
             log.warn("影子补发分发失败，跳过本批补发: size={}", events.size(), e);
         }
+        try {
+            otaProgressService.handle(events);
+        } catch (Exception e) {
+            log.warn("OTA 进度回传分发失败，跳过本批: size={}", events.size(), e);
+        }
     }
 
     /** 整批一次查询：取回本批事件涉及用户的全部启用中 Webhook，按用户分组。 */
@@ -117,6 +129,7 @@ public class IngestDispatcher {
         return switch (messageType) {
             case TOPIC_HEARTBEAT -> EVENT_HEARTBEAT;
             case TOPIC_LWT -> EVENT_LWT;
+            case TOPIC_OTA -> EVENT_OTA;
             default -> EVENT_DATA;
         };
     }

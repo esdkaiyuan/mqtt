@@ -16,6 +16,13 @@ public class BatchTargetRequest {
     /** 手选设备 ID 集合，可空。 */
     private List<Long> deviceIds;
 
+    /**
+     * 产品 ID 集合（该产品下全部设备），可空。
+     * <p>
+     * T-22 追加：用于 OTA 按产品批次升级。为空即跳过，既有 {@code deviceIds/groupIds/tagIds} 行为不变。
+     */
+    private List<Long> productIds;
+
     /** 分组 ID 集合（每个分组均含其所有子分组），可空。 */
     private List<Long> groupIds;
 

@@ -29,6 +29,16 @@ public interface DeviceCommandService {
     String SOURCE_OPEN_API = "OPEN_API";
     /** 来源：消息规则动作（T-19）。仅用于区分来源，不改既有语义。 */
     String SOURCE_RULE = "RULE";
+    /** 来源：OTA 固件升级（T-22）。仅用于区分来源，不改既有语义。 */
+    String SOURCE_OTA = "OTA";
+
+    /**
+     * 平台保留服务标识（T-22）：OTA 固件升级。
+     * <p>
+     * 该标识不要求在产品物模型中声明，{@code DeviceCommandServiceImpl#validateService} 对其放行；
+     * 下行 method 仍由既有 {@code buildPayload} 生成 {@code thing.service.ota_upgrade}。
+     */
+    String SERVICE_OTA_UPGRADE = "ota_upgrade";
 
     /** 可下发能力：供前端生成动态表单；无物模型时 {@code version=0} 且两个集合为空。 */
     CommandCapability getCapability(Long productId);

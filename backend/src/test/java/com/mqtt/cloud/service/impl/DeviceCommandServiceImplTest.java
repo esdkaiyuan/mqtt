@@ -49,6 +49,8 @@ import static org.mockito.Mockito.when;
  * <p>
  * T-16 扩展：属性设置离线入队（{@code QUEUED}）且不发布、在线发布异常转队列不抛错、
  * 期望值写入影子 {@code desired}、服务类型不受离线入队影响、补发成功/退避/次数耗尽、跨设备巡检去重。
+ * <p>
+ * T-22 扩展：平台保留服务 {@code ota_upgrade} 免物模型声明即可下发，非保留的未声明服务仍拒绝。
  * 回执驱动状态更新的部分见 {@code CommandReplyServiceImplTest}。
  */
 class DeviceCommandServiceImplTest {
@@ -234,6 +236,40 @@ class DeviceCommandServiceImplTest {
         verify(commandMapper).markFailed(anyString(), anyString(), any());
         verify(commandMapper, never()).markSent(anyString(), any());
         verify(commandMapper, never()).markQueued(anyString(), any(), any());
+    }
+
+    // ---------- T-22：平台保留服务白名单 ----------
+
+    /** {@code ota_upgrade} 未在物模型声明也应放行，下行 method 仍为 {@code thing.service.ota_upgrade}。 */
+    @Test
+    void invoke_reserved_ota_service_should_publish_without_model_declaration() throws Exception {
+        DeviceCommandService.CommandInvoke command = new DeviceCommandService.CommandInvoke(
+                DEVICE_ID, PRODUCT_ID, "service", DeviceCommandService.SERVICE_OTA_UPGRADE,
+                "{\"url\":\"http://localhost/firmware/3/1.0.0/fw.bin\",\"version\":\"1.0.0\"}",
+                "async", DeviceCommandService.SOURCE_OTA, 1L);
+
+        DeviceCommandRecord result = service.invoke(command);
+
+        assertThat(result.getStatus()).isEqualTo("SENT");
+        assertThat(result.getIdentifier()).isEqualTo(DeviceCommandService.SERVICE_OTA_UPGRADE);
+        assertThat(result.getSource()).isEqualTo(DeviceCommandService.SOURCE_OTA);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(mqttClientManager).publish(anyString(), payload.capture(), eq(1));
+        JsonNode body = new ObjectMapper().readTree(payload.getValue());
+        assertThat(body.get("method").asText()).isEqualTo("thing.service.ota_upgrade");
+        assertThat(body.get("params").get("url").asText()).isEqualTo("http://localhost/firmware/3/1.0.0/fw.bin");
+    }
+
+    /** 白名单只放行保留标识：同样未声明的其它服务名仍拒绝。 */
+    @Test
+    void invoke_should_reject_non_reserved_service_with_undeclared_params() {
+        DeviceCommandService.CommandInvoke command = new DeviceCommandService.CommandInvoke(
+                DEVICE_ID, PRODUCT_ID, "service", "firmware_upgrade",
+                "{\"url\":\"http://localhost/fw.bin\"}", "async", "CONSOLE", 1L);
+
+        assertCode(ResultCode.COMMAND_IDENTIFIER_UNKNOWN, command);
+        verify(commandMapper, never()).insert(any(DeviceCommandRecord.class));
     }
 
     // ---------- T-16：属性设置离线入队 ----------

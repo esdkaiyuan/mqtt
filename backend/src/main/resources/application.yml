@@ -70,6 +70,12 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: Asia/Shanghai
 
+  # 文件上传（T-22 固件包）：放宽上传上限，须不小于 app.ota.max-file-size（默认 32MB）
+  servlet:
+    multipart:
+      max-file-size: ${OTA_MAX_FILE_SIZE:33554432}
+      max-request-size: ${OTA_MAX_REQUEST_SIZE:34603008}
+
 # MyBatis Plus配置
 mybatis-plus:
   configuration:
@@ -275,6 +281,24 @@ app:
     max-count: ${DASHBOARD_MAX_COUNT:20}
     # 单看板面板数上限
     max-panels: ${DASHBOARD_MAX_PANELS:12}
+  # OTA 固件升级（T-22）：固件上传、批次下发与进度回传
+  ota:
+    # 升级总开关；置 false 时不下发、不巡检（固件包上传与任务创建仍可用）
+    enabled: ${OTA_ENABLED:true}
+    # 固件包存储根目录（容器内路径，需可写）
+    storage-dir: ${OTA_STORAGE_DIR:/var/lib/mqtt/ota}
+    # 固件下载地址前缀；下发 url = {public-base-url}/{productId}/{version}/{fileName}
+    public-base-url: ${OTA_PUBLIC_BASE_URL:http://localhost/firmware}
+    # 单固件包大小上限（字节），与 spring.servlet.multipart.max-file-size 对齐
+    max-file-size: ${OTA_MAX_FILE_SIZE:33554432}
+    # 单任务目标设备数上限
+    task-max-devices: ${OTA_TASK_MAX_DEVICES:500}
+    # 下发巡检间隔（毫秒），0 关闭
+    dispatch-interval-ms: ${OTA_DISPATCH_INTERVAL_MS:60000}
+    # 单轮下发批量上限
+    dispatch-batch-size: ${OTA_DISPATCH_BATCH_SIZE:200}
+    # 任务超时时长（毫秒）；超过该时长仍无终态回传的记录置 TIMEOUT
+    task-timeout-ms: ${OTA_TASK_TIMEOUT_MS:86400000}
 
 # 日志配置
 logging:

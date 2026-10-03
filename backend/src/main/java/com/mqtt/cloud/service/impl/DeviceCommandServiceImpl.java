@@ -73,6 +73,13 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
     private static final int DEVICE_ENABLED = 1;
     private static final int ERROR_MESSAGE_MAX = 255;
 
+    /**
+     * 平台保留服务（T-22）：不要求在产品物模型显式声明，入参由调用方（OTA 服务）自行构造并校验。
+     * <p>
+     * 已显式限定为常量白名单，不放开任意服务。
+     */
+    private static final Set<String> RESERVED_SERVICES = Set.of(DeviceCommandService.SERVICE_OTA_UPGRADE);
+
     private final DeviceService deviceService;
     private final ProductService productService;
     private final DeviceAccessGuard accessGuard;
@@ -451,6 +458,9 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
     }
 
     private void validateService(ThingModelDefinition definition, String identifier, JsonNode params) {
+        if (RESERVED_SERVICES.contains(identifier)) {
+            return;
+        }
         ThingModelDefinition.ServiceSpec service = definition.services().get(identifier);
         if (service == null) {
             throw new BusinessException(ResultCode.COMMAND_IDENTIFIER_UNKNOWN, "服务未定义: " + identifier);

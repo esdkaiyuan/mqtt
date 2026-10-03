@@ -51,11 +51,13 @@ class MqttMessageHandlerTest {
                 "$share/mqtt-backend/device/+/data",
                 "$share/mqtt-backend/device/+/heartbeat",
                 "$share/mqtt-backend/device/+/lwt",
-                "$share/mqtt-backend/device/+/reply");
+                "$share/mqtt-backend/device/+/reply",
+                "$share/mqtt-backend/device/+/ota");
         assertThat(topics.get("$share/mqtt-backend/device/+/data")).isEqualTo(1);
         assertThat(topics.get("$share/mqtt-backend/device/+/heartbeat")).isEqualTo(0);
         assertThat(topics.get("$share/mqtt-backend/device/+/lwt")).isEqualTo(1);
         assertThat(topics.get("$share/mqtt-backend/device/+/reply")).isEqualTo(1);
+        assertThat(topics.get("$share/mqtt-backend/device/+/ota")).isEqualTo(1);
     }
 
     @Test
@@ -66,6 +68,7 @@ class MqttMessageHandlerTest {
                 "$share/replica-set-a/device/+/data",
                 "$share/replica-set-a/device/+/heartbeat",
                 "$share/replica-set-a/device/+/lwt",
-                "$share/replica-set-a/device/+/reply");
+                "$share/replica-set-a/device/+/reply",
+                "$share/replica-set-a/device/+/ota");
     }
 }

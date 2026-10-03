@@ -1,5 +1,6 @@
 package com.mqtt.cloud.service.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.dto.request.BatchAssignRequest;
@@ -26,7 +27,7 @@ import java.util.Set;
 /**
  * 设备批量操作服务实现（T-18 设计文档 §8）。
  * <p>
- * 目标集合解析见 {@link #resolveTarget}：手选 ∪ 分组（含子分组）∪ 标签，去重后按当前用户过滤；
+ * 目标集合解析见 {@link #resolveTarget}：手选 ∪ 产品 ∪ 分组（含子分组）∪ 标签，去重后按当前用户过滤；
  * 逐台操作相互隔离，单台失败只记该台 {@code error}，不阻断整批。
  */
 @Slf4j
@@ -138,6 +139,15 @@ public class DeviceBatchServiceImpl implements DeviceBatchService {
         Set<Long> deviceIds = new HashSet<>();
         if (target.getDeviceIds() != null) {
             target.getDeviceIds().stream().filter(Objects::nonNull).forEach(deviceIds::add);
+        }
+
+        // 产品维度（T-22）：取该产品下当前用户的设备；为空即跳过，既有三维行为完全不变
+        List<Long> productIds = distinct(target.getProductIds());
+        if (!productIds.isEmpty()) {
+            deviceService.list(Wrappers.<Device>lambdaQuery()
+                            .in(Device::getProductId, productIds)
+                            .eq(Device::getOwnerId, userId))
+                    .forEach(device -> deviceIds.add(device.getId()));
         }
 
         List<Long> groupIds = distinct(target.getGroupIds());
