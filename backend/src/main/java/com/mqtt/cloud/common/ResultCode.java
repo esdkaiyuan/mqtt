@@ -79,7 +79,14 @@ public enum ResultCode {
     RULE_LIMIT_EXCEEDED(6222, "规则数量超出上限", HttpStatus.BAD_REQUEST),
 
     DEVICE_LOG_RANGE_INVALID(6223, "日志查询时间范围非法或超出上限", HttpStatus.BAD_REQUEST),
-    DEVICE_LOG_TYPE_UNSUPPORTED(6224, "不支持的日志类型", HttpStatus.BAD_REQUEST);
+    DEVICE_LOG_TYPE_UNSUPPORTED(6224, "不支持的日志类型", HttpStatus.BAD_REQUEST),
+
+    PROPERTY_HISTORY_RANGE_INVALID(6225, "属性时序查询时间范围非法或超出上限", HttpStatus.BAD_REQUEST),
+    PROPERTY_HISTORY_IDENTIFIER_UNSUPPORTED(6226, "属性标识符不存在或未在物模型中定义", HttpStatus.BAD_REQUEST),
+    PROPERTY_HISTORY_BUCKET_UNSUPPORTED(6227, "不支持的时间桶粒度或数据点过多", HttpStatus.BAD_REQUEST),
+    DASHBOARD_NOT_FOUND(6228, "看板不存在", HttpStatus.NOT_FOUND),
+    DASHBOARD_INVALID(6229, "看板配置非法", HttpStatus.BAD_REQUEST),
+    DASHBOARD_LIMIT_EXCEEDED(6230, "看板数量超出上限", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;
