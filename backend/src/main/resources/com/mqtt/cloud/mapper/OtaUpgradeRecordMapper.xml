@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.OtaUpgradeRecordMapper">
+
+    <!-- T-22 设计文档 §7.1：补投候选查询与活跃记录查询。
+         selectDispatchCandidates 命中 idx_status（status 等值 + 主键升序）；
+         selectLatestActiveByDevice 命中 idx_device（device_id 等值 + 主键降序）。 -->
+
+    <sql id="recordColumns">
+        id, task_id, device_id, firmware_id, version, status, progress, message,
+        command_id, dispatched_at, last_report_at, created_at, updated_at
+    </sql>
+
+    <!-- 补投候选：仅取仍待下发（status = 'PENDING'）且设备在线的记录，按主键升序分批。
+         device.status = 'ONLINE' 与 DeviceStatusValue.ONLINE 一致；device 无逻辑删除列，不加 deleted 条件。 -->
+    <select id="selectDispatchCandidates" resultType="com.mqtt.cloud.entity.OtaUpgradeRecord">
+        SELECT <include refid="recordColumns"/>
+        FROM ota_upgrade_record r
+        JOIN device d ON d.id = r.device_id
+        WHERE r.status = #{status} AND d.status = 'ONLINE'
+        ORDER BY r.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 设备最近一条进行中记录：上行进度不带任务标识，以此归位。 -->
+    <select id="selectLatestActiveByDevice" resultType="com.mqtt.cloud.entity.OtaUpgradeRecord">
+        SELECT <include refid="recordColumns"/>
+        FROM ota_upgrade_record
+        WHERE device_id = #{deviceId}
+          AND status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING')
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+</mapper>

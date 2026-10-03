@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.OtaUpgradeTaskMapper">
+
+    <!-- T-22 设计文档 §7.2：按 ota_upgrade_record 重算任务计数与状态，避免逐条增减漂移。
+         目标方言为 MySQL 8，故采用 UPDATE ... JOIN (子查询) ... SET 形式（MySQL 不支持 UPDATE ... SET ... FROM (...)）。
+         子查询仅依赖 ota_upgrade_record 的 task_id，命中 idx_task_status。 -->
+
+    <update id="refreshCounters">
+        UPDATE ota_upgrade_task t
+        JOIN (
+            SELECT task_id,
+                   COUNT(*) AS total_count,
+                   SUM(CASE WHEN status &lt;&gt; 'PENDING' THEN 1 ELSE 0 END) AS dispatched_count,
+                   SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+                   SUM(CASE WHEN status IN ('FAILED', 'TIMEOUT') THEN 1 ELSE 0 END) AS failed_count,
+                   CASE
+                       WHEN SUM(CASE WHEN status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING') THEN 1 ELSE 0 END) &gt; 0 THEN 'RUNNING'
+                       WHEN SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) = COUNT(*) THEN 'SUCCESS'
+                       WHEN SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) = 0 THEN 'FAILED'
+                       ELSE 'PARTIAL'
+                   END AS status
+            FROM ota_upgrade_record
+            WHERE task_id = #{taskId}
+            GROUP BY task_id
+        ) agg ON t.id = agg.task_id
+        SET t.total_count = agg.total_count,
+            t.dispatched_count = agg.dispatched_count,
+            t.success_count = agg.success_count,
+            t.failed_count = agg.failed_count,
+            t.status = agg.status,
+            t.updated_at = CURRENT_TIMESTAMP(3)
+        WHERE t.id = #{taskId}
+    </update>
+
+</mapper>
