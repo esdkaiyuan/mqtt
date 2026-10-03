@@ -124,6 +124,25 @@
           <if test="dto.status != null and dto.status != ''">
             AND d.status = #{dto.status}
           </if>
+          <!-- T-18：分组过滤（含子分组）。dto.groupIds 由控制器按归属解析后填充（含分组自身与所有后代）。 -->
+          <if test="dto.groupIds != null and dto.groupIds.size() > 0">
+            AND EXISTS (
+                SELECT 1 FROM device_group_relation gr
+                WHERE gr.device_id = d.id
+                  AND gr.group_id IN
+                <foreach collection="dto.groupIds" item="gid" open="(" separator="," close=")">
+                    #{gid}
+                </foreach>
+            )
+          </if>
+          <!-- T-18：标签过滤。 -->
+          <if test="dto.tagId != null">
+            AND EXISTS (
+                SELECT 1 FROM device_tag_relation tr
+                WHERE tr.device_id = d.id
+                  AND tr.tag_id = #{dto.tagId}
+            )
+          </if>
         ORDER BY d.created_at DESC
     </select>
 

@@ -20,9 +20,12 @@ import com.mqtt.cloud.filter.UserPrincipal;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceDataService;
+import com.mqtt.cloud.service.DeviceGroupService;
+import com.mqtt.cloud.service.DeviceGroupTagAssembler;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
+import com.mqtt.cloud.service.DeviceTagService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -47,19 +50,28 @@ public class DeviceController {
     private final DeviceDataService deviceDataService;
     private final DeviceCommandService deviceCommandService;
     private final DeviceShadowService deviceShadowService;
+    private final DeviceGroupService deviceGroupService;
+    private final DeviceTagService deviceTagService;
+    private final DeviceGroupTagAssembler assembler;
 
     public DeviceController(DeviceService deviceService,
                             DeviceStatusHistoryService deviceStatusHistoryService,
                             DeviceCredentialService deviceCredentialService,
                             DeviceDataService deviceDataService,
                             DeviceCommandService deviceCommandService,
-                            DeviceShadowService deviceShadowService) {
+                            DeviceShadowService deviceShadowService,
+                            DeviceGroupService deviceGroupService,
+                            DeviceTagService deviceTagService,
+                            DeviceGroupTagAssembler assembler) {
         this.deviceService = deviceService;
         this.deviceStatusHistoryService = deviceStatusHistoryService;
         this.deviceCredentialService = deviceCredentialService;
         this.deviceDataService = deviceDataService;
         this.deviceCommandService = deviceCommandService;
         this.deviceShadowService = deviceShadowService;
+        this.deviceGroupService = deviceGroupService;
+        this.deviceTagService = deviceTagService;
+        this.assembler = assembler;
     }
 
     @Operation(summary = "创建设备", description = "为当前用户创建设备，初始状态为 INACTIVE；"
@@ -85,14 +97,24 @@ public class DeviceController {
         return Result.success(deviceCredentialService.exportCredentials());
     }
 
-    @Operation(summary = "获取设备列表", description = "分页查询设备；ADMIN 可见全部设备，其他角色仅可见自己名下设备")
+    @Operation(summary = "获取设备列表", description = "分页查询设备；ADMIN 可见全部设备，其他角色仅可见自己名下设备。"
+            + "支持 groupId（含所有子分组）/ tagId 过滤；结果批量装配 groups / tags")
     @GetMapping
     public Result<IPage<Device>> getDevices(DeviceQueryDTO dto) {
+        Long userId = SecurityUtils.requireUserId();
         // ADMIN 可查看全部设备，其他角色仅能查看自己的设备
         if (!SecurityUtils.isAdmin()) {
-            dto.setOwnerId(SecurityUtils.requireUserId());
+            dto.setOwnerId(userId);
         }
-        IPage<Device> page = deviceService.getDevices(SecurityUtils.requireUserId(), dto);
+        // 分组 / 标签过滤：客户端只传 groupId / tagId，服务端校验归属后解析为内部集合，避免越权
+        if (dto.getGroupId() != null) {
+            dto.setGroupIds(deviceGroupService.resolveFilterGroupIds(userId, dto.getGroupId()));
+        }
+        if (dto.getTagId() != null) {
+            deviceTagService.getOwned(userId, dto.getTagId());
+        }
+        IPage<Device> page = deviceService.getDevices(userId, dto);
+        assembler.assemble(page.getRecords());
         return Result.success(page);
     }
 
