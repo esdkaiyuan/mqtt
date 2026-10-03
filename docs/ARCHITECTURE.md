@@ -1,6 +1,6 @@
 # MQTT云平台 - 系统架构文档
 
-> 版本：v1.11　最后更新：2026-10-02
+> 版本：v1.12　最后更新：2026-10-03
 > 适用范围：`MQTT自建站点` 主项目（Spring Boot + Vue 3 + EMQX + MySQL + Redis）
 
 ---
@@ -103,7 +103,7 @@ flowchart TB
 
 ```
 com.mqtt.cloud
-├── controller/     # 14 个控制器（含 internal/ 的 EMQX 回调），仅做参数校验与编排，统一返回 Result<T>
+├── controller/     # 17 个控制器（含 internal/ 的 EMQX 回调），仅做参数校验与编排，统一返回 Result<T>
 ├── service/        # 业务接口 + impl/ 实现，事务边界所在
 ├── mapper/         # MyBatis-Plus Mapper（注解 SQL + Wrapper）
 ├── entity/         # 与表一一对应的实体（含 Product、Device）
@@ -122,7 +122,7 @@ com.mqtt.cloud
 | 控制器 | 前缀 | 职责 |
 |--------|------|------|
 | `AuthController` | `/auth` | 注册、登录、登出、当前用户、修改密码 |
-| `DeviceController` | `/devices` | 设备 CRUD、状态查询、在线列表、禁用/启用（`enabled`，归属校验）；命令能力查询 / 下发 / 命令记录分页（T-15，归属校验 + `DeviceAccessGuard` 准入）；影子查询（`GET .../shadow`）与期望值写入（`PUT .../shadow/desired`，T-16） |
+| `DeviceController` | `/devices` | 设备 CRUD、状态查询、在线列表、禁用/启用（`enabled`，归属校验）；命令能力查询 / 下发 / 命令记录分页（T-15，归属校验 + `DeviceAccessGuard` 准入）；影子查询（`GET .../shadow`）与期望值写入（`PUT .../shadow/desired`，T-16）；列表支持 `groupId`（含子分组）/ `tagId` 过滤并装配分组 / 标签摘要（T-18） |
 | `MessageController` | `/messages` | 发布消息、最近消息 |
 | `HistoryController` | `/history` | 按设备/时间/Topic 分页查询历史 |
 | `AnalyticsController` | `/analytics` | 消息量趋势等统计 |
@@ -135,8 +135,11 @@ com.mqtt.cloud
 | `EmqxAuthController` | `/internal/emqx` | EMQX HTTP 认证回调（内部，须 `X-Internal-Token`） |
 | `EmqxAclController` | `/internal/emqx` | EMQX HTTP 授权回调（内部，须 `X-Internal-Token`） |
 | `AlertController` | `/alerts` | 告警中心控制台（T-17）：规则 CRUD（`/alerts/rules`，按 `sourceType`/`enabled` 过滤）、告警记录分页与详情、确认（`/ack`）与人工恢复（`/recover`）、未读数（`/unread-count`）与最近活动告警（`/recent`），全部按登录用户隔离 |
+| `DeviceGroupController` | `/device-groups` | 设备分组控制台（T-18）：分组树（含 `children`/`deviceCount`）/ 平铺列表 / 创建 / 详情 / 更新（重命名 / 描述 / 排序 / 移动父节点）/ 删除（仅空分组）/ 分组内设备分页（含后代）/ 单台或批量加入与移出，全部按登录用户隔离、越权 `403` |
+| `DeviceTagController` | `/device-tags` | 设备标签控制台（T-18）：标签列表 / 创建 / 详情 / 更新 / 删除（自动解除关联）/ 标签内设备分页 / 单台或批量打标与去标，全部按登录用户隔离、越权 `403` |
+| `DeviceBatchController` | `/devices/batch` | 设备批量操作（T-18）：批量下发命令（强制异步，逐台隔离）/ 批量启用 / 批量禁用（含踢线）/ 批量加入或移出分组 / 批量打标或去标；目标集合由「手选设备 ∪ 分组（含子分组）∪ 标签」去重并按用户二次过滤 |
 
-Swagger 分组共 12 组（认证 / 产品 / 设备 / 消息 / 历史 / 统计 / API密钥 / Webhook / 外部API / 实时数据 / 健康检查 / 告警中心），访问 `/api/swagger-ui.html`；`/internal/**` 为容器内部回调，不纳入 Swagger。
+Swagger 分组共 15 组（认证 / 产品 / 设备 / 消息 / 历史 / 统计 / API密钥 / Webhook / 外部API / 实时数据 / 健康检查 / 告警中心 / 设备分组 / 设备标签 / 设备批量操作），访问 `/api/swagger-ui.html`；`/internal/**` 为容器内部回调，不纳入 Swagger。
 
 ### 4.3 关键组件
 

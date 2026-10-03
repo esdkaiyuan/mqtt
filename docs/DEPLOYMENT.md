@@ -683,6 +683,56 @@ WHERE r.deleted = 1 GROUP BY r.id, r.name;
 - **`6207`~`6211`**：`6207` 规则不存在 / `6208` 规则配置非法 / `6209` 告警记录不存在 / `6210` 状态不允许该操作（如对已恢复告警再确认 / 恢复）/ `6211` 不支持的来源类型；规则与告警越权访问统一返回 `403`。
 - **顶栏角标不更新**：未读数由前端 `useAlertUnreadCountQuery` 每 30s 轮询；确认登录用户与告警归属一致（告警按用户隔离）。
 
+### 9.13 分组与标签运维（T-18）
+
+**迁移 `V8__device_group_and_tag.sql`**：新建 `device_group`（自引用树，`parent_id` 为 `NULL` 表示根分组）、`device_tag`、`device_group_relation` / `device_tag_relation`（两张多对多关联表）共四张表。迁移**只加表、不改既有表**，可安全回滚应用版本（回滚后新旧表共存，旧代码忽略新表）。分组 / 标签为**逻辑删除**（`deleted` 标记），关联表为**物理行**（去关联即删行）。重建后端即触发：
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：Flyway schema history 出现 V8，且四张分组/标签表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
+  -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; \
+      SHOW TABLES LIKE 'device_group%'; SHOW TABLES LIKE 'device_tag%';"
+```
+
+**无新增配置块**：本任务**不新增任何环境变量**。分组深度上限（`MAX_DEPTH=5`，根为 1）与批量上限（`MAX_BATCH_SIZE=500`）以服务常量固化在 `DeviceGroupServiceImpl` / `DeviceBatchServiceImpl`，避免过度配置化；若后续需按部署调参，再抽 `app.device.group.*`。
+
+**分组筛选含后代**：「按分组筛选设备」与「分组内设备分页」均**包含所有后代分组**，由 `DeviceGroupMapper.selectDescendantIds` 的 **MySQL 8 递归 CTE**（`WITH RECURSIVE`）实现。
+
+> **MySQL 5.7 降级说明**：递归 CTE 需 MySQL 8.0+。本项目编排固定 `mysql:8.0`，无需降级。若目标环境为 MySQL 5.7（不支持 CTE），改用应用层降级方案：一次性取该用户全部分组，在内存中 BFS 求后代（分组数量级为百，成本可忽略），并在 `DeviceGroupServiceImpl` 内以同等入参签名替换 Mapper 调用，其余逻辑不变。
+
+**批量操作语义**：目标集合由「手选设备 ID ∪ 分组（含子分组）设备 ∪ 标签设备」**去重并集**得到，并在服务端按当前用户**二次过滤**（他人设备被剔除）。逐台操作**相互隔离**，单台失败只记该台 `error`、不阻断其余；批量下发命令**强制异步**（传入 `callType` 被忽略），避免 500 台同步等待回执造成请求长挂。批量关联使用 `INSERT IGNORE`，天然幂等。
+
+**分组 / 标签排查**：
+
+```sql
+-- 某用户的完整分组树（含逻辑删除标记，deleted=0 为有效）
+SELECT id, parent_id, name, sort_order, deleted FROM device_group
+WHERE user_id = <userId> ORDER BY parent_id, sort_order;
+-- 某分组及其所有后代（等价于后端递归 CTE）
+WITH RECURSIVE sub AS (
+  SELECT id FROM device_group WHERE id = <groupId> AND user_id = <userId> AND deleted = 0
+  UNION ALL
+  SELECT g.id FROM device_group g JOIN sub ON g.parent_id = sub.id
+  WHERE g.user_id = <userId> AND g.deleted = 0
+) SELECT id FROM sub;
+-- 分组关联设备数（判定能否删除：子分组数=0 且关联设备数=0 才可删）
+SELECT COUNT(*) AS child_count FROM device_group WHERE parent_id = <groupId> AND deleted = 0;
+SELECT COUNT(*) AS device_count FROM device_group_relation WHERE group_id = <groupId>;
+-- 某用户标签
+SELECT id, name, color, deleted FROM device_tag WHERE user_id = <userId>;
+```
+
+**常见排障**：
+
+- **`6212`（`DEVICE_GROUP_NOT_FOUND`）**：分组不存在或不属于当前用户；创建 / 移动时的父分组须为本人未删除分组。
+- **`6213`（`DEVICE_GROUP_INVALID`）**：同父节点下重名、移动成环（移到自身或自身后代）、层级超过 5、名称长度越界（1~64）或描述超 255。
+- **`6214` / `6215`（`DEVICE_TAG_NOT_FOUND` / `DEVICE_TAG_INVALID`）**：标签不存在 / 不属于当前用户（`6214`）；同用户下重名、颜色不匹配 `^#[0-9A-Fa-f]{6}$`、名称长度越界（`6215`）。
+- **`6216`（`DEVICE_GROUP_NOT_EMPTY`）**：删除的分组下仍有子分组或关联设备；须先移动子分组或移出设备（前端提示「请先移动子分组或移出设备」）。
+- **`6217`（`BATCH_TARGET_INVALID`）**：批量目标并集去重后为空，或超过 `MAX_BATCH_SIZE=500`。
+- **分组/标签更新为「空」不生效**：`parent_id`（移回根）、`description`、`color` 需显式置空，实体已配 `updateStrategy = FieldStrategy.ALWAYS`，避免 MyBatis-Plus 默认 `NOT_NULL` 策略丢弃空值。
+- **批量命令只成功一部分**：属**预期**的逐台隔离——失败台 `items` 中带 `error`，`succeeded` / `failed` 计数如实返回；常见单台失败原因同单台下发（设备禁用 / 产品停用 / 物模型校验不过）。
+
 ---
 
 ## 10. 依赖版本与安全扫描
