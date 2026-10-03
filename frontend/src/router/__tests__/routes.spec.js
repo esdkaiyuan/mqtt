@@ -18,7 +18,7 @@ describe('router/routes 分区与兼容', () => {
     expect(workbench.redirect).toBe('/workbench/dashboard')
   })
 
-  it('工作台子路由覆盖监控、告警与开发接入三个分区', () => {
+  it('工作台子路由覆盖监控、告警、设备运维与开发接入四个分区', () => {
     const children = byPath('/workbench').children
     const names = children.map((child) => child.name)
     expect(names).toEqual([
@@ -37,14 +37,17 @@ describe('router/routes 分区与兼容', () => {
       'AlertRules',
       'RuleCenter',
       'BoardList',
-      'BoardDetail'
+      'BoardDetail',
+      'FirmwareList',
+      'UpgradeTasks',
+      'UpgradeTaskDetail'
     ])
 
     const groups = new Set(children.map((child) => child.meta?.group))
-    expect(groups).toEqual(new Set(['monitor', 'access', 'alert']))
+    expect(groups).toEqual(new Set(['monitor', 'access', 'alert', 'fleet']))
 
-    // 设备详情 / 设备日志 / 物模型 / 看板详情不在导航中展示
-    for (const name of ['DeviceDetail', 'DeviceLog', 'ProductThingModel', 'BoardDetail']) {
+    // 设备详情 / 设备日志 / 物模型 / 看板详情 / 升级详情不在导航中展示
+    for (const name of ['DeviceDetail', 'DeviceLog', 'ProductThingModel', 'BoardDetail', 'UpgradeTaskDetail']) {
       const hidden = children.find((child) => child.name === name)
       expect(hidden.meta?.hidden).toBe(true)
     }
@@ -73,6 +76,28 @@ describe('router/routes 分区与兼容', () => {
   it('实时消息仅对 ADMIN / OPERATOR 可见', () => {
     const messages = byPath('/workbench').children.find((child) => child.name === 'MessageMonitor')
     expect(messages.meta?.roles).toEqual(['ADMIN', 'OPERATOR'])
+  })
+
+  it('OTA 固件与升级任务路由归入设备运维分区并限制角色', () => {
+    const children = byPath('/workbench').children
+    const expected = {
+      FirmwareList: 'ota/firmwares',
+      UpgradeTasks: 'ota/tasks',
+      UpgradeTaskDetail: 'ota/tasks/:id'
+    }
+
+    for (const [name, path] of Object.entries(expected)) {
+      const route = children.find((child) => child.name === name)
+      expect(route, `缺少 OTA 路由 ${name}`).toBeTruthy()
+      expect(route.path).toBe(path)
+      expect(route.meta?.group).toBe('fleet')
+      expect(route.meta?.roles).toEqual(['ADMIN', 'OPERATOR'])
+    }
+
+    // 固件管理与升级任务列表需出现在导航中（未 hidden），任务详情隐藏
+    expect(children.find((child) => child.name === 'FirmwareList').meta?.hidden).toBeFalsy()
+    expect(children.find((child) => child.name === 'UpgradeTasks').meta?.hidden).toBeFalsy()
+    expect(children.find((child) => child.name === 'UpgradeTaskDetail').meta?.hidden).toBe(true)
   })
 
   it('文档站五章齐全且默认跳快速开始', () => {

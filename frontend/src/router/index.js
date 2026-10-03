@@ -169,6 +169,27 @@ export const routes = [
         name: 'BoardDetail',
         component: () => import('@/views/workbench/board/BoardDetail.vue'),
         meta: { title: '看板详情', hidden: true, group: 'monitor' }
+      },
+      {
+        // OTA 固件包管理（T-22）：上传/下载/删除固件包
+        path: 'ota/firmwares',
+        name: 'FirmwareList',
+        component: () => import('@/views/workbench/ota/FirmwareList.vue'),
+        meta: { title: '固件管理', icon: 'package', group: 'fleet', roles: ['ADMIN', 'OPERATOR'] }
+      },
+      {
+        // OTA 升级任务列表（T-22）：按产品/分组/标签创建批次升级
+        path: 'ota/tasks',
+        name: 'UpgradeTasks',
+        component: () => import('@/views/workbench/ota/UpgradeTasks.vue'),
+        meta: { title: '升级任务', icon: 'operation', group: 'fleet', roles: ['ADMIN', 'OPERATOR'] }
+      },
+      {
+        // 升级任务详情，入口在任务列表页点击，不在导航中展示
+        path: 'ota/tasks/:id',
+        name: 'UpgradeTaskDetail',
+        component: () => import('@/views/workbench/ota/UpgradeTaskDetail.vue'),
+        meta: { title: '任务详情', hidden: true, group: 'fleet', roles: ['ADMIN', 'OPERATOR'] }
       }
     ]
   },

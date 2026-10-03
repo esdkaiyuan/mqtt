@@ -79,6 +79,14 @@ const navGroups = [
     ]
   },
   {
+    key: 'fleet',
+    label: '设备运维',
+    items: [
+      { path: '/workbench/ota/firmwares', title: '固件管理', icon: 'package', roles: ['ADMIN', 'OPERATOR'] },
+      { path: '/workbench/ota/tasks', title: '升级任务', icon: 'operation', roles: ['ADMIN', 'OPERATOR'] }
+    ]
+  },
+  {
     key: 'access',
     label: '开发接入',
     items: [
