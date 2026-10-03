@@ -155,6 +155,20 @@ export const routes = [
         name: 'RuleCenter',
         component: () => import('@/views/workbench/rule/RuleCenter.vue'),
         meta: { title: '消息规则', icon: 'operation', group: 'monitor' }
+      },
+      {
+        // 可保存看板（T-21）：把常用设备属性趋势组合保存，随时回看
+        path: 'boards',
+        name: 'BoardList',
+        component: () => import('@/views/workbench/board/BoardList.vue'),
+        meta: { title: '数据看板', icon: 'chart', group: 'monitor' }
+      },
+      {
+        // 看板详情，入口在列表页卡片点击，不在导航中展示
+        path: 'boards/:id',
+        name: 'BoardDetail',
+        component: () => import('@/views/workbench/board/BoardDetail.vue'),
+        meta: { title: '看板详情', hidden: true, group: 'monitor' }
       }
     ]
   },

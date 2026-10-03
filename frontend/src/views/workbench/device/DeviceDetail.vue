@@ -63,6 +63,14 @@
         <DevicePropertyPanel :properties="properties" :loading="propertiesLoading" />
       </div>
 
+      <div id="device-property-trend-section" class="info-card card">
+        <DevicePropertyTrend
+          :device-id="device.id"
+          :device-name="device.deviceName"
+          :product-id="device.productId"
+        />
+      </div>
+
       <div id="device-event-section" class="info-card card">
         <DeviceEventPanel
           :events="events"
@@ -125,6 +133,7 @@ import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EditDeviceDialog from '@/components/device/EditDeviceDialog.vue'
 import DevicePropertyPanel from '@/components/device/DevicePropertyPanel.vue'
+import DevicePropertyTrend from '@/components/device/DevicePropertyTrend.vue'
 import DeviceEventPanel from '@/components/device/DeviceEventPanel.vue'
 import DeviceControlPanel from '@/components/device/DeviceControlPanel.vue'
 import DeviceShadowPanel from '@/components/device/DeviceShadowPanel.vue'

@@ -35,14 +35,16 @@ describe('router/routes 分区与兼容', () => {
       'WebhookManagement',
       'AlertList',
       'AlertRules',
-      'RuleCenter'
+      'RuleCenter',
+      'BoardList',
+      'BoardDetail'
     ])
 
     const groups = new Set(children.map((child) => child.meta?.group))
     expect(groups).toEqual(new Set(['monitor', 'access', 'alert']))
 
-    // 设备详情 / 设备日志 / 物模型不在导航中展示
-    for (const name of ['DeviceDetail', 'DeviceLog', 'ProductThingModel']) {
+    // 设备详情 / 设备日志 / 物模型 / 看板详情不在导航中展示
+    for (const name of ['DeviceDetail', 'DeviceLog', 'ProductThingModel', 'BoardDetail']) {
       const hidden = children.find((child) => child.name === name)
       expect(hidden.meta?.hidden).toBe(true)
     }
