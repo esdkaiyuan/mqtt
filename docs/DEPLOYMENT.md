@@ -873,6 +873,69 @@ WHERE device_id = <deviceId> ORDER BY created_at DESC LIMIT 20;
 
 ---
 
+### 9.16 属性时序与可视化运维（T-21）
+
+**迁移 `V10__property_history.sql`**：新建**两张表、不改既有表**（`V1`~`V9` 零改动），可安全回滚应用版本——
+
+- `device_property_history`（属性历史）：**追加型、不去重、无时间戳守卫**，`reported_at DATETIME(3)` 毫秒精度，`value_text` 统一文本化、按物模型 `data_type` 解释；由 `idx_device_identifier_time (device_id, identifier, reported_at)` 支撑聚合查询。
+- `dashboard`（可保存看板）：`user_id` 归属创建者、面板数组存 `config` JSON、**硬删除无逻辑删除列**。
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：迁移执行成功、两张新表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'device_property_history'; SHOW TABLES LIKE 'dashboard';"
+```
+
+**写入与读取面**：属性历史写入为摄取管线的**第 4 条内部旁路**（`ThingModelInterpretService.appendHistory`），复用同一份归一化样本、批量追加，异常**只记 WARN、不进死信**，**不新增 `IngestDispatcher` fan-out 路**、**不新增 MQTT 主题 / 不改 ACL**；因此 `PROPERTY_HISTORY_ENABLED=false` 时趋势图无新数据，但**既有摄取、告警、规则、影子链路完全不受影响**。
+
+- 控制台只读端点：`GET /api/properties/history`（`deviceIds[]` + `identifiers[]` 必填，`startTime` / `endTime` 半开区间，`bucket` 缺省 `5m`）。
+- 看板端点（`/api/dashboards`）：`GET` 列表 / `POST` 新建 / `GET /{id}` 详情 / `PUT /{id}` 更新 / `DELETE /{id}` **硬删除**，均按登录用户隔离。
+- 前端：设备详情页「属性趋势」入口（`DevicePropertyTrend.vue` + `PropertyTrendChart.vue`）；数据看板 `/workbench/boards`（列表）与 `/workbench/boards/:id`（详情）。
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.property-history` / `app.dashboard`，本节已同步透传至 `.env.example` 与 `docker/docker-compose.yml`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `PROPERTY_HISTORY_ENABLED` | `true` | 是否写入属性历史；置 `false` 后趋势图无新数据（**落库与保留清理均不注册**） |
+| `PROPERTY_HISTORY_MAX_RANGE_DAYS` | `31` | 聚合查询时间窗跨度上限（天）；超限返回 `6225` |
+| `PROPERTY_HISTORY_MAX_SERIES` | `20` | 单次查询序列数上限（`deviceIds` × `identifiers`）；超限返回 `6227` |
+| `PROPERTY_HISTORY_MAX_POINTS` | `500` | 单序列数据点上限（时间跨度 / 桶）；超限返回 `6227` |
+| `PROPERTY_HISTORY_RETENTION_DAYS` | `30` | 历史保留天数（**R5 门槛复核输入**），`0` 表示不清理 |
+| `PROPERTY_HISTORY_CLEANUP_ENABLED` | `true` | 是否启用过期历史清理 |
+| `PROPERTY_HISTORY_CLEANUP_INTERVAL_MS` | `3600000` | 清理巡检间隔（毫秒），`0` 关闭（不注册巡检） |
+| `PROPERTY_HISTORY_CLEANUP_BATCH_SIZE` | `1000` | 单批删除行数 |
+| `DASHBOARD_MAX_COUNT` | `20` | 每用户看板数量上限；超限返回 `6230` |
+| `DASHBOARD_MAX_PANELS` | `12` | 单看板面板数上限；超限返回 `6229` |
+
+> 翻转上述变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效。
+
+**桶粒度白名单**：`bucket` 仅接受 `1m` / `5m` / `15m` / `30m` / `1h` / `6h` / `1d`（缺省 `5m`）；聚合 `avg` / `min` / `max` / `count`，**仅数值类型**（`int` / `float` / `double`）出 `min` / `max` / `avg`，文本类型只出 `count`。后端以 `FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(reported_at)/bucketSeconds)*bucketSeconds)` 分桶（**不用 `GROUP_CONCAT`**）。
+
+**排查 SQL**：
+
+```sql
+-- 某设备某属性的历史条数与时间范围（判断趋势图是否为空 / 是否被写入开关或时间窗过滤）
+SELECT device_id, identifier, COUNT(*) c, MIN(reported_at) mn, MAX(reported_at) mx
+FROM device_property_history GROUP BY device_id, identifier ORDER BY c DESC LIMIT 20;
+-- 逾期行数核对（与 PROPERTY_HISTORY_RETENTION_DAYS 比对，判断保留清理是否生效）
+SELECT COUNT(*) stale FROM device_property_history
+WHERE reported_at < DATE_SUB(NOW(), INTERVAL <retentionDays> DAY);
+-- 看板归属核对
+SELECT id, user_id, name, JSON_LENGTH(config) panels, updated_at FROM dashboard ORDER BY updated_at DESC LIMIT 20;
+```
+
+**常见排障**：
+
+- **趋势图无新数据**：先确认 `PROPERTY_HISTORY_ENABLED`（默认 `true`）；再确认该属性已在物模型中定义且设备确有心跳/上报；用首条 SQL 核对 `device_property_history` 是否在增长。写入异常**只记 WARN**（不进死信），可在后端日志按 `appendHistory` / `属性历史` 关键字排查。
+- **返回 `6225`（`PROPERTY_HISTORY_RANGE_INVALID`，`400`）**：`startTime >= endTime`、格式非 `yyyy-MM-dd HH:mm:ss` / ISO，或跨度超过 `PROPERTY_HISTORY_MAX_RANGE_DAYS`（默认 31 天）；缩小时间窗或调大该变量。
+- **返回 `6226`（`PROPERTY_HISTORY_IDENTIFIER_UNSUPPORTED`，`400`）**：`identifiers` 含**未在物模型中定义**的标识符；先在物模型确认标识符拼写与所属产品/设备。
+- **返回 `6227`（`PROPERTY_HISTORY_BUCKET_UNSUPPORTED`，`400`）**：`bucket` 不在白名单，或序列数超 `PROPERTY_HISTORY_MAX_SERIES` / 数据点超 `PROPERTY_HISTORY_MAX_POINTS`；减少序列、放大桶粒度或缩小时间窗。
+- **返回 `6228`（`DASHBOARD_NOT_FOUND`，`404`）**：看板不存在**或不属于当前用户**（服务层一律抛该码、**不区分「不存在」与「非本人」**，避免探测）；`6229`（`DASHBOARD_INVALID`，`400`）为看板配置非法（含面板数超 `DASHBOARD_MAX_PANELS`）；`6230`（`DASHBOARD_LIMIT_EXCEEDED`，`400`）为看板数超 `DASHBOARD_MAX_COUNT`。
+- **返回 `2002` / `2003`**：`2002` 设备不存在，`2003` 设备不属于当前用户（`ADMIN` 旁路归属校验）；无 token 返回 `401`。
+- **历史表持续膨胀**：保留清理由 `PropertyHistoryRetentionServiceImpl` + `PropertyHistorySweeper` 按 `reported_at` 分批硬删；`PROPERTY_HISTORY_CLEANUP_ENABLED=false` 或 `…_INTERVAL_MS<=0` 时**不注册巡检**。容量与保留窗口已列为 **R5 门槛评估项**，届时随 `scripts/r5-trigger-check.*` 一并复核（见 §9.8 与 §6 R5 边界）。
+
+---
+
 ## 10. 依赖版本与安全扫描
 
 ### 10.1 版本基线（R3-3 升级后）
