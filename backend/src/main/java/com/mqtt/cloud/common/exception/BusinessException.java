@@ -35,6 +35,19 @@ public class BusinessException extends RuntimeException {
     }
 
     /**
+     * 使用标准 ResultCode 的业务码，但覆盖 HTTP 状态码与提示信息。
+     * <p>
+     * 用于「业务码复用、HTTP 状态需区分」的场景（如手动重试遇到状态冲突时复用
+     * {@code RULE_INVALID} 业务码但返回 {@code 409}，不新增同义错误码）。
+     */
+    public BusinessException(ResultCode resultCode, HttpStatus httpStatus, String message) {
+        super(message);
+        this.resultCode = resultCode;
+        this.code = resultCode.getCode();
+        this.httpStatus = httpStatus;
+    }
+
+    /**
      * 兜底构造：按参数错误处理。
      */
     public BusinessException(String message) {

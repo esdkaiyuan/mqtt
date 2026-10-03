@@ -202,6 +202,49 @@ app:
     sweep-interval-ms: ${ALERT_SWEEP_INTERVAL_MS:30000}
     # 单轮巡检规则 / 记录处理上限
     sweep-batch-size: ${ALERT_SWEEP_BATCH_SIZE:200}
+  # 消息规则 / 规则引擎（T-19）
+  rule:
+    # 规则引擎总开关；置 false 时不做条件判定（既有告警与 Webhook 不受影响）
+    enabled: ${RULE_ENABLED:true}
+    # 单用户规则数上限
+    max-rules-per-user: ${RULE_MAX_RULES_PER_USER:200}
+    # 规则定义缓存 TTL（秒）；0 关闭缓存。保存只失效本副本，多副本收敛窗口 = 该 TTL
+    cache-ttl-seconds: ${RULE_CACHE_TTL_SECONDS:60}
+    # 动作执行线程池
+    executor-core-size: ${RULE_EXECUTOR_CORE_SIZE:2}
+    executor-max-size: ${RULE_EXECUTOR_MAX_SIZE:8}
+    executor-queue-capacity: ${RULE_EXECUTOR_QUEUE_CAPACITY:500}
+    # 失败重试上限，达到该次数仍未成功则置 FAILED
+    retry-max-attempts: ${RULE_RETRY_MAX_ATTEMPTS:3}
+    # 指数退避基数（毫秒）
+    retry-base-delay-ms: ${RULE_RETRY_BASE_DELAY_MS:5000}
+    # 指数退避封顶（毫秒）
+    retry-max-delay-ms: ${RULE_RETRY_MAX_DELAY_MS:300000}
+    # 重试巡检间隔（毫秒），0 关闭（同时关闭保留清理）
+    sweep-interval-ms: ${RULE_SWEEP_INTERVAL_MS:30000}
+    # 单轮巡检处理上限
+    sweep-batch-size: ${RULE_SWEEP_BATCH_SIZE:200}
+    # 执行记录保留天数（仅清理终态记录），0 表示不清理
+    execution-retention-days: ${RULE_EXECUTION_RETENTION_DAYS:30}
+    # 出站 HTTP 超时（毫秒）
+    http-timeout-ms: ${RULE_HTTP_TIMEOUT_MS:5000}
+    # 转发 HTTP 的 HMAC 签名密钥；为空时不下发 X-Signature 头
+    http-secret: ${RULE_HTTP_SECRET:}
+    # 动作配置 / 载荷模板大小上限（字节）
+    max-payload-bytes: ${RULE_MAX_PAYLOAD_BYTES:16384}
+    # 外部 MQTT 转发（出站到第三方 Broker，不经自有 EMQX）
+    mqtt:
+      # 置 false 时 FORWARD_MQTT 动作直接置 FAILED，其余动作不受影响
+      enabled: ${RULE_MQTT_ENABLED:false}
+      # 第三方 Broker 地址（tcp:// 或 ssl://）；enabled=true 时必填
+      broker-url: ${RULE_MQTT_BROKER_URL:}
+      client-id: ${RULE_MQTT_CLIENT_ID:mqtt-rule-forwarder}
+      username: ${RULE_MQTT_USERNAME:}
+      password: ${RULE_MQTT_PASSWORD:}
+      # 缺省 QoS，规则未配置时使用
+      qos: ${RULE_MQTT_QOS:1}
+      keepalive: ${RULE_MQTT_KEEPALIVE:60}
+      connect-timeout: ${RULE_MQTT_CONNECT_TIMEOUT:10}
 
 # 日志配置
 logging:

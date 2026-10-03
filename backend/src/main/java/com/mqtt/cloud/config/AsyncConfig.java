@@ -26,4 +26,23 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * 规则动作执行专用线程池（T-19 设计文档 §4.6 / §8.4）。
+     * <p>
+     * 慢动作（出站 HTTP 超时、第三方 Broker 不可达）不得占用摄取 worker；有界队列在过载时
+     * 直接拒绝投递（由评估侧把记录置 {@code FAILED}），避免任务无限堆积。
+     */
+    @Bean("ruleExecutor")
+    public ThreadPoolTaskExecutor ruleExecutor(RuleProperties properties) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(properties.getExecutorCoreSize());
+        executor.setMaxPoolSize(properties.getExecutorMaxSize());
+        executor.setQueueCapacity(properties.getExecutorQueueCapacity());
+        executor.setThreadNamePrefix("rule-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
+        executor.initialize();
+        return executor;
+    }
 }

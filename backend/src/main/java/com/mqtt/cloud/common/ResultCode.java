@@ -70,7 +70,13 @@ public enum ResultCode {
     DEVICE_TAG_NOT_FOUND(6214, "设备标签不存在", HttpStatus.NOT_FOUND),
     DEVICE_TAG_INVALID(6215, "设备标签配置非法", HttpStatus.BAD_REQUEST),
     DEVICE_GROUP_NOT_EMPTY(6216, "分组下存在子分组或设备，无法删除", HttpStatus.CONFLICT),
-    BATCH_TARGET_INVALID(6217, "批量操作目标非法（为空或超出上限）", HttpStatus.BAD_REQUEST);
+    BATCH_TARGET_INVALID(6217, "批量操作目标非法（为空或超出上限）", HttpStatus.BAD_REQUEST),
+
+    RULE_NOT_FOUND(6218, "规则不存在", HttpStatus.NOT_FOUND),
+    RULE_INVALID(6219, "规则配置非法", HttpStatus.BAD_REQUEST),
+    RULE_ACTION_UNSUPPORTED(6220, "不支持的规则动作类型", HttpStatus.BAD_REQUEST),
+    RULE_EXECUTION_NOT_FOUND(6221, "规则执行记录不存在", HttpStatus.NOT_FOUND),
+    RULE_LIMIT_EXCEEDED(6222, "规则数量超出上限", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;
