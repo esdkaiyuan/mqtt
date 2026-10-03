@@ -733,6 +733,88 @@ SELECT id, name, color, deleted FROM device_tag WHERE user_id = <userId>;
 - **分组/标签更新为「空」不生效**：`parent_id`（移回根）、`description`、`color` 需显式置空，实体已配 `updateStrategy = FieldStrategy.ALWAYS`，避免 MyBatis-Plus 默认 `NOT_NULL` 策略丢弃空值。
 - **批量命令只成功一部分**：属**预期**的逐台隔离——失败台 `items` 中带 `error`，`succeeded` / `failed` 计数如实返回；常见单台失败原因同单台下发（设备禁用 / 产品停用 / 物模型校验不过）。
 
+### 9.14 消息规则 / 规则引擎运维（T-19）
+
+**迁移 `V9__rule_engine.sql`**：新建 `rule_definition`（规则定义）与 `rule_execution`（执行记录）两张表。迁移**只加表、不改既有表**，可安全回滚应用版本（回滚后新旧表共存，旧代码忽略新表）。重建后端即触发：
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：Flyway schema history 出现 V9，且两张规则表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
+  -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'rule_%';"
+```
+
+**挂载点与主题策略**：规则引擎**不新增任何 MQTT 主题、不改 ACL**。条件判定作为上行解析的**第三处内部旁路**挂载在 `ThingModelInterpretServiceImpl`（属性旁路 `onProperties` / 事件旁路 `onEvents`），复用 T-14 已归一化的样本；异常逐条 `try/catch` 隔离、只记 WARN，**绝不冒泡到摄取链路**（规则故障不影响消息落库与实时推送）。四类动作出口：
+
+| 动作 | 出口 | 复用链路 |
+|------|------|----------|
+| `UPDATE_PROPERTY` | 更新云端属性最新值 | `DevicePropertyLatestMapper.upsertIfNewer`（时间戳守卫） |
+| `SEND_COMMAND` | 下发命令 | `DeviceCommandService.invoke`（`callType=async`、`source=RULE`） |
+| `FORWARD_MQTT` | 出站到**第三方 Broker** | 独立 Paho 客户端 `RuleMqttForwarder`（**不经自有 EMQX**） |
+| `FORWARD_HTTP` | 出站 HTTP 回调 | `RuleHttpForwarder`（HMAC-SHA256 签名） |
+
+**异步执行与重试**：命中后落一条 `rule_execution`（`status=PENDING`）并投递独立线程池 `ruleExecutor` 异步执行；失败按指数退避重试（`next_attempt_at = now + min(base × 2^(attemptCount-1), max)`），由 `RuleSweeper` 周期拾取到期记录重放，次数耗尽置 `FAILED`。**冷却**在进程内 `ConcurrentHashMap` 判定（规则 ID → 上次触发时刻），命中后先占用锚点，摄取线程不读写库。
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.rule`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `RULE_ENABLED` | `true` | 规则引擎总开关；置 `false` 时不做条件判定（既有告警与 Webhook 不受影响） |
+| `RULE_MAX_RULES_PER_USER` | `200` | 单用户规则数上限，超限创建返回 `6222` |
+| `RULE_CACHE_TTL_SECONDS` | `60` | 规则定义缓存 TTL（秒），`0` 关闭缓存；保存只失效本副本，多副本收敛窗口 = 该 TTL |
+| `RULE_EXECUTOR_CORE_SIZE` / `RULE_EXECUTOR_MAX_SIZE` | `2` / `8` | 动作执行线程池核心 / 最大线程数 |
+| `RULE_EXECUTOR_QUEUE_CAPACITY` | `500` | 动作执行线程池队列容量；满时投递被拒，记录直接置 `FAILED`（原因「执行队列已满」） |
+| `RULE_RETRY_MAX_ATTEMPTS` | `3` | 失败重试上限，达到置 `FAILED` |
+| `RULE_RETRY_BASE_DELAY_MS` / `RULE_RETRY_MAX_DELAY_MS` | `5000` / `300000` | 指数退避基数 / 封顶（毫秒） |
+| `RULE_SWEEP_INTERVAL_MS` | `30000` | 重试巡检间隔（毫秒），`0` 关闭（**同时关闭执行记录保留清理**） |
+| `RULE_SWEEP_BATCH_SIZE` | `200` | 单轮巡检处理上限 |
+| `RULE_EXECUTION_RETENTION_DAYS` | `30` | 执行记录保留天数（**仅清理终态** `SUCCESS`/`FAILED`，`PENDING` 永不清理）；`0` 表示不清理 |
+| `RULE_HTTP_TIMEOUT_MS` | `5000` | 出站 HTTP 超时（毫秒） |
+| `RULE_HTTP_SECRET` | 空 | 转发 HTTP 的 HMAC-SHA256 签名密钥；为空时不下发 `X-Signature` 头 |
+| `RULE_MAX_PAYLOAD_BYTES` | `16384` | 动作配置 / 载荷模板大小上限（字节），超限拒绝 |
+| `RULE_MQTT_ENABLED` | `false` | 外部 MQTT 转发开关；`false` 时 `FORWARD_MQTT` 动作直接置 `FAILED`，其余动作不受影响 |
+| `RULE_MQTT_BROKER_URL` | 空 | 第三方 Broker 地址（`tcp://` 或 `ssl://`）；`enabled=true` 时必填 |
+| `RULE_MQTT_CLIENT_ID` | `mqtt-rule-forwarder` | 出站客户端 ID |
+| `RULE_MQTT_USERNAME` / `RULE_MQTT_PASSWORD` | 空 | 第三方 Broker 凭据 |
+| `RULE_MQTT_QOS` | `1` | 缺省 QoS，规则未单独配置时使用 |
+| `RULE_MQTT_KEEPALIVE` / `RULE_MQTT_CONNECT_TIMEOUT` | `60` / `10` | 保活间隔 / 连接超时（秒） |
+
+> 翻转上述任一变量后 `docker compose ... up -d --force-recreate backend`，无需重跑 `emqx-init`。
+
+**外部 MQTT 转发前置条件**：`FORWARD_MQTT` 动作要求部署方**显式提供第三方 Broker**。默认 `RULE_MQTT_ENABLED=false`，此时不建连、动作直接置 `FAILED`；启用需同时提供 `RULE_MQTT_BROKER_URL`（`enabled=true` 时必填），客户端为**纯出站、不订阅任何主题**，自动重连由监督线程负责。**未配置第三方 Broker 时请勿置 `true`**，否则连接失败会产生持续告警噪声。
+
+**HTTP 转发签名**：请求头含 `Content-Type` / `X-Event-Type: rule.triggered` / `X-Rule-Id` / `X-Execution-Id` / `X-Signature: sha256=<hex>`；`X-Signature` 为 HMAC-SHA256（密钥 `RULE_HTTP_SECRET`），**重试时 `X-Execution-Id` 不变**，可作为接收方幂等键。不跟随重定向，非 2xx 视为失败。
+
+**指标**：经 `/actuator/prometheus` 暴露（公开抓取）：
+
+| 指标 | 含义 |
+|------|------|
+| `rule_trigger_total` | 规则命中并落执行记录次数 |
+| `rule_rejected_total` | 规则动作投递被线程池拒绝次数（对应记录直接 `FAILED`） |
+
+**规则与执行记录排查**：
+
+```sql
+-- 某用户的规则（含来源 / 条件 / 动作 / 冷却 / 启用态）
+SELECT id, name, device_id, source_type, identifier, operator, threshold_value,
+       event_type, action_type, cooldown_seconds, last_triggered_at, enabled, deleted
+FROM rule_definition WHERE user_id = <userId> ORDER BY updated_at DESC;
+-- 某规则的最近执行记录（状态 / 尝试次数 / 下次重试 / 失败原因）
+SELECT id, device_key, status, attempt_count, next_attempt_at, error_message, created_at, finished_at
+FROM rule_execution WHERE rule_id = <ruleId> ORDER BY created_at DESC LIMIT 20;
+-- 待重试（已到期）的记录：应被巡检收敛
+SELECT id, rule_id, attempt_count, next_attempt_at FROM rule_execution
+WHERE status = 'PENDING' AND next_attempt_at IS NOT NULL AND next_attempt_at <= NOW();
+```
+
+**常见排障**：
+
+- **属性 / 事件上报但没有触发规则**：确认规则 `enabled=1`、`deleted=0`，作用域（`device_id`，为空表示全部设备）覆盖该设备；确认来源与标识符匹配（`EVENT` 还需匹配 `eventType`）；`GT`/`GTE`/`LT`/`LTE` 两侧须为十进制数，任一侧不可解析即不命中；确认 `RULE_ENABLED=true`。
+- **规则触发了但动作没生效**：查 `rule_execution` 状态——`PENDING` 表示待执行 / 待重试（看 `next_attempt_at`），`FAILED` 看 `error_message`（如「执行队列已满」「补发重试次数耗尽」类原因）。`FORWARD_MQTT` 置 `FAILED` 且提示「外部 MQTT 转发未启用」说明 `RULE_MQTT_ENABLED=false`。
+- **冷却窗口内重复上报只触发一次**：属预期——同一规则在 `cooldown_seconds` 内的重复命中被跳过，冷却锚点在进程内维护（**多副本各自独立**，重启后清空）。
+- **执行记录被清理**：`RULE_EXECUTION_RETENTION_DAYS>0` 且巡检运行时，终态记录（`SUCCESS`/`FAILED`）超期被物理删除；`PENDING` 永不清理。如需长期留档，调大该值或置 `0`。
+- **`6218`~`6222`**：`6218` 规则不存在 / `6219` 规则配置非法（含 `actionConfig` 非法 JSON、手动重试状态冲突 `409`）/ `6220` 不支持的规则动作类型 / `6221` 规则执行记录不存在 / `6222` 规则数量超出上限；规则与执行记录越权访问统一返回 `403`，设备越权复用 `2003`。
+
 ---
 
 ## 10. 依赖版本与安全扫描

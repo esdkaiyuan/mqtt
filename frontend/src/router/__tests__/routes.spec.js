@@ -33,7 +33,8 @@ describe('router/routes 分区与兼容', () => {
       'ApiKeyManagement',
       'WebhookManagement',
       'AlertList',
-      'AlertRules'
+      'AlertRules',
+      'RuleCenter'
     ])
 
     const groups = new Set(children.map((child) => child.meta?.group))

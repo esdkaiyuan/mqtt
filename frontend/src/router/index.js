@@ -142,6 +142,12 @@ export const routes = [
         name: 'AlertRules',
         component: () => import('@/views/workbench/alert/AlertRules.vue'),
         meta: { title: '告警规则', icon: 'shield', group: 'alert' }
+      },
+      {
+        path: 'rules',
+        name: 'RuleCenter',
+        component: () => import('@/views/workbench/rule/RuleCenter.vue'),
+        meta: { title: '消息规则', icon: 'operation', group: 'monitor' }
       }
     ]
   },
