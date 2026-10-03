@@ -86,7 +86,17 @@ public enum ResultCode {
     PROPERTY_HISTORY_BUCKET_UNSUPPORTED(6227, "不支持的时间桶粒度或数据点过多", HttpStatus.BAD_REQUEST),
     DASHBOARD_NOT_FOUND(6228, "看板不存在", HttpStatus.NOT_FOUND),
     DASHBOARD_INVALID(6229, "看板配置非法", HttpStatus.BAD_REQUEST),
-    DASHBOARD_LIMIT_EXCEEDED(6230, "看板数量超出上限", HttpStatus.BAD_REQUEST);
+    DASHBOARD_LIMIT_EXCEEDED(6230, "看板数量超出上限", HttpStatus.BAD_REQUEST),
+
+    OTA_FIRMWARE_NOT_FOUND(6231, "固件包不存在", HttpStatus.NOT_FOUND),
+    OTA_FIRMWARE_INVALID(6232, "固件包参数非法（版本格式、文件缺失或超出大小上限）", HttpStatus.BAD_REQUEST),
+    OTA_FIRMWARE_DUPLICATE(6233, "同产品下该固件版本已存在", HttpStatus.BAD_REQUEST),
+    OTA_FIRMWARE_IN_USE(6234, "固件包已被升级任务引用，无法删除", HttpStatus.BAD_REQUEST),
+    OTA_UPLOAD_FAILED(6235, "固件文件保存失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    OTA_TASK_NOT_FOUND(6236, "升级任务不存在", HttpStatus.NOT_FOUND),
+    OTA_TASK_INVALID(6237, "升级任务参数非法（目标为空、超限或与固件产品不匹配）", HttpStatus.BAD_REQUEST),
+    OTA_TASK_STATE_INVALID(6238, "升级任务状态不允许该操作", HttpStatus.BAD_REQUEST),
+    OTA_PROGRESS_INVALID(6239, "OTA 进度回传报文字段非法", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;
