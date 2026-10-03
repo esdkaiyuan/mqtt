@@ -83,6 +83,13 @@ export const routes = [
         meta: { title: '设备管理', icon: 'device', group: 'monitor' }
       },
       {
+        // 静态段排在 devices/:id 之前，避免被设备详情路由吞掉
+        path: 'devices/groups',
+        name: 'DeviceGroups',
+        component: () => import('@/views/workbench/device/DeviceGroups.vue'),
+        meta: { title: '分组管理', icon: 'building', group: 'monitor' }
+      },
+      {
         path: 'devices/:id',
         name: 'DeviceDetail',
         component: () => import('@/views/workbench/device/DeviceDetail.vue'),

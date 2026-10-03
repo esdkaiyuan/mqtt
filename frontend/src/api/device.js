@@ -79,5 +79,25 @@ export const deviceApi = {
    * 在线设备返回 SENT 命令记录，离线设备返回 QUEUED 并在上线后自动补发
    */
   setDeviceShadowDesired: (deviceKey, params) =>
-    api.put(`/devices/${deviceKey}/shadow/desired`, { params })
+    api.put(`/devices/${deviceKey}/shadow/desired`, { params }),
+
+  // ---------- 设备分组与标签批量操作（T-18） ----------
+
+  /**
+   * 批量下发命令：目标为「手选设备 ∪ 分组（含子分组）∪ 标签」并集，逐台生成命令记录并强制异步。
+   * 返回 BatchOperationResult（total / succeeded / failed / items），单台失败只记该台 error。
+   */
+  batchCommands: (data) => api.post('/devices/batch/commands', data),
+
+  /** 批量启用连接许可（逐台幂等，不产生 commandId） */
+  batchEnable: (target) => api.post('/devices/batch/enable', target),
+
+  /** 批量禁用连接许可并踢线（逐台幂等，不产生 commandId） */
+  batchDisable: (target) => api.post('/devices/batch/disable', target),
+
+  /** 批量加入（action=ADD）/ 移出（action=REMOVE）分组 */
+  batchAssignGroup: (data) => api.post('/devices/batch/groups', data),
+
+  /** 批量打标（action=ADD）/ 去标（action=REMOVE） */
+  batchAssignTag: (data) => api.post('/devices/batch/tags', data)
 }

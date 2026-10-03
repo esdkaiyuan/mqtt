@@ -19,7 +19,9 @@ export function useDeviceList() {
   const filters = reactive({
     deviceName: '',
     deviceType: '',
-    status: ''
+    status: '',
+    groupId: null,
+    tagId: null
   })
 
   const currentPage = ref(1)
@@ -36,7 +38,9 @@ export function useDeviceList() {
       pageSize: pageSize.value,
       deviceName: filters.deviceName || undefined,
       deviceType: filters.deviceType || undefined,
-      status: filters.status || undefined
+      status: filters.status || undefined,
+      groupId: filters.groupId ?? undefined,
+      tagId: filters.tagId ?? undefined
     })
   }
 
@@ -48,6 +52,8 @@ export function useDeviceList() {
     filters.deviceName = ''
     filters.deviceType = ''
     filters.status = ''
+    filters.groupId = null
+    filters.tagId = null
     loadDevices(1)
   }
 

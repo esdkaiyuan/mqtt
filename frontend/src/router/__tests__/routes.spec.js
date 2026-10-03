@@ -24,6 +24,7 @@ describe('router/routes 分区与兼容', () => {
     expect(names).toEqual([
       'Dashboard',
       'DeviceList',
+      'DeviceGroups',
       'DeviceDetail',
       'ProductList',
       'ProductThingModel',
@@ -48,6 +49,21 @@ describe('router/routes 分区与兼容', () => {
     const productList = children.find((child) => child.name === 'ProductList')
     expect(productList.path).toBe('products')
     expect(productList.meta?.group).toBe('monitor')
+  })
+
+  it('分组管理静态段排在设备详情动态段之前，且与设备管理同组', () => {
+    const children = byPath('/workbench').children
+    const groupsIndex = children.findIndex((child) => child.name === 'DeviceGroups')
+    const detailIndex = children.findIndex((child) => child.name === 'DeviceDetail')
+
+    expect(groupsIndex).toBeGreaterThan(-1)
+    expect(detailIndex).toBeGreaterThan(-1)
+    expect(groupsIndex).toBeLessThan(detailIndex)
+
+    const groups = children[groupsIndex]
+    expect(groups.path).toBe('devices/groups')
+    expect(groups.meta?.group).toBe('monitor')
+    expect(groups.meta?.hidden).toBeFalsy()
   })
 
   it('实时消息仅对 ADMIN / OPERATOR 可见', () => {

@@ -1,6 +1,12 @@
 <template>
-  <div class="device-card card">
+  <div class="device-card card" :class="{ 'device-card--selected': selected }">
     <div class="device-card-header">
+      <el-checkbox
+        v-if="selectable"
+        class="device-card-select"
+        :model-value="selected"
+        @change="emit('toggle-select', device)"
+      />
       <div class="device-icon">
         <svg-icon name="device" :size="24" />
       </div>
@@ -26,6 +32,25 @@
         <span class="detail-label">描述</span>
         <span class="detail-value">{{ device.description }}</span>
       </div>
+      <div v-if="hasGroups || hasTags" class="device-card-chips">
+        <span
+          v-for="group in device.groups"
+          :key="`group-${group.id}`"
+          class="group-chip"
+        >
+          <svg-icon name="building" :size="12" />
+          {{ group.name }}
+        </span>
+        <el-tag
+          v-for="tag in device.tags"
+          :key="`tag-${tag.id}`"
+          size="small"
+          effect="plain"
+          :style="tagStyle(tag)"
+        >
+          {{ tag.name }}
+        </el-tag>
+      </div>
     </div>
 
     <div class="device-card-actions">
@@ -46,13 +71,26 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import SvgIcon from '@/components/Icon.vue'
 
-defineProps({
-  device: { type: Object, required: true }
+const props = defineProps({
+  device: { type: Object, required: true },
+  /** 是否展示多选框（批量操作场景） */
+  selectable: { type: Boolean, default: false },
+  /** 当前是否被选中 */
+  selected: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['view', 'edit', 'delete'])
+const emit = defineEmits(['view', 'edit', 'delete', 'toggle-select'])
+
+const hasGroups = computed(() => (props.device.groups?.length ?? 0) > 0)
+const hasTags = computed(() => (props.device.tags?.length ?? 0) > 0)
+
+/** 标签 chip 绑定标签色：有 color 时以文字 / 边框着色，无 color 时用默认样式。 */
+function tagStyle(tag) {
+  return tag.color ? { color: tag.color, borderColor: tag.color } : {}
+}
 
 function formatStatus(status) {
   const statusMap = {
@@ -77,6 +115,35 @@ function formatDeviceType(type) {
 
 .device-card:hover {
   box-shadow: var(--shadow-card-hover);
+}
+
+.device-card--selected {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary) inset;
+}
+
+.device-card-select {
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+.device-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--spacing-sm);
+}
+
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text-regular);
+  font-size: var(--font-size-xs);
 }
 
 .device-card-header {

@@ -63,6 +63,7 @@ const navGroups = [
     items: [
       { path: '/workbench/dashboard', title: '概览', icon: 'dashboard' },
       { path: '/workbench/devices', title: '设备管理', icon: 'device' },
+      { path: '/workbench/devices/groups', title: '分组管理', icon: 'building' },
       { path: '/workbench/products', title: '产品管理', icon: 'package' },
       { path: '/workbench/messages', title: '实时消息', icon: 'message', roles: ['ADMIN', 'OPERATOR'] },
       { path: '/workbench/history', title: '历史数据', icon: 'history' }

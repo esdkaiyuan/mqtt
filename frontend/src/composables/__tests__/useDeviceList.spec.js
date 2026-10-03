@@ -63,7 +63,9 @@ describe('composables/useDeviceList', () => {
       pageSize: 10,
       deviceName: undefined,
       deviceType: undefined,
-      status: undefined
+      status: undefined,
+      groupId: undefined,
+      tagId: undefined
     })
     expect(state.currentPage.value).toBe(1)
     expect(state.totalPages.value).toBe(10)
@@ -82,7 +84,9 @@ describe('composables/useDeviceList', () => {
       pageSize: 10,
       deviceName: undefined,
       deviceType: undefined,
-      status: undefined
+      status: undefined,
+      groupId: undefined,
+      tagId: undefined
     })
     expect(deviceStore.fetchDevices).toHaveBeenCalledTimes(2)
   })
@@ -99,7 +103,7 @@ describe('composables/useDeviceList', () => {
     expect(deviceStore.fetchDevices).toHaveBeenCalledTimes(1)
   })
 
-  it('查询时带上筛选条件并回到第 1 页', async () => {
+  it('查询时带上筛选条件（含分组 / 标签）并回到第 1 页', async () => {
     mountHarness()
     await settle()
 
@@ -107,6 +111,8 @@ describe('composables/useDeviceList', () => {
     await settle()
     state.filters.deviceType = 'SENSOR'
     state.filters.status = 'ONLINE'
+    state.filters.groupId = 12
+    state.filters.tagId = 34
     state.handleSearch()
     await settle()
 
@@ -116,15 +122,19 @@ describe('composables/useDeviceList', () => {
       pageSize: 10,
       deviceName: undefined,
       deviceType: 'SENSOR',
-      status: 'ONLINE'
+      status: 'ONLINE',
+      groupId: 12,
+      tagId: 34
     })
   })
 
-  it('重置清空筛选并重新加载第 1 页', async () => {
+  it('重置清空筛选（含分组 / 标签）并重新加载第 1 页', async () => {
     mountHarness()
     await settle()
 
     state.filters.deviceName = '温湿度'
+    state.filters.groupId = 12
+    state.filters.tagId = 34
     state.handleSearch()
     await settle()
 
@@ -132,13 +142,17 @@ describe('composables/useDeviceList', () => {
     await settle()
 
     expect(state.filters.deviceName).toBe('')
+    expect(state.filters.groupId).toBeNull()
+    expect(state.filters.tagId).toBeNull()
     expect(state.currentPage.value).toBe(1)
     expect(deviceStore.fetchDevices).toHaveBeenLastCalledWith({
       pageNum: 1,
       pageSize: 10,
       deviceName: undefined,
       deviceType: undefined,
-      status: undefined
+      status: undefined,
+      groupId: undefined,
+      tagId: undefined
     })
   })
 
@@ -154,7 +168,9 @@ describe('composables/useDeviceList', () => {
       pageSize: 10,
       deviceName: '温湿度',
       deviceType: undefined,
-      status: 'ONLINE'
+      status: 'ONLINE',
+      groupId: undefined,
+      tagId: undefined
     })
   })
 
@@ -172,7 +188,9 @@ describe('composables/useDeviceList', () => {
       pageSize: 10,
       deviceName: undefined,
       deviceType: undefined,
-      status: 'OFFLINE'
+      status: 'OFFLINE',
+      groupId: undefined,
+      tagId: undefined
     })
   })
 })

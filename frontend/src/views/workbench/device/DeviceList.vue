@@ -27,9 +27,40 @@
         <el-option label="离线" value="OFFLINE" />
         <el-option label="未激活" value="INACTIVE" />
       </el-select>
+      <el-tree-select
+        v-model="filters.groupId"
+        :data="groupTree"
+        :props="TREE_PROPS"
+        node-key="id"
+        clearable
+        check-strictly
+        :render-after-expand="false"
+        default-expand-all
+        placeholder="全部分组"
+        class="filter-item"
+      />
+      <el-select v-model="filters.tagId" placeholder="全部标签" clearable class="filter-item">
+        <el-option v-for="tag in tags" :key="tag.id" :label="tag.name" :value="tag.id" />
+      </el-select>
       <div class="filter-actions">
         <el-button type="primary" @click="handleSearch">查询</el-button>
         <el-button @click="handleReset">重置</el-button>
+      </div>
+    </div>
+
+    <div v-if="selectedCount > 0" class="batch-bar">
+      <span class="batch-bar__count">已选 {{ selectedCount }} 台</span>
+      <div class="batch-bar__actions">
+        <el-button size="small" :disabled="running" @click="batchCommandVisible = true">下发命令</el-button>
+        <el-button size="small" :disabled="running" @click="handleBatchEnabled(true)">启用</el-button>
+        <el-button size="small" type="danger" plain :disabled="running" @click="handleBatchEnabled(false)">
+          禁用
+        </el-button>
+        <el-button size="small" @click="openAssign('group', 'ADD')">加入分组</el-button>
+        <el-button size="small" @click="openAssign('group', 'REMOVE')">移出分组</el-button>
+        <el-button size="small" @click="openAssign('tag', 'ADD')">打标签</el-button>
+        <el-button size="small" @click="openAssign('tag', 'REMOVE')">去标签</el-button>
+        <el-button size="small" link @click="clearSelection">清空选择</el-button>
       </div>
     </div>
 
@@ -37,16 +68,31 @@
 
     <EmptyState v-else-if="devices.length === 0" description="暂无设备，点击「创建设备」添加" />
 
-    <div v-else class="device-grid">
-      <DeviceCard
-        v-for="device in devices"
-        :key="device.id"
-        :device="device"
-        @view="viewDevice"
-        @edit="openEditDialog"
-        @delete="deleteDevice"
-      />
-    </div>
+    <template v-else>
+      <div class="list-toolbar">
+        <el-checkbox
+          :model-value="allSelected"
+          :indeterminate="someSelected"
+          @change="(checked) => toggleSelectAll(devices, checked)"
+        >
+          全选本页
+        </el-checkbox>
+      </div>
+
+      <div class="device-grid">
+        <DeviceCard
+          v-for="device in devices"
+          :key="device.id"
+          :device="device"
+          selectable
+          :selected="isSelected(device.id)"
+          @toggle-select="toggleSelect(device.id)"
+          @view="viewDevice"
+          @edit="openEditDialog"
+          @delete="deleteDevice"
+        />
+      </div>
+    </template>
 
     <div v-if="total > 0" class="device-pagination">
       <el-pagination
@@ -78,11 +124,32 @@
       v-model:visible="showCredentialDialog"
       :credential="createdCredential"
     />
+
+    <BatchCommandDialog
+      v-model:visible="batchCommandVisible"
+      :count="selectedCount"
+      :loading="running"
+      @submit="handleBatchCommand"
+    />
+
+    <BatchAssignDialog
+      v-model:visible="assignVisible"
+      :mode="assignMode"
+      :action="assignAction"
+      :count="selectedCount"
+      :options="assignOptions"
+      :loading="running"
+      @submit="handleAssign"
+    />
+
+    <BatchResultDrawer v-model:visible="resultVisible" :result="result" />
   </div>
 </template>
 
 <script setup>
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
@@ -90,8 +157,15 @@ import DeviceCard from '@/components/device/DeviceCard.vue'
 import CreateDeviceDialog from '@/components/device/CreateDeviceDialog.vue'
 import EditDeviceDialog from '@/components/device/EditDeviceDialog.vue'
 import CredentialDialog from '@/components/device/CredentialDialog.vue'
+import BatchCommandDialog from '@/components/device/BatchCommandDialog.vue'
+import BatchAssignDialog from '@/components/device/BatchAssignDialog.vue'
+import BatchResultDrawer from '@/components/device/BatchResultDrawer.vue'
 import { useDeviceList } from '@/composables/useDeviceList'
 import { useDeviceCrud } from '@/composables/useDeviceCrud'
+import { useDeviceGroupTreeQuery, useDeviceGroupListQuery, useTagListQuery } from '@/composables/useDeviceGroups'
+import { useDeviceBatch } from '@/composables/useDeviceBatch'
+
+const TREE_PROPS = { label: 'name', children: 'children' }
 
 const router = useRouter()
 
@@ -125,6 +199,34 @@ const {
   deleteDevice
 } = useDeviceCrud()
 
+const { tree: groupTree } = useDeviceGroupTreeQuery()
+const { groups } = useDeviceGroupListQuery()
+const { tags } = useTagListQuery()
+
+const {
+  selectedIds,
+  selectedCount,
+  isSelected,
+  toggleSelect,
+  clearSelection,
+  toggleSelectAll,
+  resultVisible,
+  result,
+  running,
+  sendBatchCommands,
+  batchEnable,
+  batchDisable,
+  batchAssignGroup,
+  batchAssignTag
+} = useDeviceBatch()
+
+const allSelected = computed(
+  () => devices.value.length > 0 && devices.value.every((device) => isSelected(device.id))
+)
+const someSelected = computed(
+  () => devices.value.some((device) => isSelected(device.id)) && !allSelected.value
+)
+
 async function handleCreate(form) {
   if (await createDevice(form)) {
     await loadDevices(currentPage.value)
@@ -137,6 +239,70 @@ async function handleEdit(form) {
 
 function viewDevice(device) {
   router.push(`/workbench/devices/${device.id}`)
+}
+
+/* ---------- 批量操作 ---------- */
+
+const batchCommandVisible = ref(false)
+const assignVisible = ref(false)
+const assignMode = ref('group')
+const assignAction = ref('ADD')
+
+const assignOptions = computed(() => (assignMode.value === 'group' ? groups.value : tags.value))
+
+function openAssign(mode, action) {
+  assignMode.value = mode
+  assignAction.value = action
+  assignVisible.value = true
+}
+
+async function handleBatchCommand(payload) {
+  try {
+    await sendBatchCommands({ ...payload, deviceIds: selectedIds.value })
+    batchCommandVisible.value = false
+    ElMessage.success('批量下发已提交')
+    await loadDevices(currentPage.value)
+  } catch {
+    // 失败原因由 axios 拦截器统一提示
+  }
+}
+
+async function handleBatchEnabled(enabled) {
+  if (!enabled) {
+    try {
+      await ElMessageBox.confirm(
+        '批量禁用将立即踢掉在线连接，确定继续吗？',
+        '确认禁用',
+        { confirmButtonText: '禁用', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+  }
+  try {
+    await (enabled ? batchEnable : batchDisable)({ deviceIds: selectedIds.value })
+    ElMessage.success(enabled ? '已批量启用' : '已批量禁用')
+    await loadDevices(currentPage.value)
+  } catch {
+    // 失败原因由拦截器提示
+  }
+}
+
+async function handleAssign(targetId) {
+  const payload = { deviceIds: selectedIds.value, action: assignAction.value }
+  if (assignMode.value === 'group') {
+    payload.groupId = targetId
+  } else {
+    payload.tagId = targetId
+  }
+  try {
+    await (assignMode.value === 'group' ? batchAssignGroup : batchAssignTag)(payload)
+    assignVisible.value = false
+    ElMessage.success('批量操作已提交')
+    await loadDevices(currentPage.value)
+  } catch {
+    // 失败原因由拦截器提示
+  }
 }
 </script>
 
@@ -154,13 +320,43 @@ function viewDevice(device) {
 }
 
 .filter-item {
-  width: 200px;
+  width: 180px;
 }
 
 .filter-actions {
   display: flex;
   gap: var(--spacing-sm);
   margin-left: auto;
+}
+
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--grid-gutter);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius);
+  flex-wrap: wrap;
+}
+
+.batch-bar__count {
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.batch-bar__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.list-toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--spacing-sm);
 }
 
 .device-grid {
