@@ -1,6 +1,6 @@
 # MQTT云平台 - 系统架构文档
 
-> 版本：v1.15　最后更新：2026-10-03
+> 版本：v1.16　最后更新：2026-10-04
 > 适用范围：`MQTT自建站点` 主项目（Spring Boot + Vue 3 + EMQX + MySQL + Redis）
 
 ---
@@ -88,7 +88,7 @@ flowchart TB
 | 后端 | `mqtt-cloud-backend:1.0.0` | `mqtt-backend` | 8080 | Spring Boot，健康检查 `/api/health` |
 | 前端 | `mqtt-cloud-frontend:1.0.0` | `mqtt-frontend` | 80 | Nginx 托管 SPA，健康检查 `/health` |
 
-- 编排文件：`docker/docker-compose.yml`；网络：`mqtt-network`（bridge）；命名卷：`mysql_data` / `redis_data` / `emqx_data` / `emqx_log`。
+- 编排文件：`docker/docker-compose.yml`；网络：`mqtt-network`（bridge）；命名卷：`mysql_data` / `redis_data` / `emqx_data` / `emqx_log` / `ota_firmware`（T-22：backend 写入、frontend 以只读挂载到 `/usr/share/nginx/html/firmware` 由 nginx 静态托管固件）。
 - 启动依赖：`backend` 依赖 `mysql`/`redis`/`emqx` 均为 `service_healthy`；`emqx-init` 依赖 `emqx` 与 `backend` 为 `service_healthy`；`frontend` 依赖 `backend` 为 `service_healthy`。
 - **环境变量注意**：compose 文件位于 `docker/`，而 `.env` 位于仓库根目录，执行时需显式 `--env-file .env`（详见 `docs/DEPLOYMENT.md`）。
 
@@ -103,7 +103,7 @@ flowchart TB
 
 ```
 com.mqtt.cloud
-├── controller/     # 22 个控制器（20 个业务控制器 + internal/ 的 2 个 EMQX 回调），仅做参数校验与编排，统一返回 Result<T>
+├── controller/     # 24 个控制器（22 个业务控制器 + internal/ 的 2 个 EMQX 回调），仅做参数校验与编排，统一返回 Result<T>
 ├── service/        # 业务接口 + impl/ 实现，事务边界所在
 ├── mapper/         # MyBatis-Plus Mapper（注解 SQL + Wrapper）
 ├── entity/         # 与表一一对应的实体（含 Product、Device）
@@ -142,21 +142,23 @@ com.mqtt.cloud
 | `DeviceLogController` | `/devices/{deviceId}/logs` | 设备统一日志时间线（T-20）：只读聚合，把报文 / 命令 / 事件 / 连接状态四类记录汇总为单设备时间线（查询时 `UNION ALL`），支持 `types[]` / `startTime` / `endTime` / `keyword` 过滤与分页（`occurred_at DESC, seq DESC`），命令与回执按 `correlationId` 自动关联；归属校验 + ADMIN 旁路，时间范围非法 `6223`、类型非法 `6224` |
 | `PropertyHistoryController` | `/properties` | 属性时序（T-21）：`GET /properties/history` 单端点，按设备 + 一个或多个标识符 + 时间范围做分桶聚合查询，返回多条序列（时间点 + `avg`/`min`/`max`/`count`）；归属校验 + ADMIN 旁路，时间范围非法 `6225`、标识符未建模 `6226`、桶非法或点数超限 `6227` |
 | `DashboardController` | `/dashboards` | 可保存看板（T-21）：列表 / 创建 / 详情 / 更新 / 删除五端点，全部按登录用户隔离；看板不存在或非本人 `6228`、配置非法 `6229`、看板数超限 `6230` |
+| `OtaFirmwareController` | `/ota/firmwares` | OTA 固件包管理（T-22）：上传（multipart）/ 列表（按 `productId` 过滤）/ 详情 / 下载（附件流）/ 删除五端点；操作者由登录态注入、请求体不传 `userId`，授权由 `SecurityConfig` 统一限定 `ADMIN`/`OPERATOR`；错误码 `6231`~`6235` |
+| `OtaUpgradeController` | `/ota/tasks` | OTA 升级任务（T-22）：创建（解析目标集合、剔除与固件产品不一致设备并即时下发）/ 列表 / 详情（含目标快照）/ 逐台记录分页（按 `status` 过滤）/ 重投（`PENDING`/`FAILED`/`TIMEOUT` 重置）/ 删除六端点；授权同上；错误码 `6236`~`6238` |
 | `DeadLetterController` | `/admin/dead-letters` | 摄取死信管理（`@Tag("死信管理")`）：ADMIN 分页查询死信（按 `status` 过滤），供人工处置摄取管线兜底落库的失败消息 |
 
-Swagger 由 `OpenApiConfig` 的 `GroupedOpenApi` bean 按路径前缀分组，当前共 **12 组**（认证管理 / 产品管理 / 实时数据 / 设备管理 / 消息管理 / 历史查询 / 统计分析 / API密钥 / Webhook / 外部API / 健康检查 / 告警中心），访问 `/api/swagger-ui.html`；控制器 / 方法上的 `@Tag`（如「设备分组」「设备标签」「消息规则」「设备日志」「属性时序」「看板」「死信管理」）仅为接口展示标签、**不单独成组**，只随其路径命中的分组一并展示。T-20 **未新增 Swagger 分组**（设备日志端点位于 `/api/devices/{deviceId}/logs`，归入「设备管理」组）；T-21 **同样未新增 Swagger 分组**——属性时序（`/api/properties/**`）与看板（`/api/dashboards/**`）端点均**不匹配任何 `pathsToMatch`**，故不出现在任何分组中（设备日志经 `/api/devices/**` 前缀归入「设备管理」组，而 `/api/properties` 与 `/api/dashboards` 无对应组）。`/internal/**` 为容器内部回调，不纳入 Swagger。
+Swagger 由 `OpenApiConfig` 的 `GroupedOpenApi` bean 按路径前缀分组，当前共 **12 组**（认证管理 / 产品管理 / 实时数据 / 设备管理 / 消息管理 / 历史查询 / 统计分析 / API密钥 / Webhook / 外部API / 健康检查 / 告警中心），访问 `/api/swagger-ui.html`；控制器 / 方法上的 `@Tag`（如「设备分组」「设备标签」「消息规则」「设备日志」「属性时序」「看板」「OTA 固件包」「OTA 升级任务」「死信管理」）仅为接口展示标签、**不单独成组**，只随其路径命中的分组一并展示。T-20 **未新增 Swagger 分组**（设备日志端点位于 `/api/devices/{deviceId}/logs`，归入「设备管理」组）；T-21 **同样未新增 Swagger 分组**——属性时序（`/api/properties/**`）与看板（`/api/dashboards/**`）端点均**不匹配任何 `pathsToMatch`**，故不出现在任何分组中（设备日志经 `/api/devices/**` 前缀归入「设备管理」组，而 `/api/properties` 与 `/api/dashboards` 无对应组）；T-22 **亦未新增 Swagger 分组**——OTA 端点（`/api/ota/**`）同样不匹配任何 `pathsToMatch`，其 `@Tag`（「OTA 固件包」「OTA 升级任务」）仅作展示。`/internal/**` 为容器内部回调，不纳入 Swagger。
 
 ### 4.3 关键组件
 
 - **`MqttClientManager`**：应用启动时按 `spring.mqtt.*` 建立到 EMQX 的 TCP 长连接，负责订阅通配 Topic 与发布下发指令。订阅使用 EMQX 共享订阅（`$share/{group}/device/+/...`），多副本同组分摊消息，避免每条上行被所有副本重复落库。
-- **`MqttMessageHandler`**：消息回调入口，解析 payload → 落 `message` 表 → 更新设备在线状态 → 触发 Webhook 分发。
-- **`IngestDispatcher`**：落库事务提交后 fan-out 五路——Webhook / SSE / **物模型解析**（T-14）/ **命令回执**（T-15）/ **影子补发**（T-16，`ShadowDeliveryService.onIngest`）；解析、回执与补发均为旁路，逐条隔离失败，不影响主摄取链路。
+- **`MqttMessageHandler`**：消息回调入口，解析 payload → 落 `message` 表 → 更新设备在线状态 → 触发 Webhook 分发。订阅四类上行（`device/+/data`、`device/+/heartbeat`、`device/+/lwt`、`device/+/reply`）之外，T-22 新增 **`device/+/ota`**（OTA 进度回传），均以共享订阅 `$share/{group}/...` 注册；`ota` 类型与 `data`/`heartbeat` 同走 `updateStatusGuarded` 刷新在线态。
+- **`IngestDispatcher`**：落库事务提交后 fan-out **六路**——Webhook / SSE / **物模型解析**（T-14）/ **命令回执**（T-15）/ **影子补发**（T-16，`ShadowDeliveryService.onIngest`）/ **OTA 进度回传**（T-22，`OtaProgressService.handle`）；解析、回执、补发与进度均为旁路，逐条隔离失败，不影响主摄取链路。OTA 进度回传另映射 Webhook 事件类型 `device.ota`。
 - **`ThingModelService`**：物模型（TSL）的校验 / 存储 / 导入导出，保存即版本号 +1 并失效**本副本**缓存；`getForProduct` 供解析链路与命令校验（T-15）、设备影子（T-16）复用。
 - **`ThingModelValidator`**：纯函数式 TSL 校验（V1~V16：schemaVersion、标识符规范、数据类型约束、递归深度与数量上限），返回 `{path, message}` 列表，JSON 解析失败单独归类（错误码 6101）。
 - **`ThingModelCache`**：物模型定义的进程内缓存（TTL + 主动失效），避免解析热路径频繁查库；**多副本收敛窗口 = TTL**（默认 60s，`THING_MODEL_CACHE_TTL_SECONDS` 可调，0 关闭）。
 - **`ThingModelInterpretService`**：上行 Alink JSON 解析——按物模型把属性 upsert 到 `device_property_latest`（保留最新一条）、事件追加到 `device_event_record`；属性值按 `dataType` 校验与文本化，非法值跳过并计数；未建模 / 非 Alink 载荷兼容直存，不丢消息。解析完成后依次挂**四条内部旁路**（复用同一份归一化样本、各自 try-catch 隔离、异常逐条不冒泡到摄取链路）：T-16 影子收敛（`DeviceShadowService.applyReported`）→ T-17 阈值告警（`AlertEvaluationService`）→ T-19 消息规则（`RuleEvaluationService`，`onProperties` / `onEvents`）→ T-21 属性历史追加（`PropertyHistoryService.append`，批量 `INSERT ... VALUES (...),(...)`，异常只记 WARN、**不进死信**）；**不新增 `IngestDispatcher` fan-out 路**。
 - **`DeviceDataService`**：设备属性最新值 / 事件记录只读查询（按 `deviceKey` 归属校验、事件分页 `size` 上限 100）。
-- **`DeviceCommandService`**：命令下发主链路（T-15）——按物模型校验参数（属性设置须命中 `rw` 属性、服务调用须命中服务且满足入参必填与类型），落 `PENDING` → 发布 QoS 1 → 置 `SENT`，发布异常置 `FAILED`；`callType=sync` **轮询命令记录表**等待终态（跨副本正确，不用进程内 `Future`）；`getCapability` 返回可下发能力供前端动态表单。
+- **`DeviceCommandService`**：命令下发主链路（T-15）——按物模型校验参数（属性设置须命中 `rw` 属性、服务调用须命中服务且满足入参必填与类型），落 `PENDING` → 发布 QoS 1 → 置 `SENT`，发布异常置 `FAILED`；`callType=sync` **轮询命令记录表**等待终态（跨副本正确，不用进程内 `Future`）；`getCapability` 返回可下发能力供前端动态表单。T-22 新增**保留服务白名单** `SERVICE_OTA_UPGRADE`（`ota_upgrade`，免物模型声明即可下发，下行 method 仍为 `thing.service.ota_upgrade`），并新增来源 `SOURCE_OTA`，供升级任务复用命令链路（获得命令记录、回执、超时巡检与命令历史）。
 - **`CommandReplyService`**：命令回执处理（T-15）——解析 Alink 回执，以 `id` 关联 `command_id`，`code=200` 置 `ACKED`（`result=data`）、否则 `FAILED`；**条件更新**（`WHERE command_id=? AND status IN ('PENDING','SENT')`）保证终态不可覆盖，重复 / 未知回执计数忽略。
 - **`CommandTimeoutSweeper`**：定时巡检（`app.command.timeout-sweep-interval-ms`，0 关闭）——把长期停留 `PENDING/SENT` 的记录按同步 / 异步不同超时置 `TIMEOUT`，保证异步命令不会永远停在 `SENT`。
 - **`ThingModelParamValidator`**：无状态参数校验器（T-15 从 T-14 解析逻辑提取）——`normalize` 供上行解析（返回文本或 `null`）、`validate` 供下行命令（返回错误原因），上下行**共用同一套 `dataType` 校验**，避免规则漂移。
@@ -200,6 +202,13 @@ Swagger 由 `OpenApiConfig` 的 `GroupedOpenApi` bean 按路径前缀分组，�
 - **`DashboardService`** / **`DashboardServiceImpl`**：可保存看板（T-21）——列表 / 创建 / 详情 / 更新 / 删除，`user_id` **服务端注入**（忽略客户端传值），查询 / 更新 / 删除统一走 `getOwned`（不存在或非本人一律 `6228`，刻意不区分以免探测）；`config` 在服务层用 `ObjectMapper` 解析为 `DashboardConfig` 后逐字段白名单校验（面板数 / 桶 / 图型 `line`|`bar` / 聚合 `avg`|`min`|`max`|`count` / 跨度），非法 `6229`，再以规范化 JSON 落库；列表不校验存量 `config`（`parseQuietly` 容错），**删除为硬删除**。
 - **`DashboardProperties`**：`@ConfigurationProperties(prefix = "app.dashboard")`（风格对齐 `PropertyHistoryProperties`）——承载看板数上限（`max-count`）与单看板面板数上限（`max-panels`）。
 - **`PropertyHistoryConstants`**：属性时序与看板共享常量（T-21，归 `common`）——集中「时间桶白名单与秒数映射（`1m`/`5m`/`15m`/`30m`/`1h`/`6h`/`1d`，默认 `5m`）、可聚合数值类型（`int`/`float`/`double`）、跨度 / 序列数 / 桶数上限兜底、保留清理默认值与看板图型 / 聚合白名单」，避免服务层校验、SQL 分桶、清理巡检三处字面量漂移。
+- **`OtaFirmwareService`** / **`OtaFirmwareServiceImpl`**：固件包管理（T-22）——上传（校验产品存在 / 版本格式 / 文件大小，计算 `md5`，按 `{productId}/{version}/{fileName}` 落盘共享卷，同产品版本唯一）、列表（按 `productId` 过滤，按用户隔离）、详情、下载（附件流，服务层返回落盘路径）、删除（先查是否被升级任务引用，被引用 `6234`；删除记录并清理磁盘文件）；`app.ota.storage-dir` 落盘根目录须与 frontend 容器 nginx 共享卷一致。错误码 `6231`/`6232`/`6233`/`6234`/`6235`。
+- **`OtaUpgradeService`** / **`OtaUpgradeServiceImpl`**：升级任务管理（T-22）——`createTask` 复用 `DeviceBatchService.resolveTarget`（手选 ∪ 产品 ∪ 分组 ∪ 标签）解析目标、剔除与固件产品不一致设备、按 `taskMaxDevices` 限流、落 `ota_upgrade_task` 与逐台 `ota_upgrade_record`（`PENDING`）并即时下发；`dispatchTask` 逐台复用 `DeviceCommandService.invoke`（`service`/`ota_upgrade`/`async`/`source=OTA`，入参 `{url,version,md5,size}`），单台失败只写 `message` 并**保持 `PENDING`** 等待补投；`sweepPending` 补投 `PENDING`、`sweepTimeout` 把 `COALESCE(last_report_at, dispatched_at)` 超阈的记录置 `TIMEOUT`；`retry` 重置 `PENDING`/`FAILED`/`TIMEOUT` 为 `PENDING`（进度归零、清空下发痕迹）、`remove` 物理删除（任务 `RUNNING` 时 `6238`）；任务计数 / 状态统一由 `OtaUpgradeTaskMapper.refreshCounters` 聚合记录重算。
+- **`OtaProgressService`** / **`OtaProgressServiceImpl`**：进度回传处理（T-22）——`IngestDispatcher` **第六路 fan-out** 旁路调用，只处理 `messageType=ota` 事件；解析 `device/{key}/ota` 报文 → 归位该设备最近一条非终态记录 → 版本比对 → 状态机推进（进度单调不减、状态仅前向迁移、`failed` 可从任意非终态直达 `FAILED`）→ 落库，终态时 `refreshCounters`；逐条 try-catch 隔离、异常绝不冒泡（冒泡会导致 worker 整批重试、消息重复落库），版本不一致 / 报文非法 / 无归属记录（手工升级）静默忽略。
+- **`OtaProgressPayload`**：`device/{key}/ota` 上行进度报文的只读模型（T-22）——`version`/`status` 必填、`status` 归一化小写后须在 `downloading`/`flashing`/`success`/`failed` 集合内、`progress` 显式给出时须为 `0~100`（缺省时仅 `success` 推算 `100`）、`message` 超长按 255 截断；任何非法（非 JSON 对象、必填缺失、状态未知、进度越界）一律返回 `null` 由调用方丢弃并记 WARN。
+- **`OtaDispatchSweeper`**：升级巡检调度（T-22，`SchedulingConfigurer`，间隔 `app.ota.dispatch-interval-ms` 默认 `60000`）——每轮依次 `sweepPending`（补投 `PENDING`）+ `sweepTimeout`（标记超时），`enabled=false` 或间隔非正时不注册，`sweep()` 整体 try-catch 只记 WARN、绝不中断调度线程。
+- **`OtaProperties`**：`@ConfigurationProperties(prefix = "app.ota")`（风格对齐 `PropertyHistoryProperties`）——承载总开关、固件落盘目录、设备侧下载基址、单文件大小上限、单任务设备数上限、补投 / 超时巡检间隔与批量、逐台记录超时阈值。
+- **`OtaStatusValue`**：OTA 状态取值（T-22，归 `common`）——记录状态（`PENDING`/`DISPATCHED`/`DOWNLOADING`/`FLASHING`/`SUCCESS`/`FAILED`/`TIMEOUT`）、任务状态（`RUNNING`/`SUCCESS`/`PARTIAL`/`FAILED`）、设备上行状态字面量（`downloading`/`flashing`/`success`/`failed`）与 `NON_TERMINAL_STATUSES`/`TERMINAL_STATUSES` 集合，避免进度处理、巡检、前端展示三处字面量漂移。
 - **`DeviceMonitorService`**：定时任务（`ScheduleConfig` 启用），根据最近心跳时间判定设备在线/离线并写 `device_status_history`。
 - **`WebhookDispatcher`**：基于 `RestTemplate`（`RestTemplateConfig`）向已配置 URL 推送事件。
 - **`TokenBlacklistService`**：登出后把 Token 写入 Redis 黑名单，`JwtAuthenticationFilter` 据此拒绝已登出 Token。
@@ -241,6 +250,8 @@ T-20 新增能力的模块归属：`DeviceLogService` / `DeviceLogServiceImpl` �
 
 T-21 新增能力的模块归属：`PropertyHistoryService` / `PropertyHistoryServiceImpl`、`PropertyHistoryRetentionService` / `PropertyHistoryRetentionServiceImpl` 与 `DevicePropertyHistoryMapper` 归 `telemetry`（属性时序是遥测数据的写入 / 查询与生命周期清理，与 `DeviceDataService` / `DeviceLogService` 同侧；`DevicePropertyHistoryMapper` **不继承 `BaseMapper`**，只暴露 `insertBatch`/`aggregateByBucket`/`purgeBefore` 三个定制方法），`DashboardService` / `DashboardServiceImpl` 与 `DashboardMapper` 归 `platform`（可保存看板是用户归属的平台侧业务编排，与告警 / 规则同侧），`PropertyHistorySweeper` / `PropertyHistoryProperties` / `DashboardProperties` 归 `config`（与 `RuleSweeper` / `AlertSweeper` / `CommandTimeoutSweeper` 同侧），`PropertyHistoryConstants` 归 `common`；摄取改动为 `ThingModelInterpretServiceImpl` 的**第 4 条内部旁路**（`appendHistory`，复用同一份归一化样本、异常只记 WARN **不进死信**），**不新增 `IngestDispatcher` fan-out 路**，故 `ingest` 无新增类；属性时序端点挂 `PropertyHistoryController`（`/properties`），看板端点挂 `DashboardController`（`/dashboards`）。
 
+T-22 新增能力的模块归属：`OtaFirmwareService` / `OtaFirmwareServiceImpl`、`OtaUpgradeService` / `OtaUpgradeServiceImpl` 归 `device`（固件包与升级任务属设备能力，复用 `DeviceBatchService.resolveTarget` 与 `DeviceCommandService.invoke`），`OtaProgressService` / `OtaProgressServiceImpl` 与 `OtaProgressPayload` 归 `service`（进度回传走摄取旁路，由 `IngestDispatcher` **第六路** fan-out 调用，故 `ingest` 无新增类），`OtaDispatchSweeper` / `OtaProperties` 归 `config`（与 `PropertyHistorySweeper` / `RuleSweeper` / `CommandTimeoutSweeper` 同侧），`OtaStatusValue` 归 `common`；端点挂 `OtaFirmwareController`（`/ota/firmwares`）与 `OtaUpgradeController`（`/ota/tasks`）。**新增上行主题 `device/{key}/ota`（不改 ACL、不新增下行主题）**，固件地址复用既有 `/cmd/down` 命令通道下发；固件文件落盘共享卷由 frontend 容器 nginx 以 `location ^~ /firmware/` 静态托管（设备侧无 JWT，直连拉取，不经后端鉴权）。
+
 **可执行边界**（`backend/src/test/java/com/mqtt/cloud/arch/LayeringRulesTest.java`）
 
 | 规则 | 含义 |
@@ -260,7 +271,7 @@ T-21 新增能力的模块归属：`PropertyHistoryService` / `PropertyHistorySe
 
 ```
 frontend/src
-├── api/          # axios 实例与按域拆分的接口封装（auth/device/product/message/history/stats/realtime/alert/deviceGroup/deviceTag/rule/deviceLog/propertyHistory/dashboard）
+├── api/          # axios 实例与按域拆分的接口封装（auth/device/product/message/history/stats/realtime/alert/deviceGroup/deviceTag/rule/deviceLog/propertyHistory/dashboard/ota）
 ├── stores/       # Pinia：auth（令牌与用户）、device（设备列表与在线态）、ui（布局/视口/实时通道）
 ├── router/       # Vue Router：公开站 / 工作台分区、登录态与角色守卫、旧路径 301
 ├── components/
@@ -273,7 +284,7 @@ frontend/src
 ├── views/
 │   ├── site/     # 公开站：home/HomePage、docs/*（快速开始/设备接入/消息与数据/开放API/平台运维）、NotFound
 │   ├── auth/     # Login / Register
-│   └── workbench/ # 工作台：dashboard / device / message / history / access / product / alert / rule / board
+│   └── workbench/ # 工作台：dashboard / device / message / history / access / product / alert / rule / board / ota
 ├── composables/  # useDeviceList / useHistoryQuery / useProductList / useThingModel / useDeviceData / useAlerts / useDeviceGroups / useDeviceBatch / useRules / useDeviceLog / usePropertyHistory / useDashboards 等页面状态逻辑
 ├── assets/       # css 设计令牌 + svg/icons 图标库
 └── utils/        # echarts 按需封装
@@ -307,6 +318,7 @@ frontend/src
 - **消息规则（T-19）**：左导航「监控」组含「消息规则」（`/workbench/rules`，`RuleCenter` 两页签：规则定义 / 执行记录）；规则编辑器按触发源与动作类型动态切换表单（三段式：触发源 → 条件 → 动作），底部「试运行」干跑展示命中结论与诊断；执行记录页支持规则 / 设备 / 状态过滤、详情（含 `forwardPayload` 快照）与手动重试（仅 `FAILED`）。
 - **设备日志（T-20）**：设备详情页提供「设备日志」入口，进入 `/workbench/devices/:id/logs`（`DeviceLog.vue` + `DeviceLogTimeline.vue`，数据由 `useDeviceLog` 驱动）；页面为单设备统一时间线，默认「近 24 小时」，支持按类型（报文 / 命令 / 事件 / 状态）/ 时间范围 / 关键字过滤与分页，条目可展开查看明细，命令与回执按 `correlationId` 归并展示。
 - **属性时序与可视化（T-21）**：设备详情页提供「属性趋势」入口（`components/device/DevicePropertyTrend.vue` + `PropertyTrendChart.vue`，由 `usePropertyHistory` 驱动：选标识符 → 选时间桶 / 聚合 / 图型 → 调 `GET /api/properties/history` 渲染多序列）；左导航「监控」组另含「数据看板」（`/workbench/boards`，`BoardList.vue` 卡片列表，进入 `/workbench/boards/:id` 的 `BoardDetail.vue`，`BoardPanel` 展示面板、`BoardPanelEditor` 编辑面板；看板由 `useDashboards` 驱动，全部按登录用户隔离、可保存复用）。
+- **OTA 固件升级（T-22）**：左导航「设备」组含「固件管理」（`/workbench/ota/firmwares`，`FirmwareList.vue`：上传（multipart）/ 按产品过滤列表 / 下载 / 删除，`api/ota.js` + vue-query 驱动）与「升级任务」（`/workbench/ota/tasks`，`UpgradeTasks.vue`：任务列表 + 新建任务抽屉，目标按「产品 / 分组（含子分组）/ 标签 / 手选设备」并集选择，复用 `useDeviceGroupTreeQuery` / `useTagListQuery`）；任务列表进入 `/workbench/ota/tasks/:id`（`UpgradeTaskDetail.vue`：任务聚合计数 + 目标快照 + 逐台记录分页（按状态过滤）+ 重投 / 删除）。三页均限定 `ADMIN`/`OPERATOR` 角色（`meta.roles`），OTA 视图**不新增 composable**，状态逻辑内联于 `useQuery` / `useQueryClient`。
 - **公开站骨架**：站点头（`SiteLayout`）+ 内容 + 站脚；文档站复用 `DocsLayout`（左目录 + 正文 + 右侧页内锚点）。
 - **响应式四档**：≥1440px 宽屏（三栏齐备）、1024–1439px 紧凑屏（右栏收为抽屉）、768–1023px 平板（左导航强制图标态、右栏抽屉）、<768px 手机（左导航与右栏均为抽屉，顶栏 / 状态栏精简）。断点由 `WorkbenchLayout` 以 `matchMedia` 监听并写入 `ui` store 的 `viewport`，抽屉开关状态同由 `ui` store 承载。
 - **内容容器职责**：`.page` 唯一提供内边距（`--content-padding`）与超宽居中（`--content-max-width`），`.page--narrow` 供阅读型页面，`.site-container` 供公开站（`--site-max-width`）；消除页面级双重内边距导致的错位。
@@ -340,10 +352,13 @@ frontend/src
 | `rule_execution` | 规则执行记录（`V9` 新增，T-19）：**无逻辑删除**（历史留痕）。冗余 `user_id` + 规则 / 设备 / 触发快照（`rule_name`/`device_key`/`device_name`/`source_type`/`identifier`/`trigger_value`）、`action_type`、`status`（`PENDING`/`SUCCESS`/`FAILED`）、`attempt_count`、`next_attempt_at`（`NULL` = 已投递待首次执行或已终态，巡检只拾取非空到期）、`error_message`、`forward_payload`、`created_at`/`finished_at`；索引 `idx_exec_user_status` / `idx_exec_rule` / `idx_exec_device` / `idx_exec_retry` |
 | `device_property_history` | 设备属性历史（`V10` 新增，T-21）：**追加型不去重、无时间戳守卫**（由摄取第 4 条旁路批量追加写）。`device_id`（外键级联删除）、`identifier`、`data_type`、`value_text`（统一文本化，按 `data_type` 解释；数值类型 `int`/`float`/`double` 才参与 `min`/`max`/`avg`，文本仅 `count`）、`reported_at DATETIME(3)`（毫秒精度，**保留清理依据**）、`created_at DATETIME(3)`；复合索引 `idx_device_identifier_time (device_id, identifier, reported_at)`（分桶聚合）、清理索引 `idx_reported_at`（按时间分批硬删） |
 | `dashboard` | 可保存看板（`V10` 新增，T-21）：`user_id`（归属创建者，`ON DELETE CASCADE`）、`name VARCHAR(64)`、`config JSON`（面板数组：设备 / 标识符 / 图型 / 聚合 / 桶 / 跨度）、`created_at`/`updated_at`（`ON UPDATE`）；索引 `idx_user`；**硬删除、无逻辑删除列** |
+| `ota_firmware` | OTA 固件包（`V11` 新增，T-22）：`user_id`（归属用户，`ON DELETE CASCADE`）、`product_id`（外键级联）、`version VARCHAR(64)`、`file_name VARCHAR(255)`、`file_path VARCHAR(512)`（相对共享卷路径，下载地址 `{public-base-url}/{file_path}`）、`file_size BIGINT`、`md5 CHAR(32)`、`description VARCHAR(255) NULL`、`created_at`/`updated_at`（`ON UPDATE`）；唯一键 `uk_product_version (product_id, version)`，索引 `idx_user` / `idx_product`；**无逻辑删除列**（删除走物理删除 + 磁盘文件清理） |
+| `ota_upgrade_task` | OTA 升级任务（`V11` 新增，T-22）：`user_id`（外键级联）、`firmware_id`（外键**不级联**，被引用固件禁止删除）、`product_id`（冗余）、`name VARCHAR(64)`、`target_json JSON`（创建时目标快照）、`total_count`/`dispatched_count`/`success_count`/`failed_count`、`status VARCHAR(16)`（`RUNNING`/`SUCCESS`/`PARTIAL`/`FAILED`）、`created_at`/`updated_at`；索引 `idx_user` / `idx_firmware`；**无逻辑删除列**（计数 / 状态由 `refreshCounters` 聚合记录重算） |
+| `ota_upgrade_record` | OTA 逐台升级记录（`V11` 新增，T-22）：`task_id`（外键级联）、`device_id`（外键级联）、`firmware_id`、`version VARCHAR(64)`（冗余，与上行进度比对）、`status VARCHAR(16)`（`PENDING`/`DISPATCHED`/`DOWNLOADING`/`FLASHING`/`SUCCESS`/`FAILED`/`TIMEOUT`）、`progress INT`（0~100，单调不减）、`message VARCHAR(255) NULL`、`command_id VARCHAR(64) NULL`、`dispatched_at DATETIME(3) NULL`、`last_report_at DATETIME(3) NULL`（超时判定基线 `COALESCE(last_report_at, dispatched_at)`）、`created_at`/`updated_at`；唯一键 `uk_task_device (task_id, device_id)`，索引 `idx_device` / `idx_status` / `idx_task_status`；**无逻辑删除列** |
 
 三层关系：**产品（模板）→ 设备（实例，`deviceKey` 在产品内唯一）→ 凭据（`deviceSecret` 仅存 BCrypt 哈希于 `device`）**。产品另持有**物模型（TSL）**：属性 / 事件 / 服务定义 + 版本号，是上行数据语义化的依据。
 
-Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__baseline.sql`（基线）、`V2__product_and_device_identity.sql`（产品表 + 设备表改造）、`V3__ingest_dead_letter.sql`（摄取死信表）、`V4__thing_model.sql`（物模型字段 + 两张派生表，T-14）、`V5__device_command.sql`（命令记录表，T-15）、`V6__device_shadow.sql`（设备影子表，T-16）、`V7__alert_center.sql`（告警规则 + 告警记录两表，T-17，**只加表**）、`V8__device_group_and_tag.sql`（分组 + 标签 + 两张关联表，T-18，**只加表**）、`V9__rule_engine.sql`（规则定义 + 执行记录两表，T-19，**只加表**）与 `V10__property_history.sql`（属性历史 + 可保存看板两表，T-21，**只加表**）。存量库通过 `baseline-on-migrate` 记为 V1 后仅执行 V2+。
+Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__baseline.sql`（基线）、`V2__product_and_device_identity.sql`（产品表 + 设备表改造）、`V3__ingest_dead_letter.sql`（摄取死信表）、`V4__thing_model.sql`（物模型字段 + 两张派生表，T-14）、`V5__device_command.sql`（命令记录表，T-15）、`V6__device_shadow.sql`（设备影子表，T-16）、`V7__alert_center.sql`（告警规则 + 告警记录两表，T-17，**只加表**）、`V8__device_group_and_tag.sql`（分组 + 标签 + 两张关联表，T-18，**只加表**）、`V9__rule_engine.sql`（规则定义 + 执行记录两表，T-19，**只加表**）、`V10__property_history.sql`（属性历史 + 可保存看板两表，T-21，**只加表**）与 `V11__ota_firmware.sql`（固件包 + 升级任务 + 逐台记录三表，T-22，**只加表、无 `ALTER`、无自动清理**）。存量库通过 `baseline-on-migrate` 记为 V1 后仅执行 V2+。
 原计划用于 `message` 分区改造的迁移**未执行**：按前置门槛（`SELECT COUNT(*) FROM message` < 500 万且月增速 < 200 万）判定当前数据量未达阈，已在 R1 阶段决策推迟到 R5，并记录于 `docs/总督促文档.md`；该分区迁移**从未落盘**，故与 T-14 的 `V4__thing_model.sql` 不存在版本号冲突。字段级设计与索引见 `docs/T-01_数据库设计与Schema初始化_开发文档.md`。
 
 T-20（设备日志与诊断）**未新增表、未新增迁移**：设备日志时间线是对既有 `message` / `device_command_record` / `device_event_record` / `device_status_history` 四表的**查询时 `UNION ALL` 只读投影**，不落任何新数据；权限沿用设备归属校验，无需 DDL。
@@ -385,6 +400,7 @@ T-20（设备日志与诊断）**未新增表、未新增迁移**：设备日志
 | 设备日志（T-20） | `DEVICE_LOG_MAX_PAGE_SIZE`（时间线单页上限）/ `DEVICE_LOG_MAX_RANGE_DAYS`（查询跨度上限，天） | 100 / 31 |
 | 属性时序（T-21） | `PROPERTY_HISTORY_ENABLED`（false=不追加历史，保留清理亦不注册）/ `PROPERTY_HISTORY_MAX_RANGE_DAYS`（跨度上限，天）/ `PROPERTY_HISTORY_MAX_SERIES`（序列数上限，`deviceIds × identifiers`）/ `PROPERTY_HISTORY_MAX_POINTS`（单序列点数上限）/ `PROPERTY_HISTORY_RETENTION_DAYS`（保留天数，0=不清理；**R5 门槛复核输入**）/ `PROPERTY_HISTORY_CLEANUP_ENABLED` / `PROPERTY_HISTORY_CLEANUP_INTERVAL_MS`（清理巡检间隔，0 关闭）/ `PROPERTY_HISTORY_CLEANUP_BATCH_SIZE`（单批删除行数） | true / 31 / 20 / 500 / 30 / true / 3600000 / 1000 |
 | 可保存看板（T-21） | `DASHBOARD_MAX_COUNT`（每用户看板数上限）/ `DASHBOARD_MAX_PANELS`（单看板面板数上限） | 20 / 12 |
+| OTA 固件升级（T-22） | `OTA_ENABLED`（false=固件上传 / 建任务直接拒绝 `6232`，巡检不注册）/ `OTA_STORAGE_DIR`（固件落盘根目录，须与 nginx 共享卷一致）/ `OTA_PUBLIC_BASE_URL`（设备侧下载基址，下发 url = `{base}/{file_path}`）/ `OTA_MAX_FILE_SIZE`（单文件上限，字节；`spring.servlet.multipart.max-file-size` 须不小于该值）/ `OTA_TASK_MAX_DEVICES`（单任务设备数上限）/ `OTA_DISPATCH_INTERVAL_MS`（补投 / 超时巡检间隔，0 关闭）/ `OTA_DISPATCH_BATCH_SIZE`（单轮补投上限）/ `OTA_TASK_TIMEOUT_MS`（逐台记录超时阈值） | true / /var/lib/mqtt/ota / http://localhost/firmware / 33554432（32 MiB）/ 500 / 60000 / 200 / 86400000（24h） |
 | 服务 | `SERVER_PORT` | 8080 |
 | 安全 | `JWT_SECRET` | 无默认，必须显式配置 |
 
@@ -432,3 +448,4 @@ T-20（设备日志与诊断）**未新增表、未新增迁移**：设备日志
 | v1.13 | 2026-10-03 | T-19 消息规则 / 规则引擎收口：§4.2 控制器 17 → 18（新增 `RuleController`，`/rules` 10 端点）、Swagger 分组 15 → 16（新增「消息规则」）；§4.3 新增 `RuleService`/`RuleEvaluationService`/`RuleConditionMatcher`/`RuleActionExecutor`/`RuleExecutionService`/`RuleSweeperService`/`RuleSweeper`/`RuleMqttForwarder`/`RuleHttpForwarder`/`RuleTemplateRenderer`/`RuleProperties`/`RuleConstants`，`AsyncConfig` 新增 `ruleExecutor` 线程池，`ThingModelInterpretService` 新增规则评估内部旁路（四类动作出口、重试与巡检）；§4.4 补 T-19 模块归属；§5.1/§5.4 补规则中心；§6 数据模型新增 `rule_definition`/`rule_execution` 两表与 `V9__rule_engine.sql`（**只加表**）；§8 新增 `app.rule` 配置项并补齐 T-15 / T-16 / T-18 配置行。 |
 | v1.14 | 2026-10-03 | T-20 设备日志与诊断收口：§4.2 控制器 18 → 19（新增 `DeviceLogController`，`/devices/{deviceId}/logs` 单端点）；§4.3 新增 `DeviceLogMapper`（**不继承 `BaseMapper`**，查询时 `UNION ALL` 聚合四张既有表）、`DeviceLogService`/`DeviceLogServiceImpl`（归属校验、参数夹取、Java 侧 `correlationId` 回填）与 `DeviceLogProperties`/`DeviceLogConstants`；§4.4 补 T-20 模块归属（`telemetry` / 持久层 / `config` / `common`）并明确**无新表、无新迁移、无写入路径改动、无 MQTT 主题 / ACL 改动**；§5.1/§5.4 补设备日志页与 `useDeviceLog`；§6 标注设备日志为查询时只读投影（`V1`~`V9` 迁移零改动）；§8 新增 `app.device-log` 配置项。**勘误**：§4.2 后 Swagger 说明由「共 16 组」修正为实际 **12 个 `GroupedOpenApi` 分组**（「设备分组」「设备标签」「消息规则」等为控制器 `@Tag` 标签而非独立分组，v1.12 / v1.13 条目中的分组计数系笔误）。 |
 | v1.15 | 2026-10-03 | T-21 属性时序与可视化收口：§4.1 控制器 **19 → 22**（勘误：实为 **22 = 20 个业务控制器 + 2 个 `internal/` EMQX 回调**；v1.13 起计数漏计既有 `DeadLetterController`，本次一并修正）；§4.2 补 `PropertyHistoryController`（`/properties` 单端点，`6225`/`6226`/`6227`）、`DashboardController`（`/dashboards` 5 端点，`6228`/`6229`/`6230`）与既有 `DeadLetterController`（`/admin/dead-letters`）三行，并说明 T-21 **未新增 Swagger 分组**（`/api/properties/**`、`/api/dashboards/**` 不匹配任何 `pathsToMatch`，Swagger 仍 **12 组**）；§4.3 新增 `DevicePropertyHistoryMapper`（**不继承 `BaseMapper`**，`insertBatch` / `aggregateByBucket` / `purgeBefore`）、`PropertyHistoryService`/`Impl`、`PropertyHistoryRetentionService`/`Impl`、`PropertyHistorySweeper`、`PropertyHistoryProperties`、`DashboardService`/`Impl`、`DashboardProperties`、`PropertyHistoryConstants`，且 `ThingModelInterpretService` 新增**第 4 条内部旁路**（属性历史追加，异常只记 WARN 不进死信）；§4.4 补 T-21 模块归属（`telemetry` / `platform` / `config` / `common`），明确**不新增 `IngestDispatcher` fan-out 路**；§5.1/§5.2/§5.4 补 `propertyHistory`/`dashboard` API、`dashboard`/`chart` 组件域、`board` 视图与 `usePropertyHistory`/`useDashboards`，及设备属性趋势入口与「数据看板」页；§6 数据模型新增 `device_property_history`（追加型不去重、无时间戳守卫）与 `dashboard`（`config` JSON、硬删除）两表及 `V10__property_history.sql`（**只加表**）；§8 新增 `app.property-history` 与 `app.dashboard` 配置项。 |
+| v1.16 | 2026-10-04 | T-22 OTA 固件升级收口：§4.1 控制器 **22 → 24**（新增 `OtaFirmwareController`/`OtaUpgradeController`）；§4.2 补两控制器（`/ota/firmwares` 5 端点 `6231`~`6235`、`/ota/tasks` 6 端点 `6236`~`6238`，授权统一 `ADMIN`/`OPERATOR`）并说明 T-22 **未新增 Swagger 分组**（`/api/ota/**` 不匹配任何 `pathsToMatch`，Swagger 仍 **12 组**）；§4.3 新增 `OtaFirmwareService`/`Impl`、`OtaUpgradeService`/`Impl`、`OtaProgressService`/`Impl`、`OtaProgressPayload`、`OtaDispatchSweeper`、`OtaProperties`、`OtaStatusValue`，`IngestDispatcher` fan-out **五路 → 六路**（新增 OTA 进度回传，映射 Webhook 事件 `device.ota`），`MqttMessageHandler` 订阅新增 `$share/{group}/device/+/ota`，`DeviceCommandService` 新增保留服务 `SERVICE_OTA_UPGRADE` 与来源 `SOURCE_OTA`；§4.4 补 T-22 模块归属（`device` / `service` / `config` / `common`）并明确**新增上行主题 `device/{key}/ota`、不改 ACL、不新增下行主题**，固件地址复用 `/cmd/down` 命令通道、文件由 frontend nginx `location ^~ /firmware/` 静态托管；§5.1/§5.4 补 `api/ota.js`、`views/workbench/ota` 三页与「固件管理」/「升级任务」入口（限 `ADMIN`/`OPERATOR`）；§6 数据模型新增 `ota_firmware`（`uk_product_version`）/`ota_upgrade_task`（`firmware_id` 不级联）/`ota_upgrade_record`（`uk_task_device`、超时基线 `COALESCE(last_report_at, dispatched_at)`）三表及 `V11__ota_firmware.sql`（**只加表、无 `ALTER`、无自动清理**）；§8 新增 `app.ota` 配置项。 |

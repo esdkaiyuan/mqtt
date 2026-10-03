@@ -934,6 +934,84 @@ SELECT id, user_id, name, JSON_LENGTH(config) panels, updated_at FROM dashboard 
 - **返回 `2002` / `2003`**：`2002` 设备不存在，`2003` 设备不属于当前用户（`ADMIN` 旁路归属校验）；无 token 返回 `401`。
 - **历史表持续膨胀**：保留清理由 `PropertyHistoryRetentionServiceImpl` + `PropertyHistorySweeper` 按 `reported_at` 分批硬删；`PROPERTY_HISTORY_CLEANUP_ENABLED=false` 或 `…_INTERVAL_MS<=0` 时**不注册巡检**。容量与保留窗口已列为 **R5 门槛评估项**，届时随 `scripts/r5-trigger-check.*` 一并复核（见 §9.8 与 §6 R5 边界）。
 
+### 9.17 OTA 固件升级运维（T-22）
+
+**迁移 `V11__ota_firmware.sql`**：新建**三张表、不改既有表**（`V1`~`V10` 零改动），可安全回滚应用版本——
+
+- `ota_firmware`（固件包）：`user_id` / `product_id` 归属，`uk_product_version (product_id, version)` 同产品版本唯一，`file_path` 为共享卷内相对路径，`md5` / `file_size` 供设备校验；**无逻辑删除列**。
+- `ota_upgrade_task`（升级任务）：目标快照 `target_json`、聚合计数与状态（`RUNNING`/`SUCCESS`/`PARTIAL`/`FAILED`）；`firmware_id` 外键**不级联**——**被升级任务引用的固件禁止删除**（`6234`）。
+- `ota_upgrade_record`（逐台记录）：`uk_task_device (task_id, device_id)`，状态机 `PENDING → DISPATCHED → DOWNLOADING → FLASHING → SUCCESS`（旁支 `FAILED`/`TIMEOUT`），`progress` 单调不减；超时判定基线为 `COALESCE(last_report_at, dispatched_at)`；**无逻辑删除列**。
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：迁移执行成功、三张新表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'ota_firmware'; SHOW TABLES LIKE 'ota_upgrade_task'; SHOW TABLES LIKE 'ota_upgrade_record';"
+```
+
+**固件落盘与静态托管**：固件由 backend 写入命名卷 `ota_firmware`（容器内 `OTA_STORAGE_DIR`，默认 `/var/lib/mqtt/ota`），frontend 容器以**只读**方式把同一命名卷挂到 `/usr/share/nginx/html/firmware`，nginx 以 `location ^~ /firmware/` 静态托管；设备侧下载地址 `{OTA_PUBLIC_BASE_URL}/{productId}/{version}/{fileName}` **不经后端鉴权**（设备无 JWT），故须保证：
+
+- `OTA_STORAGE_DIR` 与 compose 中 `ota_firmware` 卷挂载点一致；
+- `OTA_PUBLIC_BASE_URL` 为设备可访问的网关地址（默认 `http://localhost/firmware`，生产须改为实际域名 / IP）；
+- `docker compose down`（不带 `-v`）不丢固件；**切勿** `down -v`（会清空命名卷）。
+
+```bash
+# 查看固件卷内容（backend 容器内）
+docker exec mqtt-backend ls -lR /var/lib/mqtt/ota | head -40
+# 端到端：经 nginx 拉取固件（应返回 200 + 文件体）
+curl -sI http://localhost/firmware/<productId>/<version>/<fileName>
+```
+
+**设备侧协议**（复用既有命令通道，**不改 ACL、不新增下行主题**）：
+
+- **下发**：平台按批次经 `/cmd/down` 下发 `thing.service.ota_upgrade`，入参 `{url, version, md5, size}`（`callType=async`、`source=OTA`），并落 `device_command_record` 供命令历史 / 回执 / 超时巡检复用。
+- **回传**：设备向 `device/{deviceKey}/ota` 上报进度 `{"version","status","progress","message"}`，`status` 取 `downloading`/`flashing`/`success`/`failed`（`success` 恒推算 `progress=100`）；平台以共享订阅 `$share/{group}/device/+/ota` 消费，经 `IngestDispatcher` **第六路旁路**推进状态机（版本不一致 / 报文非法 / 无归属记录一律静默忽略）。
+
+**巡检**：`OtaDispatchSweeper`（间隔 `OTA_DISPATCH_INTERVAL_MS`，默认 60s）每轮补投仍为 `PENDING` 的记录、并把超 `OTA_TASK_TIMEOUT_MS` 无回传的记录置 `TIMEOUT`；`OTA_ENABLED=false` 或间隔 `<=0` 时不注册。
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.ota`，本节已同步透传至 `.env.example` 与 `docker/docker-compose.yml`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `OTA_ENABLED` | `true` | OTA 总开关；置 `false` 后固件上传 / 建任务直接拒绝（`6232`），巡检不注册 |
+| `OTA_STORAGE_DIR` | `/var/lib/mqtt/ota` | 固件落盘根目录（容器内路径），须与 `ota_firmware` 卷挂载点一致 |
+| `OTA_PUBLIC_BASE_URL` | `http://localhost/firmware` | 设备侧下载基址；下发 url = `{base}/{file_path}`（生产须改为设备可达地址） |
+| `OTA_MAX_FILE_SIZE` | `33554432`（32 MiB） | 单固件文件大小上限（字节）；`spring.servlet.multipart.max-file-size` 须不小于该值 |
+| `OTA_TASK_MAX_DEVICES` | `500` | 单任务目标设备数上限；超限建任务返回 `6237` |
+| `OTA_DISPATCH_INTERVAL_MS` | `60000` | 补投 / 超时巡检间隔（毫秒），`0` 关闭（不注册巡检） |
+| `OTA_DISPATCH_BATCH_SIZE` | `200` | 单轮补投 `PENDING` 记录上限 |
+| `OTA_TASK_TIMEOUT_MS` | `86400000`（24h） | 逐台记录超时阈值（毫秒），超阈置 `TIMEOUT` |
+
+> 翻转上述变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效。
+
+**排查 SQL**：
+
+```sql
+-- 固件包清单与落盘路径
+SELECT id, user_id, product_id, version, file_name, file_path, file_size, md5 FROM ota_firmware ORDER BY created_at DESC LIMIT 20;
+-- 任务聚合与状态
+SELECT id, name, firmware_id, total_count, dispatched_count, success_count, failed_count, status, created_at
+FROM ota_upgrade_task ORDER BY created_at DESC LIMIT 20;
+-- 逐台记录状态分布（判断卡在 PENDING 还是 DOWNLOADING / FLASHING）
+SELECT task_id, status, COUNT(*) c FROM ota_upgrade_record GROUP BY task_id, status ORDER BY task_id DESC;
+-- 长期无回传的疑似超时记录（与 OTA_TASK_TIMEOUT_MS 比对）
+SELECT id, task_id, device_id, status, progress, dispatched_at, last_report_at
+FROM ota_upgrade_record
+WHERE status IN ('DISPATCHED','DOWNLOADING','FLASHING')
+  AND COALESCE(last_report_at, dispatched_at) < DATE_SUB(NOW(), INTERVAL <timeoutHours> HOUR);
+```
+
+**常见排障**：
+
+- **固件上传返回 `6232`**：版本格式非法 / 文件缺失 / 超出 `OTA_MAX_FILE_SIZE`，或 `OTA_ENABLED=false`；同时确认 `spring.servlet.multipart.max-file-size` 不小于 `OTA_MAX_FILE_SIZE`。
+- **返回 `6233`（`OTA_FIRMWARE_DUPLICATE`）**：同产品下该版本已存在；换版本号或先删除旧固件（未被任务引用时）。
+- **返回 `6234`（`OTA_FIRMWARE_IN_USE`）**：固件已被升级任务引用（`ota_upgrade_task.firmware_id` 外键不级联），需先删除相关任务。
+- **返回 `6235`（`OTA_UPLOAD_FAILED`）**：落盘失败；检查 `OTA_STORAGE_DIR` 卷是否可写、磁盘是否充足。
+- **返回 `6236` / `6237` / `6238`**：`6236` 任务不存在或非本人（`404`）；`6237` 建任务参数非法（目标为空 / 超 `OTA_TASK_MAX_DEVICES` / 与固件产品不匹配，`400`）；`6238` 任务状态不允许该操作（`RUNNING` 不可删除、`SUCCESS` 不可重投，`400`）。
+- **设备一直停在 `PENDING`**：命令下发失败（查看 `ota_upgrade_record.message` 与后端日志「OTA 固件下发失败」），补投巡检会周期性重试；确认设备在线、产品启用、命令通道（`/cmd/down`）正常。
+- **设备收不到固件 / 下载 404**：核对 `OTA_PUBLIC_BASE_URL` 是否为设备可达地址、nginx `location ^~ /firmware/` 是否生效、命名卷 `ota_firmware` 是否同时挂给 backend 与 frontend；用上面的 `curl -sI` 验证。
+- **记录停在 `DOWNLOADING` / `FLASHING` 不推进**：多为设备未回传 `device/{key}/ota` 或回传 `version` 与记录不一致（会被静默忽略）；核对设备上报的 `version` 与任务固件版本一致，超 `OTA_TASK_TIMEOUT_MS` 后巡检置 `TIMEOUT`。
+- **`device/{key}/ota` 报文被丢弃**：`version`/`status` 必填且 `status` 须在 `downloading`/`flashing`/`success`/`failed` 内、`progress` 显式给出时须为 `0~100`；非法报文只记 WARN、不影响其他设备。
+
 ---
 
 ## 10. 依赖版本与安全扫描
