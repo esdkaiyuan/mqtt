@@ -117,6 +117,8 @@ public class SecurityConfig {
                     .requestMatchers("/actuator/**").hasRole("ADMIN")
                     // 实时消息与统计分析：ADMIN / OPERATOR
                     .requestMatchers("/messages/**", "/analytics/**").hasAnyRole("ADMIN", "OPERATOR")
+                    // OTA 固件包与升级任务（T-22）：ADMIN / OPERATOR
+                    .requestMatchers("/ota/**").hasAnyRole("ADMIN", "OPERATOR")
                     .anyRequest().authenticated()
             )
             .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
