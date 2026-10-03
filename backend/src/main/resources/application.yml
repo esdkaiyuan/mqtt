@@ -245,6 +245,12 @@ app:
       qos: ${RULE_MQTT_QOS:1}
       keepalive: ${RULE_MQTT_KEEPALIVE:60}
       connect-timeout: ${RULE_MQTT_CONNECT_TIMEOUT:10}
+  # 设备日志时间线（统一聚合 message / command / event / status）
+  device-log:
+    # 单页最大条数上限
+    max-page-size: ${DEVICE_LOG_MAX_PAGE_SIZE:100}
+    # 单次查询时间跨度上限（天）
+    max-range-days: ${DEVICE_LOG_MAX_RANGE_DAYS:31}
 
 # 日志配置
 logging:
