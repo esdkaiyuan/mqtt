@@ -248,6 +248,18 @@ services:
       # 可保存看板（T-21）：每用户看板数与单看板面板数上限
       DASHBOARD_MAX_COUNT: ${DASHBOARD_MAX_COUNT:-20}
       DASHBOARD_MAX_PANELS: ${DASHBOARD_MAX_PANELS:-12}
+      # OTA 固件升级（T-22）：升级开关、存储目录、下载前缀与批次上限
+      OTA_ENABLED: ${OTA_ENABLED:-true}
+      OTA_STORAGE_DIR: ${OTA_STORAGE_DIR:-/var/lib/mqtt/ota}
+      OTA_PUBLIC_BASE_URL: ${OTA_PUBLIC_BASE_URL:-http://localhost/firmware}
+      OTA_MAX_FILE_SIZE: ${OTA_MAX_FILE_SIZE:-33554432}
+      OTA_TASK_MAX_DEVICES: ${OTA_TASK_MAX_DEVICES:-500}
+      OTA_DISPATCH_INTERVAL_MS: ${OTA_DISPATCH_INTERVAL_MS:-60000}
+      OTA_DISPATCH_BATCH_SIZE: ${OTA_DISPATCH_BATCH_SIZE:-200}
+      OTA_TASK_TIMEOUT_MS: ${OTA_TASK_TIMEOUT_MS:-86400000}
+    # 固件包持久化：backend 写入，frontend(nginx) 只读挂载对外托管
+    volumes:
+      - ota_firmware:/var/lib/mqtt/ota
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
       interval: 30s
@@ -295,6 +307,9 @@ services:
     restart: always
     ports:
       - "${FRONTEND_PORT:-80}:80"
+    # OTA 固件静态托管（T-22）：与 backend 共享命名卷，nginx 以只读方式对外提供下载
+    volumes:
+      - ota_firmware:/usr/share/nginx/html/firmware:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s
@@ -328,6 +343,8 @@ volumes:
   emqx_data:
     driver: local
   emqx_log:
+    driver: local
+  ota_firmware:
     driver: local
 
 networks:
