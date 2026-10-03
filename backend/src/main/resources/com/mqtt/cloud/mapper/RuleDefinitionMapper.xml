@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.RuleDefinitionMapper">
+
+    <sql id="ruleColumns">
+        id, user_id, name, description, device_id, source_type, identifier, operator,
+        threshold_value, event_type, action_type, action_config, cooldown_seconds,
+        last_triggered_at, enabled, created_at, updated_at, deleted
+    </sql>
+
+    <!-- 规则缓存加载：某用户启用规则 -->
+    <select id="selectEnabledByUser" resultType="com.mqtt.cloud.entity.RuleDefinition">
+        SELECT <include refid="ruleColumns"/>
+        FROM rule_definition
+        WHERE user_id = #{userId}
+          AND enabled = 1
+          AND deleted = 0
+        ORDER BY id ASC
+    </select>
+
+    <!-- 规则分页列表：归属用户 + 可选来源 / 动作 / 启用态 / 关键字 -->
+    <select id="pageByUser" resultType="com.mqtt.cloud.entity.RuleDefinition">
+        SELECT <include refid="ruleColumns"/>
+        FROM rule_definition
+        WHERE user_id = #{userId}
+          AND deleted = 0
+        <if test="sourceType != null and sourceType != ''">
+            AND source_type = #{sourceType}
+        </if>
+        <if test="actionType != null and actionType != ''">
+            AND action_type = #{actionType}
+        </if>
+        <if test="enabled != null">
+            AND enabled = #{enabled}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (name LIKE CONCAT('%', #{keyword}, '%')
+                 OR description LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        ORDER BY id DESC
+    </select>
+
+    <!-- 同用户重名校验（更新时排除自身） -->
+    <select id="countByUserAndName" resultType="int">
+        SELECT COUNT(*)
+        FROM rule_definition
+        WHERE user_id = #{userId}
+          AND deleted = 0
+          AND name = #{name}
+        <if test="excludeId != null">
+            AND id != #{excludeId}
+        </if>
+    </select>
+
+    <!-- 规则数上限校验 -->
+    <select id="countByUser" resultType="int">
+        SELECT COUNT(*)
+        FROM rule_definition
+        WHERE user_id = #{userId}
+          AND deleted = 0
+    </select>
+
+    <!-- 回填「最近触发」展示字段（异步执行路径调用；updated_at 不刷新，避免污染编辑时间） -->
+    <update id="touchLastTriggered">
+        UPDATE rule_definition
+        SET last_triggered_at = #{triggeredAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+    </update>
+
+</mapper>

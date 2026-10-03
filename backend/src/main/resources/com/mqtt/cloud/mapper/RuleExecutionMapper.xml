@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.RuleExecutionMapper">
+
+    <sql id="execColumns">
+        id, user_id, rule_id, rule_name, device_id, device_key, device_name, source_type,
+        identifier, trigger_value, action_type, status, attempt_count, next_attempt_at,
+        error_message, forward_payload, finished_at, created_at, updated_at
+    </sql>
+
+    <!-- 执行记录分页：归属用户 + 可选规则 / 设备 / 状态（列表不返回 forward_payload 以外无差异，仍全列返回） -->
+    <select id="pageByUser" resultType="com.mqtt.cloud.entity.RuleExecution">
+        SELECT <include refid="execColumns"/>
+        FROM rule_execution
+        WHERE user_id = #{userId}
+        <if test="ruleId != null">
+            AND rule_id = #{ruleId}
+        </if>
+        <if test="deviceId != null">
+            AND device_id = #{deviceId}
+        </if>
+        <if test="status != null and status != ''">
+            AND status = #{status}
+        </if>
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- 到期重试：只拾取非空且到期的 PENDING 记录（next_attempt_at IS NULL 的首次执行记录不被拾取） -->
+    <select id="selectDueRetries" resultType="com.mqtt.cloud.entity.RuleExecution">
+        SELECT <include refid="execColumns"/>
+        FROM rule_execution
+        WHERE status = 'PENDING'
+          AND next_attempt_at IS NOT NULL
+          AND next_attempt_at &lt;= #{now,jdbcType=TIMESTAMP}
+        ORDER BY next_attempt_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 置成功（终态）：仅当仍 PENDING 时生效，返回受影响行数作为并发保护 -->
+    <update id="markSuccess">
+        UPDATE rule_execution
+        SET status = 'SUCCESS',
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            updated_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 置重试：刷新尝试次数 / 下次重试锚点 / 失败原因，仅当仍 PENDING 时生效 -->
+    <update id="markRetry">
+        UPDATE rule_execution
+        SET attempt_count = #{attemptCount},
+            next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+            error_message = #{errorMessage},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 置失败（终态）：刷新最终尝试次数与失败原因，仅当仍 PENDING 时生效 -->
+    <update id="markFailed">
+        UPDATE rule_execution
+        SET status = 'FAILED',
+            attempt_count = #{attemptCount},
+            error_message = #{errorMessage},
+            next_attempt_at = NULL,
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            updated_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 回填转发载荷快照（渲染成功后调用，无论发送成功与否） -->
+    <update id="updateForwardPayload">
+        UPDATE rule_execution
+        SET forward_payload = #{forwardPayload},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+    </update>
+
+    <!-- 手动重试重置：仅当记录为 FAILED 时置回 PENDING 并清零尝试次数与重试锚点（status 守卫防并发） -->
+    <update id="resetForRetry">
+        UPDATE rule_execution
+        SET status = 'PENDING',
+            attempt_count = 0,
+            next_attempt_at = NULL,
+            error_message = NULL,
+            finished_at = NULL,
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'FAILED'
+    </update>
+
+    <!-- 保留策略清理：只删终态（SUCCESS/FAILED），PENDING 永不清理 -->
+    <delete id="deleteFinishedBefore">
+        DELETE FROM rule_execution
+        WHERE status IN ('SUCCESS', 'FAILED')
+          AND finished_at IS NOT NULL
+          AND finished_at &lt; #{before,jdbcType=TIMESTAMP}
+        LIMIT #{limit}
+    </delete>
+
+</mapper>
