@@ -63,7 +63,14 @@ public enum ResultCode {
     ALERT_RULE_INVALID(6208, "告警规则配置非法", HttpStatus.BAD_REQUEST),
     ALERT_NOT_FOUND(6209, "告警记录不存在", HttpStatus.NOT_FOUND),
     ALERT_STATUS_INVALID(6210, "告警状态不允许该操作", HttpStatus.CONFLICT),
-    ALERT_SOURCE_UNSUPPORTED(6211, "不支持的告警来源类型", HttpStatus.BAD_REQUEST);
+    ALERT_SOURCE_UNSUPPORTED(6211, "不支持的告警来源类型", HttpStatus.BAD_REQUEST),
+
+    DEVICE_GROUP_NOT_FOUND(6212, "设备分组不存在", HttpStatus.NOT_FOUND),
+    DEVICE_GROUP_INVALID(6213, "设备分组配置非法", HttpStatus.BAD_REQUEST),
+    DEVICE_TAG_NOT_FOUND(6214, "设备标签不存在", HttpStatus.NOT_FOUND),
+    DEVICE_TAG_INVALID(6215, "设备标签配置非法", HttpStatus.BAD_REQUEST),
+    DEVICE_GROUP_NOT_EMPTY(6216, "分组下存在子分组或设备，无法删除", HttpStatus.CONFLICT),
+    BATCH_TARGET_INVALID(6217, "批量操作目标非法（为空或超出上限）", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;

@@ -87,4 +87,12 @@ public class Device {
     // 以下字段用于DTO映射，不映射到数据库
     @TableField(exist = false)
     private String ownerUsername;
+
+    /** 设备所属分组（T-18，列表批量装配用，不映射数据库） */
+    @TableField(exist = false)
+    private java.util.List<DeviceGroup> groups;
+
+    /** 设备标签（T-18，列表批量装配用，不映射数据库） */
+    @TableField(exist = false)
+    private java.util.List<DeviceTag> tags;
 }
