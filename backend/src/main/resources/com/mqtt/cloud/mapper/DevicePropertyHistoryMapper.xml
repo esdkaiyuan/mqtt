@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DevicePropertyHistoryMapper">
+
+    <!-- 追加写入：解析链路按批一次提交，不去重。created_at 由表默认值维护。 -->
+    <insert id="insertBatch">
+        INSERT INTO device_property_history (device_id, identifier, data_type, value_text, reported_at)
+        VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (#{r.deviceId}, #{r.identifier}, #{r.dataType}, #{r.valueText}, #{r.reportedAt,jdbcType=TIMESTAMP})
+        </foreach>
+    </insert>
+
+    <!--
+      分桶聚合：半开区间 [startTime, endTime)，仅命中 idx_device_identifier_time。
+      列别名避开 count/min/max/avg 这些保留函数名，直接映射到 PropertyHistoryAggregate。
+    -->
+    <select id="aggregateByBucket" resultType="com.mqtt.cloud.dto.response.PropertyHistoryAggregate">
+        SELECT
+            h.device_id AS deviceId,
+            h.identifier AS identifier,
+            FROM_UNIXTIME(FLOOR(UNIX_TIMESTAMP(h.reported_at) / #{bucketSeconds}) * #{bucketSeconds}) AS time,
+            COUNT(*) AS sampleCount,
+            <choose>
+                <when test="numeric">
+                    MIN(CAST(h.value_text AS DECIMAL(30,10))) AS minValue,
+                    MAX(CAST(h.value_text AS DECIMAL(30,10))) AS maxValue,
+                    AVG(CAST(h.value_text AS DECIMAL(30,10))) AS avgValue
+                </when>
+                <otherwise>
+                    NULL AS minValue, NULL AS maxValue, NULL AS avgValue
+                </otherwise>
+            </choose>
+        FROM device_property_history h
+        WHERE h.reported_at &gt;= #{startTime}
+          AND h.reported_at &lt; #{endTime}
+          AND h.device_id IN
+          <foreach collection="deviceIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+          AND h.identifier IN
+          <foreach collection="identifiers" item="it" open="(" separator="," close=")">#{it}</foreach>
+        GROUP BY h.device_id, h.identifier, time
+        ORDER BY h.device_id ASC, h.identifier ASC, time ASC
+    </select>
+
+    <!-- 保留清理：单批硬删除，调用方按 batchSize 分批循环，避免长事务与大范围锁。 -->
+    <delete id="purgeBefore">
+        DELETE FROM device_property_history
+        WHERE reported_at &lt; #{threshold}
+        LIMIT #{batchSize}
+    </delete>
+
+</mapper>
