@@ -11,6 +11,10 @@
         </div>
       </template>
       <template #actions>
+        <el-button @click="goLogs">
+          <svg-icon name="history" :size="14" />
+          设备日志
+        </el-button>
         <el-button @click="editDevice">
           <svg-icon name="edit" :size="14" />
           编辑
@@ -177,6 +181,11 @@ onUnmounted(() => ui.setRailContext({}))
 
 function goBack() {
   router.push('/workbench/devices')
+}
+
+// 设备统一日志时间线（T-20）
+function goLogs() {
+  router.push(`/workbench/devices/${route.params.id}/logs`)
 }
 
 function editDevice() {

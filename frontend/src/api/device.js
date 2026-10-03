@@ -99,5 +99,14 @@ export const deviceApi = {
   batchAssignGroup: (data) => api.post('/devices/batch/groups', data),
 
   /** 批量打标（action=ADD）/ 去标（action=REMOVE） */
-  batchAssignTag: (data) => api.post('/devices/batch/tags', data)
+  batchAssignTag: (data) => api.post('/devices/batch/tags', data),
+
+  // ---------- 设备日志时间线（T-20） ----------
+
+  /**
+   * 设备统一日志时间线：聚合报文 / 命令 / 事件 / 状态变更四类记录，按发生时间倒序分页。
+   * types 逗号分隔（MESSAGE/COMMAND/EVENT/STATUS），startTime / endTime 形如 yyyy-MM-dd HH:mm:ss，
+   * 时间跨度上限 31 天（后端参数 app.device-log.max-range-days）。
+   */
+  getDeviceLogs: (deviceId, params) => api.get(`/devices/${deviceId}/logs`, { params })
 }

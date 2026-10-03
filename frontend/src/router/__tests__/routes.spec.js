@@ -26,6 +26,7 @@ describe('router/routes 分区与兼容', () => {
       'DeviceList',
       'DeviceGroups',
       'DeviceDetail',
+      'DeviceLog',
       'ProductList',
       'ProductThingModel',
       'MessageMonitor',
@@ -40,8 +41,8 @@ describe('router/routes 分区与兼容', () => {
     const groups = new Set(children.map((child) => child.meta?.group))
     expect(groups).toEqual(new Set(['monitor', 'access', 'alert']))
 
-    // 设备详情 / 物模型不在导航中展示
-    for (const name of ['DeviceDetail', 'ProductThingModel']) {
+    // 设备详情 / 设备日志 / 物模型不在导航中展示
+    for (const name of ['DeviceDetail', 'DeviceLog', 'ProductThingModel']) {
       const hidden = children.find((child) => child.name === name)
       expect(hidden.meta?.hidden).toBe(true)
     }

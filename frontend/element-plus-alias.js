@@ -23,5 +23,6 @@ export const EP_DIR_ALIAS = {
   'tab-pane': 'tabs',
   'breadcrumb-item': 'breadcrumb',
   'radio-group': 'radio',
-  'radio-button': 'radio'
+  'radio-button': 'radio',
+  'timeline-item': 'timeline'
 }

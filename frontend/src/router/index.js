@@ -96,6 +96,13 @@ export const routes = [
         meta: { title: '设备详情', hidden: true, group: 'monitor' }
       },
       {
+        // 设备统一日志时间线（T-20），入口在设备详情页，不在导航中展示
+        path: 'devices/:id/logs',
+        name: 'DeviceLog',
+        component: () => import('@/views/workbench/device/DeviceLog.vue'),
+        meta: { title: '设备日志', hidden: true, group: 'monitor' }
+      },
+      {
         path: 'products',
         name: 'ProductList',
         component: () => import('@/views/workbench/product/ProductList.vue'),
