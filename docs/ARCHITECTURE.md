@@ -1,6 +1,6 @@
 # MQTT云平台 - 系统架构文档
 
-> 版本：v1.13　最后更新：2026-10-03
+> 版本：v1.14　最后更新：2026-10-03
 > 适用范围：`MQTT自建站点` 主项目（Spring Boot + Vue 3 + EMQX + MySQL + Redis）
 
 ---
@@ -139,8 +139,9 @@ com.mqtt.cloud
 | `DeviceTagController` | `/device-tags` | 设备标签控制台（T-18）：标签列表 / 创建 / 详情 / 更新 / 删除（自动解除关联）/ 标签内设备分页 / 单台或批量打标与去标，全部按登录用户隔离、越权 `403` |
 | `DeviceBatchController` | `/devices/batch` | 设备批量操作（T-18）：批量下发命令（强制异步，逐台隔离）/ 批量启用 / 批量禁用（含踢线）/ 批量加入或移出分组 / 批量打标或去标；目标集合由「手选设备 ∪ 分组（含子分组）∪ 标签」去重并按用户二次过滤 |
 | `RuleController` | `/rules` | 消息规则控制台（T-19）：规则 CRUD / 启停 / 分页（按 `sourceType`/`actionType`/`enabled`/`keyword` 过滤）/ **试运行干跑**（不落执行记录、不发送、不更冷却）/ 执行记录分页与详情 / 手动重试；`GET /rules/executions` 静态段置于 `GET /rules/{id}` 之前，规则与执行记录按登录用户隔离、越权 `403` |
+| `DeviceLogController` | `/devices/{deviceId}/logs` | 设备统一日志时间线（T-20）：只读聚合，把报文 / 命令 / 事件 / 连接状态四类记录汇总为单设备时间线（查询时 `UNION ALL`），支持 `types[]` / `startTime` / `endTime` / `keyword` 过滤与分页（`occurred_at DESC, seq DESC`），命令与回执按 `correlationId` 自动关联；归属校验 + ADMIN 旁路，时间范围非法 `6223`、类型非法 `6224` |
 
-Swagger 分组共 16 组（认证 / 产品 / 设备 / 消息 / 历史 / 统计 / API密钥 / Webhook / 外部API / 实时数据 / 健康检查 / 告警中心 / 设备分组 / 设备标签 / 设备批量操作 / 消息规则），访问 `/api/swagger-ui.html`；`/internal/**` 为容器内部回调，不纳入 Swagger。
+Swagger 由 `OpenApiConfig` 的 `GroupedOpenApi` bean 按路径前缀分组，当前共 **12 组**（认证管理 / 产品管理 / 实时数据 / 设备管理 / 消息管理 / 历史查询 / 统计分析 / API密钥 / Webhook / 外部API / 健康检查 / 告警中心），访问 `/api/swagger-ui.html`；控制器 / 方法上的 `@Tag`（如「设备分组」「设备标签」「消息规则」「设备日志」）仅为接口展示标签、**不单独成组**，只随其路径命中的分组一并展示。T-20 **未新增 Swagger 分组**（设备日志端点位于 `/api/devices/{deviceId}/logs`，归入「设备管理」组）。`/internal/**` 为容器内部回调，不纳入 Swagger。
 
 ### 4.3 关键组件
 
@@ -184,6 +185,10 @@ Swagger 分组共 16 组（认证 / 产品 / 设备 / 消息 / 历史 / 统计 /
 - **`RuleTemplateRenderer`**：载荷模板渲染（T-19，静态纯函数）——**单次扫描**替换 `${ruleId}` `${ruleName}` `${executionId}` `${deviceId}` `${deviceKey}` `${deviceName}` `${deviceType}` `${sourceType}` `${identifier}` `${value}` `${reportedAt}` `${timestamp}`，替换值 JSON 转义、未知占位符保留原样（不递归）。
 - **`RuleProperties`**：`@ConfigurationProperties(prefix = "app.rule")`（风格对齐 `AlertProperties` / `ShadowProperties`）——规则引擎总开关、规则数上限、缓存 TTL、执行线程池、重试退避与巡检、执行记录保留、HTTP 超时与签名密钥、外部 MQTT 转发（嵌套 `Mqtt` 静态类）等。
 - **`RuleConstants`**：规则引擎共享常量（T-19）——来源 / 动作 / 状态 / 比较符常量与白名单、`NUMERIC_OPERATORS`、`EVENT_RULE_TRIGGERED="rule.triggered"`、占位符与上限常量（`MAX_RULES_PER_USER=200` / `MAX_COOLDOWN_SECONDS=86400`）。
+- **`DeviceLogMapper`**：设备日志只读聚合（T-20）——**不继承 `BaseMapper`**，仅 `selectTimeline` / `countTimeline` 两个方法，在查询时以 `UNION ALL` 聚合四张既有表并把异构字段投影为统一列 `log_type` / `ref_id` / `occurred_at` / `seq` / `title` / `detail`（`message`→`MESSAGE`（`sent_at`）、`device_command_record`→`COMMAND`（`created_at`）、`device_event_record`→`EVENT`（`reported_at`）、`device_status_history`→`STATUS`（`timestamp`））；时间窗为半开区间（`>= startTime`、`< endTime`），类型与关键字过滤下推各子查询，`countTimeline` 对同一 UNION 子查询做 `SELECT COUNT(*)` 以保证计数与列表一致。
+- **`DeviceLogService`** / **`DeviceLogServiceImpl`**：设备日志查询编排（T-20）——归属校验（不存在 `2002`、非本人 `2003`、ADMIN 旁路）与参数归一化 / 夹取（缺省近 24 小时、跨度上限 `max-range-days`、页大小上限 `max-page-size`），时间范围非法 `6223`、类型非法 `6224`；查询后**在 Java 侧回填关联键**：命令记录取 `command_id` 作 `correlationId` 并标 `REQUEST`，仅主题以 `/reply` 结尾的报文解析 `payload.id` 得 `REPLY` 关联（`message.payload` 为 `TEXT` 且可能非 JSON，故不在 SQL 侧 `JSON_EXTRACT`）；`total=0` 时短路，不再查列表。
+- **`DeviceLogProperties`**：`@ConfigurationProperties(prefix = "app.device-log")`（风格对齐 `RuleProperties` / `AlertProperties`）——承载日志时间线单页上限（`max-page-size`）与查询跨度上限（`max-range-days`）。
+- **`DeviceLogConstants`**：设备日志共享常量（T-20，归 `common`）——四类日志类型（`MESSAGE` / `COMMAND` / `EVENT` / `STATUS`）、投影前缀（`MSG-` / `CMD-` / `EVT-` / `STA-`）、回执关联角色（`REQUEST` / `REPLY`）与缺省窗口时长。
 - **`DeviceMonitorService`**：定时任务（`ScheduleConfig` 启用），根据最近心跳时间判定设备在线/离线并写 `device_status_history`。
 - **`WebhookDispatcher`**：基于 `RestTemplate`（`RestTemplateConfig`）向已配置 URL 推送事件。
 - **`TokenBlacklistService`**：登出后把 Token 写入 Redis 黑名单，`JwtAuthenticationFilter` 据此拒绝已登出 Token。
@@ -221,6 +226,8 @@ T-18 新增能力的模块归属：`DeviceGroupService` / `DeviceTagService` / `
 
 T-19 新增能力的模块归属：`RuleService` / `RuleEvaluationService` / `RuleActionExecutor` / `RuleExecutionService` / `RuleSweeperService` / `RuleHttpForwarder` 归 `platform`（规则是平台侧业务编排，HTTP 转发对齐 `WebhookDispatcher`），`RuleMqttForwarder` 归 `mqtt`（出站到第三方 Broker，受 ArchUnit「`mqtt` 包不得依赖 mapper」约束），`RuleSweeper` / `RuleProperties` 归 `config`（与 `AlertSweeper` / `CommandTimeoutSweeper` 同侧），`RuleConstants` 归 `common`，`RuleTemplateRenderer` 归 `util`。评估由 `ThingModelInterpretService` **内部旁路调用**（不新增 `IngestDispatcher` fan-out 路），故 `ingest` 无新增类；规则端点挂 `RuleController`。
 
+T-20 新增能力的模块归属：`DeviceLogService` / `DeviceLogServiceImpl` 归 `telemetry`（设备日志是对遥测与运行记录的只读查询），`DeviceLogMapper` 归持久层、`DeviceLogProperties` 归 `config`，`DeviceLogConstants` 归 `common`，日志端点挂 `DeviceLogController`。**无新表、无新迁移、无写入路径改动、无 MQTT 主题 / ACL 改动**：四源均为既有表，`correlationId` 在 Java 侧回填（SQL 未做 `JSON_EXTRACT`）。
+
 **可执行边界**（`backend/src/test/java/com/mqtt/cloud/arch/LayeringRulesTest.java`）
 
 | 规则 | 含义 |
@@ -240,7 +247,7 @@ T-19 新增能力的模块归属：`RuleService` / `RuleEvaluationService` / `Ru
 
 ```
 frontend/src
-├── api/          # axios 实例与按域拆分的接口封装（auth/device/product/message/history/stats/realtime/alert/deviceGroup/deviceTag/rule）
+├── api/          # axios 实例与按域拆分的接口封装（auth/device/product/message/history/stats/realtime/alert/deviceGroup/deviceTag/rule/deviceLog）
 ├── stores/       # Pinia：auth（令牌与用户）、device（设备列表与在线态）、ui（布局/视口/实时通道）
 ├── router/       # Vue Router：公开站 / 工作台分区、登录态与角色守卫、旧路径 301
 ├── components/
@@ -254,7 +261,7 @@ frontend/src
 │   ├── site/     # 公开站：home/HomePage、docs/*（快速开始/设备接入/消息与数据/开放API/平台运维）、NotFound
 │   ├── auth/     # Login / Register
 │   └── workbench/ # 工作台：dashboard / device / message / history / access / product / alert / rule
-├── composables/  # useDeviceList / useHistoryQuery / useProductList / useThingModel / useDeviceData / useAlerts / useDeviceGroups / useDeviceBatch / useRules 等页面状态逻辑
+├── composables/  # useDeviceList / useHistoryQuery / useProductList / useThingModel / useDeviceData / useAlerts / useDeviceGroups / useDeviceBatch / useRules / useDeviceLog 等页面状态逻辑
 ├── assets/       # css 设计令牌 + svg/icons 图标库
 └── utils/        # echarts 按需封装
 ```
@@ -285,6 +292,7 @@ frontend/src
 - **告警中心（T-17）**：左导航「告警」组含「告警列表」（`/workbench/alerts`）与「告警规则」（`/workbench/alerts/rules`）；顶栏通知中心以 `useAlertUnreadCountQuery` 驱动未读角标（30s 轮询），下拉展示最近 10 条活动告警并跳转告警列表；规则页按来源类型动态表单，列表页支持状态 / 来源过滤、分页、详情与确认 / 恢复。
 - **设备分组与标签（T-18）**：左导航「监控」组含「分组管理」（`/workbench/devices/groups`，分组树 + 标签管理 + 分组内设备分页）；设备列表（`/workbench/devices`）支持按分组（含子分组）/ 标签筛选，多选后出现批量操作栏（批量下发命令 / 启用 / 禁用 / 加入移出分组 / 打标去标）与批量结果抽屉。
 - **消息规则（T-19）**：左导航「监控」组含「消息规则」（`/workbench/rules`，`RuleCenter` 两页签：规则定义 / 执行记录）；规则编辑器按触发源与动作类型动态切换表单（三段式：触发源 → 条件 → 动作），底部「试运行」干跑展示命中结论与诊断；执行记录页支持规则 / 设备 / 状态过滤、详情（含 `forwardPayload` 快照）与手动重试（仅 `FAILED`）。
+- **设备日志（T-20）**：设备详情页提供「设备日志」入口，进入 `/workbench/devices/:id/logs`（`DeviceLog.vue` + `DeviceLogTimeline.vue`，数据由 `useDeviceLog` 驱动）；页面为单设备统一时间线，默认「近 24 小时」，支持按类型（报文 / 命令 / 事件 / 状态）/ 时间范围 / 关键字过滤与分页，条目可展开查看明细，命令与回执按 `correlationId` 归并展示。
 - **公开站骨架**：站点头（`SiteLayout`）+ 内容 + 站脚；文档站复用 `DocsLayout`（左目录 + 正文 + 右侧页内锚点）。
 - **响应式四档**：≥1440px 宽屏（三栏齐备）、1024–1439px 紧凑屏（右栏收为抽屉）、768–1023px 平板（左导航强制图标态、右栏抽屉）、<768px 手机（左导航与右栏均为抽屉，顶栏 / 状态栏精简）。断点由 `WorkbenchLayout` 以 `matchMedia` 监听并写入 `ui` store 的 `viewport`，抽屉开关状态同由 `ui` store 承载。
 - **内容容器职责**：`.page` 唯一提供内边距（`--content-padding`）与超宽居中（`--content-max-width`），`.page--narrow` 供阅读型页面，`.site-container` 供公开站（`--site-max-width`）；消除页面级双重内边距导致的错位。
@@ -322,6 +330,8 @@ frontend/src
 Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__baseline.sql`（基线）、`V2__product_and_device_identity.sql`（产品表 + 设备表改造）、`V3__ingest_dead_letter.sql`（摄取死信表）、`V4__thing_model.sql`（物模型字段 + 两张派生表，T-14）、`V5__device_command.sql`（命令记录表，T-15）、`V6__device_shadow.sql`（设备影子表，T-16）、`V7__alert_center.sql`（告警规则 + 告警记录两表，T-17，**只加表**）、`V8__device_group_and_tag.sql`（分组 + 标签 + 两张关联表，T-18，**只加表**）与 `V9__rule_engine.sql`（规则定义 + 执行记录两表，T-19，**只加表**）。存量库通过 `baseline-on-migrate` 记为 V1 后仅执行 V2+。
 原计划用于 `message` 分区改造的迁移**未执行**：按前置门槛（`SELECT COUNT(*) FROM message` < 500 万且月增速 < 200 万）判定当前数据量未达阈，已在 R1 阶段决策推迟到 R5，并记录于 `docs/总督促文档.md`；该分区迁移**从未落盘**，故与 T-14 的 `V4__thing_model.sql` 不存在版本号冲突。字段级设计与索引见 `docs/T-01_数据库设计与Schema初始化_开发文档.md`。
 
+T-20（设备日志与诊断）**未新增表、未新增迁移**：设备日志时间线是对既有 `message` / `device_command_record` / `device_event_record` / `device_status_history` 四表的**查询时 `UNION ALL` 只读投影**，不落任何新数据；权限沿用设备归属校验，无需 DDL。
+
 ---
 
 ## 7. 安全设计
@@ -356,6 +366,7 @@ Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__base
 | 设备影子（T-16） | `SHADOW_RESEND_ENABLED`（false=仍写 `desired` 但不补发）/ `SHADOW_RETRY_MAX_ATTEMPTS` / `SHADOW_RETRY_BASE_DELAY_MS` / `SHADOW_RETRY_MAX_DELAY_MS` / `SHADOW_RETRY_SWEEP_INTERVAL_MS`（0 关闭）/ `SHADOW_RESEND_BATCH_SIZE` / `SHADOW_CAS_RETRY` / `SHADOW_QUEUE_TTL_MS`（0=不过期） | true / 5 / 5000 / 300000 / 30000 / 200 / 3 / 0 |
 | 设备分组与标签（T-18） | **无新增环境变量**：分组深度上限（`MAX_DEPTH=5`）与批量上限（`MAX_BATCH_SIZE=500`）以服务常量固化 | — |
 | 消息规则（T-19） | `RULE_ENABLED`（false=不做条件判定）/ `RULE_MAX_RULES_PER_USER` / `RULE_CACHE_TTL_SECONDS`（0 关闭缓存；多副本收敛窗口 = 该值）/ `RULE_EXECUTOR_CORE_SIZE` / `RULE_EXECUTOR_MAX_SIZE` / `RULE_EXECUTOR_QUEUE_CAPACITY` / `RULE_RETRY_MAX_ATTEMPTS` / `RULE_RETRY_BASE_DELAY_MS` / `RULE_RETRY_MAX_DELAY_MS` / `RULE_SWEEP_INTERVAL_MS`（0 关闭，同时关闭保留清理）/ `RULE_SWEEP_BATCH_SIZE` / `RULE_EXECUTION_RETENTION_DAYS`（0=不清理）/ `RULE_HTTP_TIMEOUT_MS` / `RULE_HTTP_SECRET`（HMAC 签名密钥，空则不下发 `X-Signature`）/ `RULE_MAX_PAYLOAD_BYTES` / `RULE_MQTT_ENABLED`（false=`FORWARD_MQTT` 直接 `FAILED`）/ `RULE_MQTT_BROKER_URL` / `RULE_MQTT_CLIENT_ID` / `RULE_MQTT_USERNAME` / `RULE_MQTT_PASSWORD` / `RULE_MQTT_QOS` / `RULE_MQTT_KEEPALIVE` / `RULE_MQTT_CONNECT_TIMEOUT` | true / 200 / 60 / 2 / 8 / 500 / 3 / 5000 / 300000 / 30000 / 200 / 30 / 5000 / 空 / 16384 / false / 空 / mqtt-rule-forwarder / 空 / 空 / 1 / 60 / 10 |
+| 设备日志（T-20） | `DEVICE_LOG_MAX_PAGE_SIZE`（时间线单页上限）/ `DEVICE_LOG_MAX_RANGE_DAYS`（查询跨度上限，天） | 100 / 31 |
 | 服务 | `SERVER_PORT` | 8080 |
 | 安全 | `JWT_SECRET` | 无默认，必须显式配置 |
 
@@ -401,3 +412,4 @@ Schema 由 **Flyway** 管理：`backend/src/main/resources/db/migration/V1__base
 | v1.11 | 2026-10-02 | T-17 告警中心收口：§4.1 控制器 13 → 14；§4.2 新增 `AlertController`（`/alerts` 10 端点）、`ExternalApiController` 补告警只读端点、Swagger 分组 11 → 12（新增「告警中心」）；§4.3 新增 `AlertRuleService`/`AlertEvaluationService`/`AlertSweeperService`/`AlertSweeper`/`AlertNotifier`/`AlertService`/`AlertProperties`/`AlertConstants`；§4.4 补 T-17 模块归属；§5.1/§5.4 补告警前端目录与顶栏通知中心；§6 数据模型新增 `alert_rule`/`alert_record` 两表与 `V7__alert_center.sql`；§8 新增 `app.alert` 配置项。 |
 | v1.12 | 2026-10-03 | T-18 设备分组与标签收口：§4.2 控制器 14 → 17（新增 `DeviceGroupController`/`DeviceTagController`/`DeviceBatchController`）、Swagger 分组 12 → 15（新增「设备分组」/「设备标签」/「设备批量操作」）；§4.3 新增 `DeviceGroupService`/`DeviceTagService`/`DeviceBatchService`/`DeviceGroupTagAssembler`；§4.4 补 T-18 模块归属；§5.1/§5.4 补分组管理页与设备列表分组 / 标签筛选及批量操作栏；§6 数据模型新增 `device_group`/`device_tag`/`device_group_relation`/`device_tag_relation` 四表与 `V8__device_group_and_tag.sql`（**只加表**）。 |
 | v1.13 | 2026-10-03 | T-19 消息规则 / 规则引擎收口：§4.2 控制器 17 → 18（新增 `RuleController`，`/rules` 10 端点）、Swagger 分组 15 → 16（新增「消息规则」）；§4.3 新增 `RuleService`/`RuleEvaluationService`/`RuleConditionMatcher`/`RuleActionExecutor`/`RuleExecutionService`/`RuleSweeperService`/`RuleSweeper`/`RuleMqttForwarder`/`RuleHttpForwarder`/`RuleTemplateRenderer`/`RuleProperties`/`RuleConstants`，`AsyncConfig` 新增 `ruleExecutor` 线程池，`ThingModelInterpretService` 新增规则评估内部旁路（四类动作出口、重试与巡检）；§4.4 补 T-19 模块归属；§5.1/§5.4 补规则中心；§6 数据模型新增 `rule_definition`/`rule_execution` 两表与 `V9__rule_engine.sql`（**只加表**）；§8 新增 `app.rule` 配置项并补齐 T-15 / T-16 / T-18 配置行。 |
+| v1.14 | 2026-10-03 | T-20 设备日志与诊断收口：§4.2 控制器 18 → 19（新增 `DeviceLogController`，`/devices/{deviceId}/logs` 单端点）；§4.3 新增 `DeviceLogMapper`（**不继承 `BaseMapper`**，查询时 `UNION ALL` 聚合四张既有表）、`DeviceLogService`/`DeviceLogServiceImpl`（归属校验、参数夹取、Java 侧 `correlationId` 回填）与 `DeviceLogProperties`/`DeviceLogConstants`；§4.4 补 T-20 模块归属（`telemetry` / 持久层 / `config` / `common`）并明确**无新表、无新迁移、无写入路径改动、无 MQTT 主题 / ACL 改动**；§5.1/§5.4 补设备日志页与 `useDeviceLog`；§6 标注设备日志为查询时只读投影（`V1`~`V9` 迁移零改动）；§8 新增 `app.device-log` 配置项。**勘误**：§4.2 后 Swagger 说明由「共 16 组」修正为实际 **12 个 `GroupedOpenApi` 分组**（「设备分组」「设备标签」「消息规则」等为控制器 `@Tag` 标签而非独立分组，v1.12 / v1.13 条目中的分组计数系笔误）。 |

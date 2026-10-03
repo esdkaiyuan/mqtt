@@ -817,6 +817,62 @@ WHERE status = 'PENDING' AND next_attempt_at IS NOT NULL AND next_attempt_at <= 
 
 ---
 
+### 9.15 设备日志与诊断运维（T-20）
+
+**无迁移、无写入路径变更**：设备日志（统一日志时间线）是**纯只读**能力——在**查询时**以 `UNION ALL` 聚合四张既有表，**不新建表、不新增 Flyway 迁移（`V1`~`V9` 零改动）、不改任何写入路径、不新增 MQTT 主题 / 不改 ACL**。升级只需重建后端；回滚只需摘除端点与前端页面，历史数据完全不受影响。
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：后端启动正常、GET /api/devices/{deviceId}/logs 返回 200（无新表可查）
+```
+
+**端点与参数**：`GET /api/devices/{deviceId}/logs`（只读），支持 `types[]`（`MESSAGE` 报文 / `COMMAND` 命令 / `EVENT` 事件 / `STATUS` 连接状态）、`startTime` / `endTime`、`keyword`、`pageNum` / `pageSize`；结果按 `occurred_at DESC, seq DESC` 排序，时间窗为**半开区间**（`>= startTime`、`< endTime`）。前端在设备详情页「设备日志」入口进入，默认时间窗「近 24 小时」。
+
+**四源投影**（按 `device_id` 过滤后投影为统一列 `log_type` / `ref_id` / `occurred_at` / `seq` / `title` / `detail`）：
+
+| 来源表 | `log_type` | 时间列 | `ref_id` 前缀 | 复合索引 |
+|--------|-----------|--------|--------------|----------|
+| `message` | `MESSAGE` | `sent_at` | `MSG-` | `idx_device_sent (device_id, sent_at)` |
+| `device_command_record` | `COMMAND` | `created_at` | `CMD-` | `idx_device_created (device_id, created_at)` |
+| `device_event_record` | `EVENT` | `reported_at` | `EVT-` | `idx_device_reported (device_id, reported_at)` |
+| `device_status_history` | `STATUS` | `timestamp` | `STA-` | `idx_device_timestamp (device_id, timestamp)` |
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.device-log`，紧随 `app.rule` 之后）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `DEVICE_LOG_MAX_PAGE_SIZE` | `100` | 单页条数上限；请求 `pageSize` 超出时**夹取**至该值 |
+| `DEVICE_LOG_MAX_RANGE_DAYS` | `31` | 查询时间跨度上限（天）；`endTime - startTime` 超限返回 `6223` |
+
+> 本能力**无开关**（纯只读，不引入任何运行时副作用）；翻转上述变量后 `docker compose ... up -d --force-recreate backend` 生效。
+
+**命令与回执关联（`correlationId`）**：为把「一次下发 → 设备回执」在时间线上配对，服务层在 **Java 侧**回填关联键——命令记录取 `command_id` 作 `correlationId` 并标 `correlationRole=REQUEST`；**仅主题以 `/reply` 结尾**的报文用 `ObjectMapper.readTree(payload)` 取其 `id` 标 `correlationRole=REPLY`（`message.payload` 为 `TEXT` 且可能非 JSON，故**不在 SQL 侧做 `JSON_EXTRACT`**，解析失败不抛异常、只记 DEBUG）。前端对同 `correlationId` 的相邻条目渲染「下发 → 回执」配对标识；命令处于 `SENT` / `TIMEOUT` / `FAILED` 且无配对回执时提示「未收到回执」。**非 `/reply` 主题的报文不产生关联键**，属预期。
+
+**排查 SQL**：
+
+```sql
+-- 某设备四类记录的条数与时间范围（判断时间线是否为空 / 是否被时间窗过滤）
+SELECT 'message' src, COUNT(*) c, MIN(sent_at) mn, MAX(sent_at) mx FROM message WHERE device_id = <deviceId>
+UNION ALL SELECT 'command', COUNT(*), MIN(created_at), MAX(created_at) FROM device_command_record WHERE device_id = <deviceId>
+UNION ALL SELECT 'event', COUNT(*), MIN(reported_at), MAX(reported_at) FROM device_event_record WHERE device_id = <deviceId>
+UNION ALL SELECT 'status', COUNT(*), MIN(`timestamp`), MAX(`timestamp`) FROM device_status_history WHERE device_id = <deviceId>;
+-- 某设备的命令下发记录（核对「下发 → 回执」配对的数据基础）
+SELECT command_id, status, identifier, created_at FROM device_command_record
+WHERE device_id = <deviceId> ORDER BY created_at DESC LIMIT 20;
+```
+
+**常见排障**：
+
+- **时间线为空**：先用上面的排查 SQL 确认该设备在四表中是否确有记录；若确有记录而页面为空，核对所选时间窗（默认「近 24 小时」）——用 `startTime` 放宽到记录的实际时间范围；注意时间窗为**半开区间**，与 `endTime` 恰好相等的记录**不会**返回。
+- **返回 `6223`（`DEVICE_LOG_RANGE_INVALID`，`400`）**：`startTime >= endTime`，或查询跨度超过 `DEVICE_LOG_MAX_RANGE_DAYS`（默认 31 天）；缩小时间窗或调大该变量。
+- **返回 `6224`（`DEVICE_LOG_TYPE_UNSUPPORTED`，`400`）**：`types` 含不支持的值，仅接受 `MESSAGE` / `COMMAND` / `EVENT` / `STATUS`。
+- **返回 `2002` / `2003`**：`2002` 设备不存在，`2003` 设备不属于当前用户（`ADMIN` 旁路归属校验）；无 token 返回 `401`。
+- **大跨度 / 大数据量下响应慢**：`UNION ALL` **无物化视图、无预聚合**，性能依赖各子表在 `device_id` + 时间列上的复合索引（见上表）。已用「默认近 24 小时 + 跨度上限 31 天」收敛；仍慢时优先缩小时间窗与 `types`，并确认四个复合索引存在。
+- **关键字查不到**：`keyword` 为 `LIKE` 子串匹配，仅覆盖 `topic` / `identifier` / `error_message` / `payload` 四列，**不匹配**派生标题等字段，也未做全文检索。
+- **命令显示「未收到回执」但实际有回执**：回执关联**仅识别主题以 `/reply` 结尾**的报文，且要求其 `payload` 为可解析 JSON 且含 `id`；主题命名不符或载荷非 JSON 时不会配对（属预期）。
+
+---
+
 ## 10. 依赖版本与安全扫描
 
 ### 10.1 版本基线（R3-3 升级后）
