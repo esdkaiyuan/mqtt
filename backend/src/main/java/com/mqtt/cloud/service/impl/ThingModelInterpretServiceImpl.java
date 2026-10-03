@@ -9,6 +9,7 @@ import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
+import com.mqtt.cloud.service.RuleEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelInterpretService;
 import com.mqtt.cloud.service.ThingModelService;
@@ -55,6 +56,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
     private final DeviceEventRecordMapper eventRecordMapper;
     private final DeviceShadowService deviceShadowService;
     private final AlertEvaluationService alertEvaluationService;
+    private final RuleEvaluationService ruleEvaluationService;
     private final ThingModelInterpretMetrics metrics;
     private final ThingModelProperties properties;
     private final ObjectMapper objectMapper;
@@ -119,6 +121,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         }
         List<String> applied = new ArrayList<>();
         List<AlertEvaluationService.PropertySample> samples = new ArrayList<>();
+        List<RuleEvaluationService.PropertySample> ruleSamples = new ArrayList<>();
         for (Map.Entry<String, JsonNode> entry : params.properties()) {
             String identifier = entry.getKey();
             ThingModelDefinition.PropertySpec spec = definition.properties().get(identifier);
@@ -136,11 +139,14 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
             metrics.count(RESULT_PROPERTY);
             applied.add(identifier);
             samples.add(new AlertEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
+            ruleSamples.add(new RuleEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
         }
         // T-16：上报收敛。回读权威库合并进影子 reported，异常只记 WARN，不影响本批其余消息。
         applyReported(device, applied);
         // T-17：阈值告警旁路，复用已归一化的属性样本，避免重复解析与额外查询。
         evaluateProperties(device, samples);
+        // T-19：消息规则旁路，与影子 / 告警并列的第三处内部旁路，复用同一份归一化样本。
+        evaluateRules(device, ruleSamples);
     }
 
     /** 阈值告警旁路（T-17 设计文档 §8.5）；异常只记 WARN，不冒泡到解析链路。 */
@@ -152,6 +158,18 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
             alertEvaluationService.onProperties(device.getId(), device.getProductId(), samples);
         } catch (Exception e) {
             log.warn("阈值告警评估失败，跳过: deviceId={}", device.getId(), e);
+        }
+    }
+
+    /** 消息规则旁路（T-19 设计文档 §8.1）；异常只记 WARN，不冒泡到解析链路。 */
+    private void evaluateRules(Device device, List<RuleEvaluationService.PropertySample> samples) {
+        if (samples.isEmpty()) {
+            return;
+        }
+        try {
+            ruleEvaluationService.onProperties(device.getId(), device.getProductId(), samples);
+        } catch (Exception e) {
+            log.warn("规则评估失败，跳过: deviceId={}", device.getId(), e);
         }
     }
 
@@ -208,6 +226,8 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         }
         // T-17：仅在事件真正落库后才做告警评估，避免「未落库却已触发」。
         evaluateEvents(eventRecords);
+        // T-19：事件规则旁路，同样遵循「未落库不评估」纪律。
+        evaluateRuleEvents(eventRecords);
     }
 
     /** 事件告警旁路（T-17 设计文档 §8.5）：按设备分组后逐设备评估；异常只记 WARN。 */
@@ -226,6 +246,26 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
                 alertEvaluationService.onEvents(entry.getKey(), entry.getValue());
             } catch (Exception e) {
                 log.warn("事件告警评估失败，跳过: deviceId={}", entry.getKey(), e);
+            }
+        }
+    }
+
+    /** 事件规则旁路（T-19 设计文档 §8.1）：按设备分组后逐设备评估；异常只记 WARN。 */
+    private void evaluateRuleEvents(List<DeviceEventRecord> eventRecords) {
+        Map<Long, List<RuleEvaluationService.EventSample>> byDevice = new LinkedHashMap<>();
+        for (DeviceEventRecord record : eventRecords) {
+            if (record.getDeviceId() == null) {
+                continue;
+            }
+            byDevice.computeIfAbsent(record.getDeviceId(), key -> new ArrayList<>())
+                    .add(new RuleEvaluationService.EventSample(record.getIdentifier(), record.getEventType(),
+                            record.getOutputData(), record.getReportedAt()));
+        }
+        for (Map.Entry<Long, List<RuleEvaluationService.EventSample>> entry : byDevice.entrySet()) {
+            try {
+                ruleEvaluationService.onEvents(entry.getKey(), entry.getValue());
+            } catch (Exception e) {
+                log.warn("事件规则评估失败，跳过: deviceId={}", entry.getKey(), e);
             }
         }
     }

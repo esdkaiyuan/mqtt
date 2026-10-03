@@ -27,6 +27,8 @@ public interface DeviceCommandService {
 
     String SOURCE_CONSOLE = "CONSOLE";
     String SOURCE_OPEN_API = "OPEN_API";
+    /** 来源：消息规则动作（T-19）。仅用于区分来源，不改既有语义。 */
+    String SOURCE_RULE = "RULE";
 
     /** 可下发能力：供前端生成动态表单；无物模型时 {@code version=0} 且两个集合为空。 */
     CommandCapability getCapability(Long productId);
