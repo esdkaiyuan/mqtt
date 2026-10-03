@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DeviceLogMapper">
+
+    <!--
+      设备统一日志聚合（T-20 设计文档 §5 / §7.2）
+
+      - 查询时聚合：四张存量表 UNION ALL 归并，不新建表、无迁移、不改写入路径；
+      - 四段 SELECT 投影到同一列集（20 列，列顺序严格一致），缺失列置 NULL：
+          log_id / log_type / direction / occurred_at / topic / identifier / sub_type / status /
+          payload / command_id / call_type / source / operator_id / result / error_message /
+          attempt_count / received_at / finished_at / qos / seq
+      - 时间窗为半开区间 [startTime, endTime)：>= startTime 且 < endTime；
+      - 设备级限定 WHERE device_id = #{deviceId}，可走各表既有 (device_id, 时间列) 索引；
+      - 计数与明细分别包一层并复用本片段；计数用显式 count（UNION 下自动 count 不可靠）。
+    -->
+
+    <sql id="logUnion">
+        SELECT CONCAT('MSG-', m.id) AS log_id, 'MESSAGE' AS log_type, m.direction AS direction,
+               m.sent_at AS occurred_at, m.topic AS topic, NULL AS identifier, NULL AS sub_type,
+               NULL AS status, m.payload AS payload, NULL AS command_id, NULL AS call_type,
+               NULL AS source, NULL AS operator_id, NULL AS result, NULL AS error_message,
+               NULL AS attempt_count, m.received_at AS received_at, NULL AS finished_at,
+               m.qos AS qos, m.id AS seq
+        FROM message m
+        WHERE m.device_id = #{deviceId}
+        <if test="startTime != null">AND m.sent_at &gt;= #{startTime}</if>
+        <if test="endTime != null">AND m.sent_at &lt; #{endTime}</if>
+        UNION ALL
+        SELECT CONCAT('CMD-', c.id) AS log_id, 'COMMAND' AS log_type, 'DOWN' AS direction,
+               c.created_at AS occurred_at, NULL AS topic, c.identifier AS identifier, c.command_type AS sub_type,
+               c.status AS status, c.params AS payload, c.command_id AS command_id, c.call_type AS call_type,
+               c.source AS source, c.operator_id AS operator_id, c.result AS result, c.error_message AS error_message,
+               c.attempt_count AS attempt_count, NULL AS received_at, c.finished_at AS finished_at,
+               NULL AS qos, c.id AS seq
+        FROM device_command_record c
+        WHERE c.device_id = #{deviceId}
+        <if test="startTime != null">AND c.created_at &gt;= #{startTime}</if>
+        <if test="endTime != null">AND c.created_at &lt; #{endTime}</if>
+        UNION ALL
+        SELECT CONCAT('EVT-', e.id) AS log_id, 'EVENT' AS log_type, 'UP' AS direction,
+               e.reported_at AS occurred_at, NULL AS topic, e.identifier AS identifier, e.event_type AS sub_type,
+               NULL AS status, e.output_data AS payload, NULL AS command_id, NULL AS call_type,
+               NULL AS source, NULL AS operator_id, NULL AS result, NULL AS error_message,
+               NULL AS attempt_count, NULL AS received_at, NULL AS finished_at,
+               NULL AS qos, e.id AS seq
+        FROM device_event_record e
+        WHERE e.device_id = #{deviceId}
+        <if test="startTime != null">AND e.reported_at &gt;= #{startTime}</if>
+        <if test="endTime != null">AND e.reported_at &lt; #{endTime}</if>
+        UNION ALL
+        SELECT CONCAT('STA-', s.id) AS log_id, 'STATUS' AS log_type, NULL AS direction,
+               s.timestamp AS occurred_at, NULL AS topic, NULL AS identifier, s.status AS sub_type,
+               s.status AS status, NULL AS payload, NULL AS command_id, NULL AS call_type,
+               NULL AS source, NULL AS operator_id, NULL AS result, NULL AS error_message,
+               NULL AS attempt_count, NULL AS received_at, NULL AS finished_at,
+               NULL AS qos, s.id AS seq
+        FROM device_status_history s
+        WHERE s.device_id = #{deviceId}
+        <if test="startTime != null">AND s.timestamp &gt;= #{startTime}</if>
+        <if test="endTime != null">AND s.timestamp &lt; #{endTime}</if>
+    </sql>
+
+    <!-- 类型 / 关键字过滤：pageQuery 与 countQuery 复用 -->
+    <sql id="logFilter">
+        <where>
+            <if test="types != null and types.size() > 0">
+                AND t.log_type IN
+                <foreach collection="types" item="tp" open="(" separator="," close=")">#{tp}</foreach>
+            </if>
+            <if test="keyword != null and keyword != ''">
+                AND (t.topic LIKE #{keyword}
+                     OR t.identifier LIKE #{keyword}
+                     OR t.error_message LIKE #{keyword}
+                     OR t.payload LIKE #{keyword})
+            </if>
+        </where>
+    </sql>
+
+    <select id="countQuery" resultType="long">
+        SELECT COUNT(*)
+        FROM ( <include refid="logUnion"/> ) t
+        <include refid="logFilter"/>
+    </select>
+
+    <select id="pageQuery" resultType="com.mqtt.cloud.dto.response.DeviceLogItem">
+        SELECT *
+        FROM ( <include refid="logUnion"/> ) t
+        <include refid="logFilter"/>
+        ORDER BY t.occurred_at DESC, t.seq DESC
+        LIMIT #{offset}, #{size}
+    </select>
+
+</mapper>
