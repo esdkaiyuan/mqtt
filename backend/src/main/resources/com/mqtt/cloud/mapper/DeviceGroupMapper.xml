@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DeviceGroupMapper">
+
+    <select id="selectByUser" resultType="com.mqtt.cloud.entity.DeviceGroup">
+        SELECT id, user_id, parent_id, name, sort_order, description, created_at, updated_at, deleted
+        FROM device_group
+        WHERE user_id = #{userId}
+          AND deleted = 0
+        ORDER BY sort_order ASC, id ASC
+    </select>
+
+    <select id="countChildren" resultType="int">
+        SELECT COUNT(*)
+        FROM device_group
+        WHERE parent_id = #{parentId}
+          AND deleted = 0
+    </select>
+
+    <!-- MySQL 8 递归 CTE：取某分组及其所有后代（含自身）。
+         限定 user_id 与 deleted=0，避免跨用户 / 已删除节点被带入。 -->
+    <select id="selectDescendantIds" resultType="java.lang.Long">
+        WITH RECURSIVE sub AS (
+            SELECT id FROM device_group
+            WHERE id = #{rootId}
+              AND user_id = #{userId}
+              AND deleted = 0
+            UNION ALL
+            SELECT g.id FROM device_group g
+            JOIN sub ON g.parent_id = sub.id
+            WHERE g.user_id = #{userId}
+              AND g.deleted = 0
+        )
+        SELECT id FROM sub
+    </select>
+
+    <select id="countByUserAndName" resultType="int">
+        SELECT COUNT(*)
+        FROM device_group
+        WHERE user_id = #{userId}
+          AND deleted = 0
+          AND name = #{name}
+        <choose>
+            <when test="parentId != null">
+                AND parent_id = #{parentId}
+            </when>
+            <otherwise>
+                AND parent_id IS NULL
+            </otherwise>
+        </choose>
+        <if test="excludeId != null">
+            AND id != #{excludeId}
+        </if>
+    </select>
+
+    <select id="selectMaxSortOrder" resultType="java.lang.Integer">
+        SELECT MAX(sort_order)
+        FROM device_group
+        WHERE user_id = #{userId}
+          AND deleted = 0
+        <choose>
+            <when test="parentId != null">
+                AND parent_id = #{parentId}
+            </when>
+            <otherwise>
+                AND parent_id IS NULL
+            </otherwise>
+        </choose>
+    </select>
+
+</mapper>

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DeviceGroupRelationMapper">
+
+    <!-- 唯一键 uk_device_group 去重：重复关联幂等成功，返回实际新增行数。
+         调用方须保证 deviceIds 非空（空集合会生成非法 VALUES 子句）。 -->
+    <insert id="insertIgnoreBatch">
+        INSERT IGNORE INTO device_group_relation (device_id, group_id, created_at)
+        VALUES
+        <foreach collection="deviceIds" item="deviceId" separator=",">
+            (#{deviceId}, #{groupId}, #{createdAt})
+        </foreach>
+    </insert>
+
+    <delete id="deleteByDeviceIdsAndGroup">
+        DELETE FROM device_group_relation
+        WHERE group_id = #{groupId}
+          AND device_id IN
+        <foreach collection="deviceIds" item="deviceId" open="(" separator="," close=")">
+            #{deviceId}
+        </foreach>
+    </delete>
+
+    <delete id="deleteByDeviceIds">
+        DELETE FROM device_group_relation
+        WHERE device_id IN
+        <foreach collection="deviceIds" item="deviceId" open="(" separator="," close=")">
+            #{deviceId}
+        </foreach>
+    </delete>
+
+    <delete id="deleteByGroupId">
+        DELETE FROM device_group_relation
+        WHERE group_id = #{groupId}
+    </delete>
+
+    <select id="selectDeviceIdsByGroupIds" resultType="java.lang.Long">
+        SELECT DISTINCT device_id
+        FROM device_group_relation
+        WHERE group_id IN
+        <foreach collection="groupIds" item="groupId" open="(" separator="," close=")">
+            #{groupId}
+        </foreach>
+    </select>
+
+    <select id="selectByDeviceIds" resultType="com.mqtt.cloud.entity.DeviceGroupRelation">
+        SELECT id, device_id, group_id, created_at
+        FROM device_group_relation
+        WHERE device_id IN
+        <foreach collection="deviceIds" item="deviceId" open="(" separator="," close=")">
+            #{deviceId}
+        </foreach>
+    </select>
+
+    <select id="countByGroupId" resultType="int">
+        SELECT COUNT(*)
+        FROM device_group_relation
+        WHERE group_id = #{groupId}
+    </select>
+
+    <select id="countByGroupIds" resultType="java.util.Map">
+        SELECT group_id AS groupId, COUNT(*) AS cnt
+        FROM device_group_relation
+        WHERE group_id IN
+        <foreach collection="groupIds" item="groupId" open="(" separator="," close=")">
+            #{groupId}
+        </foreach>
+        GROUP BY group_id
+    </select>
+
+</mapper>
