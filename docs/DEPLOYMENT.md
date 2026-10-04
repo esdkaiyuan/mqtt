@@ -1012,6 +1012,50 @@ WHERE status IN ('DISPATCHED','DOWNLOADING','FLASHING')
 - **记录停在 `DOWNLOADING` / `FLASHING` 不推进**：多为设备未回传 `device/{key}/ota` 或回传 `version` 与记录不一致（会被静默忽略）；核对设备上报的 `version` 与任务固件版本一致，超 `OTA_TASK_TIMEOUT_MS` 后巡检置 `TIMEOUT`。
 - **`device/{key}/ota` 报文被丢弃**：`version`/`status` 必填且 `status` 须在 `downloading`/`flashing`/`success`/`failed` 内、`progress` 显式给出时须为 `0~100`；非法报文只记 WARN、不影响其他设备。
 
+### 9.18 HTTP 上报运维（T-24）
+
+**端点与鉴权**：`POST /api/ingest/{deviceKey}/{messageType}`（`messageType ∈ {data, heartbeat, lwt}`），以**设备凭据 HTTP Basic** 鉴权——`Authorization: Basic base64("{productKey}.{deviceKey}:{deviceSecret}")`，复用与 MQTT 一机一密相同的设备密钥（`DeviceSecretService`，BCrypt）。**无需登录取 JWT**；失败统一 `401` + `code=6246` + `WWW-Authenticate: Basic realm="mqtt-cloud-device"`。
+
+> **安全前置（务必遵守）**：HTTP Basic 仅在 TLS 之上提供机密性——**生产环境必须把 HTTP 上报置于 TLS 反向代理（HTTPS）之后**，禁止在公网以明文 HTTP 直接暴露 `/api/ingest/**`，否则设备密钥可被中间人窃取。与 MQTT 侧一致，本端点不应绕过统一入口（默认 `http://127.0.0.1/api`）对外直接开放。
+
+**等价语义**：服务端把上报构造为与 MQTT **同形**的 `IngestRecord`（合成主题恒为 `device/{deviceKey}/{messageType}`，QoS：`heartbeat`→0、`data`/`lwt`→1）后经 `IngestPipeline.submit` **唯一入口**入同一摄取管线；`routeIndex` 只依赖 `deviceKey` ⇒ HTTP 与 MQTT **同分片同顺序**，属性最新值、在线态与下游旁路（物模型解析 / 命令回执 / 影子补发 / OTA / 告警 / 规则 / 属性历史）行为完全等价。**零 DDL、零摄取改动、零 MQTT / ACL 改动**（设备发布权限由 `AclEvaluator` 天然覆盖 `device/{deviceKey}/` 下非 `cmd/` 主题），唯一安全改动点为 `SecurityConfig`（`/ingest/**` permitAll + `DeviceCredentialAuthFilter` 注册于 JWT 过滤器之前）。
+
+```bash
+# 上报一条数据（data）：期望 200 → {"code":200,"message":"success","data":{"accepted":true}}
+curl -sS -u '{productKey}.{deviceKey}:{deviceSecret}' \
+  -H 'Content-Type: application/json' -d '{"temperature":25.3}' \
+  http://localhost/api/ingest/{deviceKey}/data
+
+# 心跳（heartbeat，QoS 0）：空 body 合法（归一为 ""）；掉线报文用 messageType=lwt
+curl -sS -u '{productKey}.{deviceKey}:{deviceSecret}' -X POST \
+  http://localhost/api/ingest/{deviceKey}/heartbeat
+
+# 失败示例：错误密钥 → 401 + code=6246 + WWW-Authenticate
+curl -sS -i -u '{productKey}.{deviceKey}:wrong-secret' \
+  -d '{}' http://localhost/api/ingest/{deviceKey}/data
+```
+
+> 成功业务码是 **200**（`ResultCode.SUCCESS`），**不是** 0；判定请以 HTTP 状态 + `code` 双条件为准。
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.http-ingest`，本节已同步透传至 `.env.example` 与 `docker/docker-compose.yml`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `HTTP_INGEST_ENABLED` | `true` | 上报总开关；置 `false` 后 `HttpIngestController` 不注册，`/ingest/**` 返回 **404**（MQTT 链路、物模型旁路、`/auth/login` 均不受影响） |
+| `HTTP_INGEST_MAX_PAYLOAD_BYTES` | `65536` | 单请求载荷上限（字节）；超限返回 `413` + `6248` |
+| `HTTP_INGEST_REALM` | `mqtt-cloud-device` | `WWW-Authenticate: Basic realm="…"` 的 realm 值 |
+
+> 翻转上述变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效；**动态改配置必须带 `--env-file .env`**，否则 `INTERNAL_TOKEN` 等必填项缺失会导致启动失败。
+
+**常见排障**：
+
+- **返回 `401` + `6246`（`DEVICE_CREDENTIAL_INVALID`）**：`Authorization` 头缺失 / 非 Basic / base64 或用户名拆分非法 / 用户名与路径 `deviceKey` 不一致 / 设备不存在 / 产品停用或设备禁用 / 密钥哈希不匹配等（共 8 类）——核对 `{productKey}.{deviceKey}` 用户名拼装与 `deviceSecret`。
+- **返回 `400` + `6247`（`INGEST_MESSAGE_TYPE_UNSUPPORTED`）**：`messageType` 不在 `{data, heartbeat, lwt}` 内；该段大小写敏感。
+- **返回 `413` + `6248`（`INGEST_PAYLOAD_TOO_LARGE`）**：载荷超 `HTTP_INGEST_MAX_PAYLOAD_BYTES`；调大该值（注意与 nginx `client_max_body_size` 协调）或精简上报体。
+- **`/ingest/**` 一律 `404`**：`HTTP_INGEST_ENABLED=false`（控制器未注册，**非鉴权问题**）；确认环境变量已透传并 `--force-recreate backend` 生效。
+- **上报成功但属性最新值 / 在线态未更新**：核对合成主题是否落入 `device/{deviceKey}/`（`AclEvaluator` 拒绝 `cmd/` 前缀发布）；`heartbeat` 与 `data` 均刷新在线态，`lwt` 表示掉线。
+- **与 MQTT 数据「重复 / 顺序异常」**：同一设备同时经两条链路写入属预期（同分片同顺序，`upsertIfNewer` 时间戳守卫保证最新值不倒退）；排查时以 `device_property_latest.reported_at` 为准。
+
 ---
 
 ## 10. 依赖版本与安全扫描
