@@ -36,6 +36,7 @@ describe('router/routes 分区与兼容', () => {
       'AlertList',
       'AlertRules',
       'RuleCenter',
+      'SceneCenter',
       'BoardList',
       'BoardDetail',
       'FirmwareList',
@@ -44,7 +45,7 @@ describe('router/routes 分区与兼容', () => {
     ])
 
     const groups = new Set(children.map((child) => child.meta?.group))
-    expect(groups).toEqual(new Set(['monitor', 'access', 'alert', 'fleet']))
+    expect(groups).toEqual(new Set(['monitor', 'access', 'alert', 'fleet', 'automation']))
 
     // 设备详情 / 设备日志 / 物模型 / 看板详情 / 升级详情不在导航中展示
     for (const name of ['DeviceDetail', 'DeviceLog', 'ProductThingModel', 'BoardDetail', 'UpgradeTaskDetail']) {
@@ -56,6 +57,14 @@ describe('router/routes 分区与兼容', () => {
     const productList = children.find((child) => child.name === 'ProductList')
     expect(productList.path).toBe('products')
     expect(productList.meta?.group).toBe('monitor')
+  })
+
+  it('场景联动路由归入自动化分区且未 hidden', () => {
+    const scene = byPath('/workbench').children.find((child) => child.name === 'SceneCenter')
+    expect(scene, '缺少场景联动路由 SceneCenter').toBeTruthy()
+    expect(scene.path).toBe('scenes')
+    expect(scene.meta?.group).toBe('automation')
+    expect(scene.meta?.hidden).toBeFalsy()
   })
 
   it('分组管理静态段排在设备详情动态段之前，且与设备管理同组', () => {

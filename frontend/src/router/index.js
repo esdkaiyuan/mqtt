@@ -157,6 +157,13 @@ export const routes = [
         meta: { title: '消息规则', icon: 'operation', group: 'monitor' }
       },
       {
+        // 场景联动（T-23）：零代码配置多设备联动，属性/事件/定时触发
+        path: 'scenes',
+        name: 'SceneCenter',
+        component: () => import('@/views/workbench/scene/SceneCenter.vue'),
+        meta: { title: '场景联动', icon: 'bolt', group: 'automation' }
+      },
+      {
         // 可保存看板（T-21）：把常用设备属性趋势组合保存，随时回看
         path: 'boards',
         name: 'BoardList',

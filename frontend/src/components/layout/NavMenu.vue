@@ -71,6 +71,13 @@ const navGroups = [
     ]
   },
   {
+    key: 'automation',
+    label: '自动化',
+    items: [
+      { path: '/workbench/scenes', title: '场景联动', icon: 'bolt' }
+    ]
+  },
+  {
     key: 'alert',
     label: '告警',
     items: [
