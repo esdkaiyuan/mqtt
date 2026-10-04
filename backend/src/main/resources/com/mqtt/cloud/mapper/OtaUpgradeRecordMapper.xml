@@ -12,12 +12,18 @@
         command_id, dispatched_at, last_report_at, created_at, updated_at
     </sql>
 
-    <!-- 补投候选：仅取仍待下发（status = 'PENDING'）且设备在线的记录，按主键升序分批。
-         device.status = 'ONLINE' 与 DeviceStatusValue.ONLINE 一致；device 无逻辑删除列，不加 deleted 条件。 -->
+    <!-- 同 recordColumns，但带 r. 前缀，供 JOIN device 的查询使用，避免 id 等同名列歧义。 -->
+    <sql id="recordColumnsAliased">
+        r.id, r.task_id, r.device_id, r.firmware_id, r.version, r.status, r.progress, r.message,
+        r.command_id, r.dispatched_at, r.last_report_at, r.created_at, r.updated_at
+    </sql>
+
+    <!-- 补投候选：仅取仍待下发（status = 'PENDING'）且设备在线、未逻辑删除的记录，按主键升序分批。
+         device.status = 'ONLINE' 与 DeviceStatusValue.ONLINE 一致；device 有 deleted 列，需过滤 d.deleted = 0。 -->
     <select id="selectDispatchCandidates" resultType="com.mqtt.cloud.entity.OtaUpgradeRecord">
-        SELECT <include refid="recordColumns"/>
+        SELECT <include refid="recordColumnsAliased"/>
         FROM ota_upgrade_record r
-        JOIN device d ON d.id = r.device_id
+        JOIN device d ON d.id = r.device_id AND d.deleted = 0
         WHERE r.status = #{status} AND d.status = 'ONLINE'
         ORDER BY r.id ASC
         LIMIT #{limit}
