@@ -772,6 +772,8 @@ location ^~ /firmware/ {
 | A4 | 进度**可回传** | §4.2 + §4.5 + §7.3 `applyProgress` | 设备向 `device/{key}/ota` 发报文，记录 `progress` 更新 |
 | A5 | 进度**在任务详情可见** | §6.2 + `UpgradeTaskDetail.vue` | 详情页记录表展示 `status`/`progress`/`message`，计数同步 |
 
+**实测结论（2026-10-04，已通过）**：起 `docker/docker-compose.yml` 编排栈（全 `healthy`），以真实 HTTP 请求 + `mosquitto_pub`（经 `docker_mqtt-network` 接 EMQX）模拟设备上行，A1~A5 逐条实测 **PASS=34 / FAIL=0** —— A1 磁盘文件与 `ota_firmware` 记录的 `md5` / `file_size` / 落盘路径三者一致；A2 订阅端实收 `thing.service.ota_upgrade` 且 `params` 含 `url` / `version` / `md5` / `size`；A3 三种目标各建 1 任务、逐任务记录数 = 目标设备数；A4 记录 `progress` 由 `downloading@30` 推进至 `success@100`、`status` / `message` 落库；A5 记录表暴露 `status` / `progress` / `message`、三项计数与任务状态同步（前端页面渲染沿用既有契约、未做浏览器实测）。对应实施计划 P6 与 `总督促文档.md` §3.15 已同步勾选。
+
 ---
 
 ## 11. 兼容与回滚

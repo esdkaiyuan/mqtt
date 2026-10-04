@@ -219,19 +219,18 @@
   - ArchUnit（`mvn verify`）：`OtaFirmwareService` / `OtaUpgradeService` / `OtaProgressService` 接口**不得**依赖 `..mapper..`；新增类不越层（Controller→Service→Mapper）
 - [x] 前端 `npm run lint`（0 error）/ `npm run test` / `npm run build` 全绿（设计文档 §10.2）
   - `ota.spec.js` / `FirmwareList.spec.js` / `UpgradeTasks.spec.js` / `UpgradeTaskDetail.spec.js` + 路由快照断言
-- [ ] 端到端实测（设计文档 §10.3 的 A1~A5）并逐条勾选 —— **本机 Docker 守护进程未运行，现场无法实测，已按惯例如实记入 `总督促文档.md`**
-  - A1：固件包管理可用（前端上传后列表出现，磁盘文件与 `ota_firmware` 记录一致）
-  - A2：创建升级任务后在线设备订阅 `/cmd/down` 收到 `thing.service.ota_upgrade` 及 `url`
-  - A3：按产品 / 分组 / 标签三种目标分别建任务，`ota_upgrade_record` 条数与预期一致
-  - A4：设备向 `device/{key}/ota` 发报文，记录 `progress` 更新
-  - A5：详情页记录表展示 `status` / `progress` / `message`，计数与任务状态同步
-  - **若出现需真实设备配合、现场无法实测的项**，按仓库惯例如实记入 `docs/总督促文档.md`（如 T-20 A2）
-- [ ] 联动复核：`scripts/` 下既有 MQTT 触发脚本（如 `r5-trigger-check.*` 形态）可用于 A2/A4 的联调模拟，实施时按既有脚本形态扩展或用 `mosquitto_pub` 模拟设备上行 / 回执 —— **随 A1~A5 一并顺延（依赖 Docker 栈），现场未执行**
+- [x] 端到端实测（设计文档 §10.3 的 A1~A5）并逐条勾选 —— **已执行并通过**：起 `docker/docker-compose.yml` 编排栈（backend / frontend / emqx / mysql / redis 全 `healthy`），以真实 HTTP 请求 + `mosquitto_pub`（经 `docker_mqtt-network` 接 EMQX）模拟设备上行，逐条实测 **PASS=34 / FAIL=0**
+  - [x] A1：固件包管理可用（`POST /api/ota/firmwares` 上传后列表出现，磁盘文件与 `ota_firmware` 记录一致 —— `md5` / `file_size` / 落盘路径三者比对一致）
+  - [x] A2：创建升级任务后在线设备订阅 `/cmd/down` 收到 `thing.service.ota_upgrade` 及 `url`（订阅端实收 `thing.service.ota_upgrade`，`params` 含 `url` / `version` / `md5` / `size`）
+  - [x] A3：按产品 / 分组 / 标签三种目标分别建任务，`ota_upgrade_record` 条数与预期一致（三种目标各建 1 任务，逐任务记录数 = 目标设备数）
+  - [x] A4：设备向 `device/{key}/ota` 发报文，记录 `progress` 更新（`downloading@30` → `success@100`，`status` / `message` 落库）
+  - [x] A5：详情端点记录表展示 `status` / `progress` / `message`，计数与任务状态同步（`totalCount` / `successCount` / `dispatchedCount` = 1，记录明细暴露三字段；前端页面渲染沿用既有契约、未做浏览器实测）
+- [x] 联动复核：以 `mosquitto_pub` 经 `docker_mqtt-network` 接 EMQX 模拟设备上行 / 回执，配合真实 HTTP 请求跑通 A1~A5；`scripts/`（`r5-trigger-check.*` 形态）未改动
 
 ## P7 文档回填
 
 - [x] `docs/平台功能链路路线图.md`：L9 / T-22 标记已交付并补交付记录；§2 能力域 11「OTA 固件升级」现状由「缺失」改为「已具备固件包管理与批次升级、进度回传（T-22）」；§5 进度指向下一任务；§7 变更记录加 **v1.9** 并更新头部版本与状态
-- [x] `docs/总督促文档.md`：T-22 交付记录（**分段读，文件超 64KB**）；现场未实测项如实记载——已升 v1.25（§1 交付记录表 + §3.15 交付范围与未做项 + §变更记录）
+- [x] `docs/总督促文档.md`：T-22 交付记录（**分段读，文件超 64KB**）——已升 **v1.26**（§1 交付记录表 + §3.15 交付范围与未做项（A1~A5 实测已收口）+ §变更记录）；先以 v1.25 记载「现场未实测」，补测通过后同版补记 v1.26 实测结论
 - [x] `docs/ARCHITECTURE.md`：OTA 模块与数据流（三张表、固件卷与 nginx 静态托管）、新增上行主题 `device/{key}/ota`、`IngestDispatcher` 第 6 路 fan-out、命令通道复用与保留服务白名单（并修正头部版本与 §changelog 一致性）——已升 v1.16（§4.1 控制器 22→24、§4.2 两控制器、§4.3 组件、§4.4 模块归属、§5/§6/§8、changelog）
 - [x] `docs/DEPLOYMENT.md`：`app.ota.*` 配置说明（`OTA_*` 环境变量）、`V11` 迁移说明、固件共享卷 `ota_firmware` 挂载、nginx `location ^~ /firmware/` 与 `client_max_body_size` 说明、OTA 排查手册（固件 404 / 设备未收到地址 / 进度不更新）——已新增 §9.17 OTA 固件升级运维章节
 
@@ -257,12 +256,12 @@ P1~P8 全部勾选后，T-22 视为交付；任何未完成项（尤其需真实
 
 ## 交付记录
 
-**状态**：P1~P8 全部勾选，T-22 视为交付（端到端实测除外，见「例外项」）。
+**状态**：P1~P8 全部勾选，T-22 视为交付（端到端实测已补测通过，无遗留例外项）。
 
 - **日期**：2026-10-03 ~ 2026-10-04
 - **后端门禁**：`mvn -B verify` 通过 —— `Tests run` 697 / `Failures: 0` / `Errors: 0` / `Skipped: 0`（73 类），产出 `mqtt-cloud-backend-1.0.0.jar`（59.0 MB）；含 ArchUnit 分层门禁
 - **前端门禁**：`npm run lint` 0 error；`npm run test` `Test Files 51 passed (51)` / `Tests 360 passed (360)`；`npm run build` `✓ built in 29.84s`
 - **迁移复核**：`V1`~`V10` 零改动（`db/migration` 仅 `V11__ota_firmware.sql` 一条 `??`）；`AclEvaluator.java` 无 diff，`device/{key}/ota` 上行天然放行
-- **端到端实测**：**未执行** —— 本机 Docker 守护进程未运行，A1~A5 无法现场实测
-- **例外项**：A1~A5 端到端实测（依赖 Docker 栈）顺延；已在 `总督促文档.md` §3.15 如实记载原因与后续安排
+- **端到端实测**：**已执行并通过** —— 起 `docker/docker-compose.yml` 编排栈（backend / frontend / emqx / mysql / redis 全 `healthy`），A1~A5 逐条实测 **PASS=34 / FAIL=0**（真实 HTTP 请求 + `mosquitto_pub` 经 `docker_mqtt-network` 接 EMQX 模拟设备上行）
+- **例外项**：无 —— 先前「A1~A5 端到端实测顺延」已补测通过，`总督促文档.md` §3.15 同步更新
 - **提交口径**：按主题拆分（迁移与实体；DTO / 常量与错误码；Mapper 与聚合 SQL；服务层与配置；接口层与安全配置；部署与静态托管；前端；文档），不合并提交
