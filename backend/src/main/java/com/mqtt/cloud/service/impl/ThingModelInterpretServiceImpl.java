@@ -11,6 +11,7 @@ import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.PropertyHistoryService;
 import com.mqtt.cloud.service.RuleEvaluationService;
+import com.mqtt.cloud.service.SceneEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelInterpretService;
 import com.mqtt.cloud.service.ThingModelService;
@@ -32,8 +33,8 @@ import java.util.Map;
  * 不进死信（死信只兜「落库失败」，解析产物可由后续上行自然覆盖）。因此本类<b>不开启事务</b>，
  * 让每条 upsert 独立提交，避免一条脏数据回滚整批。
  * <p>
- * 属性上报成功后依次挂四条旁路，均复用同一份归一化样本、各自 {@code try/catch} 隔离：
- * T-16 影子收敛 → T-17 阈值告警 → T-19 消息规则 → T-21 属性历史（{@code appendHistory}）。
+ * 属性上报成功后依次挂五条旁路，均复用同一份归一化样本、各自 {@code try/catch} 隔离：
+ * T-16 影子收敛 → T-17 阈值告警 → T-19 消息规则 → T-23 场景联动 → T-21 属性历史（{@code appendHistory}）。
  */
 @Slf4j
 @Service
@@ -61,6 +62,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
     private final DeviceShadowService deviceShadowService;
     private final AlertEvaluationService alertEvaluationService;
     private final RuleEvaluationService ruleEvaluationService;
+    private final SceneEvaluationService sceneEvaluationService;
     private final PropertyHistoryService propertyHistoryService;
     private final ThingModelInterpretMetrics metrics;
     private final ThingModelProperties properties;
@@ -127,6 +129,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         List<String> applied = new ArrayList<>();
         List<AlertEvaluationService.PropertySample> samples = new ArrayList<>();
         List<RuleEvaluationService.PropertySample> ruleSamples = new ArrayList<>();
+        List<SceneEvaluationService.PropertySample> sceneSamples = new ArrayList<>();
         List<PropertyHistoryService.Sample> historySamples = new ArrayList<>();
         for (Map.Entry<String, JsonNode> entry : params.properties()) {
             String identifier = entry.getKey();
@@ -146,6 +149,8 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
             applied.add(identifier);
             samples.add(new AlertEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
             ruleSamples.add(new RuleEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
+            // T-23：场景触发旁路复用同一份归一化样本，循环结束后统一匹配（不二次解析）。
+            sceneSamples.add(new SceneEvaluationService.PropertySample(identifier, valueText, record.receivedAt()));
             // T-21：同一份归一化样本追加进历史列表，循环结束后批量落库（不额外解析）。
             historySamples.add(new PropertyHistoryService.Sample(identifier, spec.type(), valueText,
                     record.receivedAt()));
@@ -156,6 +161,8 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         evaluateProperties(device, samples);
         // T-19：消息规则旁路，与影子 / 告警并列的第三处内部旁路，复用同一份归一化样本。
         evaluateRules(device, ruleSamples);
+        // T-23：场景触发旁路，与影子 / 告警 / 规则并列的第四处内部旁路，复用同一份归一化样本。
+        evaluateScenes(device, sceneSamples);
         // T-21：属性历史旁路，复用同一份归一化样本，批量追加。
         appendHistory(device, historySamples);
     }
@@ -193,6 +200,18 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
             ruleEvaluationService.onProperties(device.getId(), device.getProductId(), samples);
         } catch (Exception e) {
             log.warn("规则评估失败，跳过: deviceId={}", device.getId(), e);
+        }
+    }
+
+    /** 场景触发旁路（T-23 设计文档 §8.1）；异常只记 WARN，不冒泡到解析链路。 */
+    private void evaluateScenes(Device device, List<SceneEvaluationService.PropertySample> samples) {
+        if (samples.isEmpty()) {
+            return;
+        }
+        try {
+            sceneEvaluationService.onProperties(device.getId(), device.getProductId(), samples);
+        } catch (Exception e) {
+            log.warn("场景触发评估失败，跳过: deviceId={}", device.getId(), e);
         }
     }
 
@@ -251,6 +270,8 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         evaluateEvents(eventRecords);
         // T-19：事件规则旁路，同样遵循「未落库不评估」纪律。
         evaluateRuleEvents(eventRecords);
+        // T-23：事件场景旁路，同样遵循「未落库不评估」纪律。
+        evaluateSceneEvents(eventRecords);
     }
 
     /** 事件告警旁路（T-17 设计文档 §8.5）：按设备分组后逐设备评估；异常只记 WARN。 */
@@ -289,6 +310,26 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
                 ruleEvaluationService.onEvents(entry.getKey(), entry.getValue());
             } catch (Exception e) {
                 log.warn("事件规则评估失败，跳过: deviceId={}", entry.getKey(), e);
+            }
+        }
+    }
+
+    /** 事件场景旁路（T-23 设计文档 §8.1）：按设备分组后逐设备评估；异常只记 WARN。 */
+    private void evaluateSceneEvents(List<DeviceEventRecord> eventRecords) {
+        Map<Long, List<SceneEvaluationService.EventSample>> byDevice = new LinkedHashMap<>();
+        for (DeviceEventRecord record : eventRecords) {
+            if (record.getDeviceId() == null) {
+                continue;
+            }
+            byDevice.computeIfAbsent(record.getDeviceId(), key -> new ArrayList<>())
+                    .add(new SceneEvaluationService.EventSample(record.getIdentifier(), record.getEventType(),
+                            record.getOutputData(), record.getReportedAt()));
+        }
+        for (Map.Entry<Long, List<SceneEvaluationService.EventSample>> entry : byDevice.entrySet()) {
+            try {
+                sceneEvaluationService.onEvents(entry.getKey(), entry.getValue());
+            } catch (Exception e) {
+                log.warn("事件场景评估失败，跳过: deviceId={}", entry.getKey(), e);
             }
         }
     }

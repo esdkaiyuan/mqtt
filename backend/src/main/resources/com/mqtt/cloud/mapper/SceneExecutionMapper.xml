@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.SceneExecutionMapper">
+
+    <sql id="execColumns">
+        id, user_id, scene_id, scene_name, trigger_type, trigger_device_id, trigger_device_key,
+        trigger_device_name, trigger_identifier, trigger_value, trigger_event_type, trigger_source,
+        total_steps, finished_steps, status, error_message, started_at, finished_at, created_at, updated_at
+    </sql>
+
+    <!-- 执行记录分页：归属用户 + 可选场景 / 触发设备 / 状态 -->
+    <select id="pageByUser" resultType="com.mqtt.cloud.entity.SceneExecution">
+        SELECT <include refid="execColumns"/>
+        FROM scene_execution
+        WHERE user_id = #{userId}
+        <if test="sceneId != null">
+            AND scene_id = #{sceneId}
+        </if>
+        <if test="deviceId != null">
+            AND trigger_device_id = #{deviceId}
+        </if>
+        <if test="status != null and status != ''">
+            AND status = #{status}
+        </if>
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- 置运行中：记录首步开始时刻；仅当仍 PENDING 时生效（多副本 / 多步骤幂等） -->
+    <update id="markRunning">
+        UPDATE scene_execution
+        SET status = 'RUNNING',
+            started_at = #{startedAt,jdbcType=TIMESTAMP},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 置成功（终态）：仅当非终态时生效 -->
+    <update id="markSuccess">
+        UPDATE scene_execution
+        SET status = 'SUCCESS',
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            updated_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status IN ('PENDING', 'RUNNING')
+    </update>
+
+    <!-- 置失败（终态）：刷新失败原因，仅当非终态时生效 -->
+    <update id="markFailed">
+        UPDATE scene_execution
+        SET status = 'FAILED',
+            error_message = #{errorMessage},
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            updated_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status IN ('PENDING', 'RUNNING')
+    </update>
+
+    <!-- 进度自增：已完成（SUCCESS/SKIPPED）步骤数 -->
+    <update id="bumpFinishedSteps">
+        UPDATE scene_execution
+        SET finished_steps = finished_steps + #{delta},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+    </update>
+
+    <!-- 手动重试重置：仅当记录为 FAILED 时置回 RUNNING 并清空失败原因（status 守卫防并发） -->
+    <update id="resetForRetry">
+        UPDATE scene_execution
+        SET status = 'RUNNING',
+            error_message = NULL,
+            finished_at = NULL,
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'FAILED'
+    </update>
+
+    <!-- 保留策略清理：只删终态（SUCCESS/FAILED），PENDING/RUNNING 永不清理；步骤明细随外键级联删除 -->
+    <delete id="deleteFinishedBefore">
+        DELETE FROM scene_execution
+        WHERE status IN ('SUCCESS', 'FAILED')
+          AND finished_at IS NOT NULL
+          AND finished_at &lt; #{before,jdbcType=TIMESTAMP}
+        LIMIT #{limit}
+    </delete>
+
+</mapper>

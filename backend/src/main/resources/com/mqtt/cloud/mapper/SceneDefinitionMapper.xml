@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.SceneDefinitionMapper">
+
+    <sql id="sceneColumns">
+        id, user_id, name, description, trigger_type, trigger_device_id, trigger_identifier,
+        trigger_operator, trigger_threshold, trigger_event_type, timer_cron, condition_logic,
+        condition_config, cooldown_seconds, last_triggered_at, enabled, created_at, updated_at, deleted
+    </sql>
+
+    <!-- 场景缓存加载：某用户启用场景 -->
+    <select id="selectEnabledByUser" resultType="com.mqtt.cloud.entity.SceneDefinition">
+        SELECT <include refid="sceneColumns"/>
+        FROM scene_definition
+        WHERE user_id = #{userId}
+          AND enabled = 1
+          AND deleted = 0
+        ORDER BY id ASC
+    </select>
+
+    <!-- 场景分页列表：归属用户 + 可选触发源 / 启用态 / 关键字 -->
+    <select id="pageByUser" resultType="com.mqtt.cloud.entity.SceneDefinition">
+        SELECT <include refid="sceneColumns"/>
+        FROM scene_definition
+        WHERE user_id = #{userId}
+          AND deleted = 0
+        <if test="triggerType != null and triggerType != ''">
+            AND trigger_type = #{triggerType}
+        </if>
+        <if test="enabled != null">
+            AND enabled = #{enabled}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (name LIKE CONCAT('%', #{keyword}, '%')
+                 OR description LIKE CONCAT('%', #{keyword}, '%'))
+        </if>
+        ORDER BY id DESC
+    </select>
+
+    <!-- 同用户重名校验（更新时排除自身） -->
+    <select id="countByUserAndName" resultType="int">
+        SELECT COUNT(*)
+        FROM scene_definition
+        WHERE user_id = #{userId}
+          AND deleted = 0
+          AND name = #{name}
+        <if test="excludeId != null">
+            AND id != #{excludeId}
+        </if>
+    </select>
+
+    <!-- 场景数上限校验 -->
+    <select id="countByUser" resultType="int">
+        SELECT COUNT(*)
+        FROM scene_definition
+        WHERE user_id = #{userId}
+          AND deleted = 0
+    </select>
+
+    <!-- 回填「最近触发」展示字段（自动触发路径调用；updated_at 不刷新，避免污染编辑时间） -->
+    <update id="touchLastTriggered">
+        UPDATE scene_definition
+        SET last_triggered_at = #{triggeredAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+    </update>
+
+    <!-- 定时触发分钟去重：仅当 last_triggered_at 早于本分钟起点时才回填，返回 0 表示本分钟已触发 -->
+    <update id="touchLastTriggeredOnce">
+        UPDATE scene_definition
+        SET last_triggered_at = #{triggeredAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND (last_triggered_at IS NULL OR last_triggered_at &lt; #{minuteFloor,jdbcType=TIMESTAMP})
+    </update>
+
+    <!-- 全部启用的定时场景（SceneTimerSweeper 扫描用） -->
+    <select id="selectEnabledTimers" resultType="com.mqtt.cloud.entity.SceneDefinition">
+        SELECT <include refid="sceneColumns"/>
+        FROM scene_definition
+        WHERE trigger_type = 'TIMER'
+          AND enabled = 1
+          AND deleted = 0
+        ORDER BY id ASC
+    </select>
+
+</mapper>

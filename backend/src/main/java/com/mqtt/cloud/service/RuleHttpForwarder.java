@@ -50,7 +50,7 @@ public class RuleHttpForwarder {
     }
 
     /**
-     * 发送转发请求。
+     * 发送规则转发请求（T-19 既有入口，行为与签名不变）。
      *
      * @param method      HTTP 方法（POST / PUT）
      * @param url         目标地址
@@ -62,11 +62,36 @@ public class RuleHttpForwarder {
      */
     public void send(String method, String url, Map<String, String> customHeaders,
                      String body, Long ruleId, Long executionId) {
+        send(RuleConstants.EVENT_RULE_TRIGGERED, HEADER_RULE_ID, ruleId, method, url,
+                customHeaders, body, executionId);
+    }
+
+    /**
+     * 发送转发请求（T-23 通用入口）：把事件类型 / 来源头名 / 来源 ID 参数化，供规则与场景共用同一套出站与签名。
+     * <p>
+     * 规则传 {@code eventType=rule.triggered}、{@code sourceIdHeader=X-Rule-Id}；
+     * 场景传 {@code eventType=scene.triggered}、{@code sourceIdHeader=X-Scene-Id}。
+     * 签名方案与请求头集合完全一致，用户侧验签逻辑只需实现一次。
+     *
+     * @param eventType      事件类型（{@code X-Event-Type}）
+     * @param sourceIdHeader 来源 ID 请求头名（如 {@code X-Rule-Id} / {@code X-Scene-Id}）
+     * @param sourceId       来源 ID 取值（请求头）
+     * @param method         HTTP 方法（POST / PUT）
+     * @param url            目标地址
+     * @param customHeaders  自定义请求头（已渲染）
+     * @param body           请求体（已渲染的 JSON 文本）
+     * @param executionId    执行记录 ID（幂等键，重试不变）
+     * @throws IllegalStateException 目标不可达或返回非 2xx
+     */
+    public void send(String eventType, String sourceIdHeader, Long sourceId, String method, String url,
+                     Map<String, String> customHeaders, String body, Long executionId) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(new MediaType(MediaType.APPLICATION_JSON, StandardCharsets.UTF_8));
-        headers.set(HEADER_EVENT_TYPE, RuleConstants.EVENT_RULE_TRIGGERED);
-        if (ruleId != null) {
-            headers.set(HEADER_RULE_ID, String.valueOf(ruleId));
+        if (eventType != null && !eventType.isBlank()) {
+            headers.set(HEADER_EVENT_TYPE, eventType);
+        }
+        if (sourceIdHeader != null && !sourceIdHeader.isBlank() && sourceId != null) {
+            headers.set(sourceIdHeader, String.valueOf(sourceId));
         }
         if (executionId != null) {
             headers.set(HEADER_EXECUTION_ID, String.valueOf(executionId));
@@ -90,7 +115,8 @@ public class RuleHttpForwarder {
             if (!response.getStatusCode().is2xxSuccessful()) {
                 throw new IllegalStateException("转发失败：目标返回状态码 " + response.getStatusCode().value());
             }
-            log.info("规则 HTTP 转发成功: ruleId={}, executionId={}, url={}", ruleId, executionId, url);
+            log.info("HTTP 转发成功: eventType={}, sourceId={}, executionId={}, url={}",
+                    eventType, sourceId, executionId, url);
         } catch (IllegalStateException e) {
             throw e;
         } catch (Exception e) {

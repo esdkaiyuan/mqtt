@@ -96,7 +96,14 @@ public enum ResultCode {
     OTA_TASK_NOT_FOUND(6236, "升级任务不存在", HttpStatus.NOT_FOUND),
     OTA_TASK_INVALID(6237, "升级任务参数非法（目标为空、超限或与固件产品不匹配）", HttpStatus.BAD_REQUEST),
     OTA_TASK_STATE_INVALID(6238, "升级任务状态不允许该操作", HttpStatus.BAD_REQUEST),
-    OTA_PROGRESS_INVALID(6239, "OTA 进度回传报文字段非法", HttpStatus.BAD_REQUEST);
+    OTA_PROGRESS_INVALID(6239, "OTA 进度回传报文字段非法", HttpStatus.BAD_REQUEST),
+
+    SCENE_NOT_FOUND(6240, "场景不存在", HttpStatus.NOT_FOUND),
+    SCENE_INVALID(6241, "场景配置非法", HttpStatus.BAD_REQUEST),
+    SCENE_STEP_UNSUPPORTED(6242, "不支持的场景步骤动作类型", HttpStatus.BAD_REQUEST),
+    SCENE_EXECUTION_NOT_FOUND(6243, "场景执行记录不存在", HttpStatus.NOT_FOUND),
+    SCENE_LIMIT_EXCEEDED(6244, "场景数量或步骤数超出上限", HttpStatus.BAD_REQUEST),
+    SCENE_TRIGGER_UNSUPPORTED(6245, "不支持或非法的场景触发源", HttpStatus.BAD_REQUEST);
 
     private final Integer code;
     private final String message;

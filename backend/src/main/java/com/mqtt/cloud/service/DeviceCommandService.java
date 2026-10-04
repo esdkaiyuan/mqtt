@@ -31,6 +31,8 @@ public interface DeviceCommandService {
     String SOURCE_RULE = "RULE";
     /** 来源：OTA 固件升级（T-22）。仅用于区分来源，不改既有语义。 */
     String SOURCE_OTA = "OTA";
+    /** 来源：场景联动动作（T-23）。仅用于区分来源，不改既有语义。 */
+    String SOURCE_SCENE = "SCENE";
 
     /**
      * 平台保留服务标识（T-22）：OTA 固件升级。

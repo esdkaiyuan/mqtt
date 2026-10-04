@@ -45,4 +45,23 @@ public class AsyncConfig {
         executor.initialize();
         return executor;
     }
+
+    /**
+     * 场景步骤执行专用线程池（T-23 设计文档 §4.5 / §8.4）。
+     * <p>
+     * 与 {@code ruleExecutor} 隔离：慢动作（延时排期、出站转发、多设备逐台下发）不得占用摄取 worker，
+     * 也不得挤占规则动作线程；有界队列在过载时直接拒绝投递（由评估 / 巡检侧把步骤置 {@code FAILED}）。
+     */
+    @Bean("sceneExecutor")
+    public ThreadPoolTaskExecutor sceneExecutor(SceneProperties properties) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(properties.getExecutorCoreSize());
+        executor.setMaxPoolSize(properties.getExecutorMaxSize());
+        executor.setQueueCapacity(properties.getExecutorQueueCapacity());
+        executor.setThreadNamePrefix("scene-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
+        executor.initialize();
+        return executor;
+    }
 }

@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.SceneStepRunMapper">
+
+    <sql id="stepRunColumns">
+        id, execution_id, scene_id, step_id, seq, action_type, delay_seconds, scheduled_at,
+        status, attempt_count, next_attempt_at, error_message, forward_payload,
+        started_at, finished_at, created_at, updated_at
+    </sql>
+
+    <!-- 某次执行的步骤明细（按 seq 升序） -->
+    <select id="selectByExecutionId" resultType="com.mqtt.cloud.entity.SceneStepRun">
+        SELECT <include refid="stepRunColumns"/>
+        FROM scene_step_run
+        WHERE execution_id = #{executionId}
+        ORDER BY seq ASC
+    </select>
+
+    <!-- 到期步骤：只拾取已排期且到期的 PENDING（next_attempt_at IS NULL 的未排期步骤不被拾取） -->
+    <select id="selectDueSteps" resultType="com.mqtt.cloud.entity.SceneStepRun">
+        SELECT <include refid="stepRunColumns"/>
+        FROM scene_step_run
+        WHERE status = 'PENDING'
+          AND next_attempt_at IS NOT NULL
+          AND next_attempt_at &lt;= #{now,jdbcType=TIMESTAMP}
+        ORDER BY next_attempt_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 卡死的运行中步骤：进程中途退出 / 动作卡死恢复用 -->
+    <select id="selectStaleRunning" resultType="com.mqtt.cloud.entity.SceneStepRun">
+        SELECT <include refid="stepRunColumns"/>
+        FROM scene_step_run
+        WHERE status = 'RUNNING'
+          AND started_at IS NOT NULL
+          AND started_at &lt;= #{deadline,jdbcType=TIMESTAMP}
+        ORDER BY started_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 并发抢占：仅当仍 PENDING 时置 RUNNING；started_at 保留首次值（重试不刷新） -->
+    <update id="claimPending">
+        UPDATE scene_step_run
+        SET status = 'RUNNING',
+            started_at = COALESCE(started_at, NOW(3)),
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 为下一步骤排期：置计划执行时刻与可执行锚点（仅 PENDING 生效） -->
+    <update id="scheduleNext">
+        UPDATE scene_step_run
+        SET scheduled_at = #{scheduledAt,jdbcType=TIMESTAMP},
+            next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 置成功（终态）：仅当仍 RUNNING 时生效 -->
+    <update id="markSuccess">
+        UPDATE scene_step_run
+        SET status = 'SUCCESS',
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            updated_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+
+    <!-- 置重试：刷新尝试次数 / 下次重试锚点 / 失败原因，状态回到 PENDING 由巡检再次拾取 -->
+    <update id="markRetry">
+        UPDATE scene_step_run
+        SET status = 'PENDING',
+            attempt_count = #{attemptCount},
+            next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+            error_message = #{errorMessage},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+
+    <!-- 置失败（终态）：刷新最终尝试次数与失败原因 -->
+    <update id="markFailed">
+        UPDATE scene_step_run
+        SET status = 'FAILED',
+            attempt_count = #{attemptCount},
+            error_message = #{errorMessage},
+            next_attempt_at = NULL,
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            updated_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+
+    <!-- 中止：把尚未执行的后续步骤置 SKIPPED（仅 PENDING 生效） -->
+    <update id="markSkipped">
+        UPDATE scene_step_run
+        SET status = 'SKIPPED',
+            finished_at = #{finishedAt,jdbcType=TIMESTAMP},
+            updated_at = #{finishedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND status = 'PENDING'
+    </update>
+
+    <!-- 卡死恢复：RUNNING 复位为 PENDING 并推进尝试次数（仅 RUNNING 生效） -->
+    <update id="resetStale">
+        UPDATE scene_step_run
+        SET status = 'PENDING',
+            attempt_count = #{attemptCount},
+            next_attempt_at = #{nextAttemptAt,jdbcType=TIMESTAMP},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+
+    <!-- 手动重试重置：FAILED/SKIPPED 步骤回到 PENDING；仅最小序号步骤立即排期，其余置未排期 -->
+    <update id="resetForRetry">
+        UPDATE scene_step_run
+        SET status = 'PENDING',
+            attempt_count = 0,
+            error_message = NULL,
+            started_at = NULL,
+            finished_at = NULL,
+            scheduled_at = CASE WHEN seq = #{firstSeq} THEN #{nextAttemptAt,jdbcType=TIMESTAMP} ELSE NULL END,
+            next_attempt_at = CASE WHEN seq = #{firstSeq} THEN #{nextAttemptAt,jdbcType=TIMESTAMP} ELSE NULL END,
+            updated_at = NOW(3)
+        WHERE execution_id = #{executionId}
+          AND status IN ('FAILED', 'SKIPPED')
+    </update>
+
+    <!-- 回填转发载荷快照（渲染成功后调用，无论发送成功与否） -->
+    <update id="updateForwardPayload">
+        UPDATE scene_step_run
+        SET forward_payload = #{forwardPayload},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+    </update>
+
+</mapper>

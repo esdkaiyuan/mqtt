@@ -300,6 +300,43 @@ app:
     # 任务超时时长（毫秒）；超过该时长仍无终态回传的记录置 TIMEOUT
     task-timeout-ms: ${OTA_TASK_TIMEOUT_MS:86400000}
 
+  # 自动化 / 场景联动（T-23）
+  scene:
+    # 场景引擎总开关；置 false 时不做触发评估、定时巡检不注册（既有规则 / 告警不受影响）
+    enabled: ${SCENE_ENABLED:true}
+    # 单用户场景数上限
+    max-scenes-per-user: ${SCENE_MAX_SCENES_PER_USER:100}
+    # 单场景步骤数上限
+    max-steps-per-scene: ${SCENE_MAX_STEPS_PER_SCENE:20}
+    # 单场景条件项数上限
+    max-conditions-per-scene: ${SCENE_MAX_CONDITIONS_PER_SCENE:10}
+    # 单步骤目标设备数上限（同时受 DeviceBatchService.MAX_BATCH_SIZE=500 约束）
+    max-target-devices: ${SCENE_MAX_TARGET_DEVICES:500}
+    # 单步骤最大延时（秒）
+    max-step-delay-seconds: ${SCENE_MAX_STEP_DELAY_SECONDS:86400}
+    # 场景定义缓存 TTL（秒）；0 关闭缓存。保存只失效本副本，多副本收敛窗口 = 该 TTL
+    cache-ttl-seconds: ${SCENE_CACHE_TTL_SECONDS:60}
+    # 步骤执行线程池
+    executor-core-size: ${SCENE_EXECUTOR_CORE_SIZE:2}
+    executor-max-size: ${SCENE_EXECUTOR_MAX_SIZE:8}
+    executor-queue-capacity: ${SCENE_EXECUTOR_QUEUE_CAPACITY:500}
+    # 步骤失败重试上限，达到该次数仍未成功则中止后续步骤
+    retry-max-attempts: ${SCENE_RETRY_MAX_ATTEMPTS:3}
+    # 指数退避基数（毫秒）
+    retry-base-delay-ms: ${SCENE_RETRY_BASE_DELAY_MS:5000}
+    # 指数退避封顶（毫秒）
+    retry-max-delay-ms: ${SCENE_RETRY_MAX_DELAY_MS:300000}
+    # 延时与重试巡检间隔（毫秒），0 关闭（同时关闭卡死恢复与保留清理）；决定延时精度
+    sweep-interval-ms: ${SCENE_SWEEP_INTERVAL_MS:1000}
+    # 单轮巡检处理上限
+    sweep-batch-size: ${SCENE_SWEEP_BATCH_SIZE:200}
+    # 单步执行超时（毫秒）；超过该时长仍为 RUNNING 的步骤由巡检复位重试
+    step-timeout-ms: ${SCENE_STEP_TIMEOUT_MS:300000}
+    # 执行记录保留天数（仅清理终态记录），0 表示不清理
+    execution-retention-days: ${SCENE_EXECUTION_RETENTION_DAYS:30}
+    # 定时触发使用的时区
+    timer-zone: ${SCENE_TIMER_ZONE:Asia/Shanghai}
+
 # 日志配置
 logging:
   level:
