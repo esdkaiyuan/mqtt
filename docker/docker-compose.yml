@@ -257,6 +257,10 @@ services:
       OTA_DISPATCH_INTERVAL_MS: ${OTA_DISPATCH_INTERVAL_MS:-60000}
       OTA_DISPATCH_BATCH_SIZE: ${OTA_DISPATCH_BATCH_SIZE:-200}
       OTA_TASK_TIMEOUT_MS: ${OTA_TASK_TIMEOUT_MS:-86400000}
+      # HTTP 上报（T-24 多协议接入）：端点与设备凭据过滤器总开关、单次载荷上限、Basic realm
+      HTTP_INGEST_ENABLED: ${HTTP_INGEST_ENABLED:-true}
+      HTTP_INGEST_MAX_PAYLOAD_BYTES: ${HTTP_INGEST_MAX_PAYLOAD_BYTES:-65536}
+      HTTP_INGEST_REALM: ${HTTP_INGEST_REALM:-mqtt-cloud-device}
     # 固件包持久化：backend 写入，frontend(nginx) 只读挂载对外托管
     volumes:
       - ota_firmware:/var/lib/mqtt/ota
