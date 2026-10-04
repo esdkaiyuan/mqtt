@@ -113,7 +113,7 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
         requireInvocable(device);
 
         ThingModelDefinition definition = loadDefinition(device.getProductId());
-        if (definition.isEmpty()) {
+        if (definition.isEmpty() && !isReservedService(commandType, command.identifier())) {
             throw new BusinessException(ResultCode.COMMAND_MODEL_MISSING);
         }
         requireWithinSizeLimit(command.paramsJson());
@@ -455,6 +455,16 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
                 throw new BusinessException(ResultCode.COMMAND_PARAM_INVALID, identifier + " " + error);
             }
         }
+    }
+
+    /**
+     * 判断是否为平台保留服务（T-22 §4.4）：{@code ota_upgrade} 免于产品物模型声明，
+     * 即便产品未定义物模型也应放行下发。仅对 {@code service} 类命令生效。
+     */
+    private boolean isReservedService(String commandType, String identifier) {
+        return TYPE_SERVICE.equals(commandType)
+                && identifier != null
+                && RESERVED_SERVICES.contains(identifier);
     }
 
     private void validateService(ThingModelDefinition definition, String identifier, JsonNode params) {

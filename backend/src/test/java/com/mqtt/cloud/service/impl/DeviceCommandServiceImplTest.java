@@ -261,6 +261,22 @@ class DeviceCommandServiceImplTest {
         assertThat(body.get("params").get("url").asText()).isEqualTo("http://localhost/firmware/3/1.0.0/fw.bin");
     }
 
+    /** 产品未声明物模型时，保留服务 ota_upgrade 仍应放行并下发（回归 T-22 §4.4）。 */
+    @Test
+    void invoke_reserved_ota_service_should_publish_when_model_empty() throws Exception {
+        when(thingModelService.get(PRODUCT_ID)).thenReturn(new ThingModelResponse(null, 0, null));
+
+        DeviceCommandService.CommandInvoke command = new DeviceCommandService.CommandInvoke(
+                DEVICE_ID, PRODUCT_ID, "service", DeviceCommandService.SERVICE_OTA_UPGRADE,
+                "{\"url\":\"http://localhost/firmware/3/1.0.0/fw.bin\",\"version\":\"1.0.0\"}",
+                "async", DeviceCommandService.SOURCE_OTA, 1L);
+
+        DeviceCommandRecord result = service.invoke(command);
+
+        assertThat(result.getStatus()).isEqualTo("SENT");
+        verify(mqttClientManager).publish(anyString(), anyString(), eq(1));
+    }
+
     /** 白名单只放行保留标识：同样未声明的其它服务名仍拒绝。 */
     @Test
     void invoke_should_reject_non_reserved_service_with_undeclared_params() {
