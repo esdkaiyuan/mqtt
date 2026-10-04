@@ -1056,6 +1056,88 @@ curl -sS -i -u '{productKey}.{deviceKey}:wrong-secret' \
 - **上报成功但属性最新值 / 在线态未更新**：核对合成主题是否落入 `device/{deviceKey}/`（`AclEvaluator` 拒绝 `cmd/` 前缀发布）；`heartbeat` 与 `data` 均刷新在线态，`lwt` 表示掉线。
 - **与 MQTT 数据「重复 / 顺序异常」**：同一设备同时经两条链路写入属预期（同分片同顺序，`upsertIfNewer` 时间戳守卫保证最新值不倒退）；排查时以 `device_property_latest.reported_at` 为准。
 
+### 9.19 场景联动运维（T-23）
+
+**迁移 `V12__scene_automation.sql`**：新建 `scene_definition`（场景定义）、`scene_step`（动作流步骤）、`scene_execution`（执行记录）与 `scene_step_run`（步骤执行明细）四张表。迁移**只加表、不改既有表**，可安全回滚应用版本（回滚后新旧表共存，旧代码忽略新表）。注意 `scene_step_run.step_id` **刻意不建外键**——场景更新采用「整体替换步骤」（先删旧 `scene_step` 再插新行），若建级联外键会连带删除历史执行明细。重建后端即触发：
+
+```bash
+docker compose --env-file .env -f docker/docker-compose.yml up -d --build backend
+# 校验：Flyway schema history 出现 V12，且四张场景表存在
+docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
+  -e "SELECT version, description, success FROM flyway_schema_history ORDER BY installed_rank; SHOW TABLES LIKE 'scene_%';"
+```
+
+**挂载点与主题策略**：场景引擎**不新增任何 MQTT 主题、不改 ACL**。作为上行解析的**第五条内部旁路**挂载在 `ThingModelInterpretServiceImpl`（属性旁路 `onProperties`；事件旁路按设备分组后 `onEvents`），复用 T-14 已归一化的样本；异常逐条 `try/catch` 隔离、只记 WARN，**绝不冒泡到摄取链路、不进死信**（场景故障不影响消息落库与实时推送）。触发源三类 `PROPERTY` / `EVENT` / `TIMER`，条件组支持 `AND` / `OR`，命中后按序执行步骤流（`delay_seconds` 相对前一步完成时刻）。四类动作出口**全部复用既有能力**：
+
+| 动作 | 出口 | 复用链路 |
+|------|------|----------|
+| `UPDATE_PROPERTY` | 更新云端属性最新值 | `DevicePropertyLatestMapper.upsertIfNewer`（时间戳守卫） |
+| `SEND_COMMAND` | 下发命令 | `DeviceCommandService.invoke`（强制 `callType=async`、`source=SCENE`） |
+| `FORWARD_MQTT` | 出站到**第三方 Broker** | `RuleMqttForwarder`（**不经自有 EMQX**，受 `RULE_MQTT_ENABLED` 等 T-19 变量控制） |
+| `FORWARD_HTTP` | 出站 HTTP 回调 | `RuleHttpForwarder`（HMAC-SHA256 签名，事件类型 `scene.triggered`、`X-Scene-Id`） |
+
+**异步执行与重试 / 双巡检**：命中后落一条 `scene_execution`（`status=PENDING`）并逐步骤初始化 `scene_step_run`，投递独立线程池 `sceneExecutor` 异步执行；步骤间的延时与重试锚点**全部落库**（`scheduled_at` / `next_attempt_at`），支持进程重启恢复与多副本安全。单步失败按指数退避重试（`next_attempt_at = now + min(base × 2^(attemptCount-1), max)`），由 `SceneSweeper` 周期拾取到期步骤重放；某步重试耗尽置 `FAILED` 后，**整条执行置 `FAILED` 且后续步骤置 `SKIPPED`**。`SceneTimerSweeper` 对 `TIMER` 触发源按 `timer_cron`（时区 `SCENE_TIMER_ZONE`）评估，**按分钟去重**（同一场景同一分钟只触发一次，锚点 `last_triggered_at`）。**冷却**在进程内 `SceneCooldownRegistry` 判定，「**先占用再执行**」防止同一冷却窗口内重复触发。
+
+**可调项**（`.env` → 环境变量 → `application.yml` 的 `app.scene`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `SCENE_ENABLED` | `true` | 场景引擎总开关；置 `false` 时不评估场景、双巡检不注册（既有告警 / 规则 / Webhook 不受影响） |
+| `SCENE_MAX_SCENES_PER_USER` | `100` | 单用户场景数上限，超限创建返回 `6244` |
+| `SCENE_MAX_STEPS_PER_SCENE` | `20` | 单场景步骤数上限 |
+| `SCENE_MAX_CONDITIONS_PER_SCENE` | `10` | 单场景条件组条件数上限 |
+| `SCENE_MAX_TARGET_DEVICES` | `500` | 单次动作目标设备数上限（触发器作用域展开后超限返回 `6217`） |
+| `SCENE_MAX_STEP_DELAY_SECONDS` | `86400` | 单步最大延时（秒） |
+| `SCENE_CACHE_TTL_SECONDS` | `60` | 场景定义缓存 TTL（秒），`0` 关闭缓存；保存只失效本副本，多副本收敛窗口 = 该 TTL |
+| `SCENE_EXECUTOR_CORE_SIZE` / `SCENE_EXECUTOR_MAX_SIZE` | `2` / `8` | 场景步骤执行线程池核心 / 最大线程数 |
+| `SCENE_EXECUTOR_QUEUE_CAPACITY` | `500` | 步骤执行线程池队列容量；满时该步投递被拒，置 `FAILED`（对应 `scene_rejected_total`） |
+| `SCENE_RETRY_MAX_ATTEMPTS` | `3` | 单步失败重试上限，达到置 `FAILED` |
+| `SCENE_RETRY_BASE_DELAY_MS` / `SCENE_RETRY_MAX_DELAY_MS` | `5000` / `300000` | 指数退避基数 / 封顶（毫秒） |
+| `SCENE_SWEEP_INTERVAL_MS` | `1000` | 到期步骤补投巡检间隔（毫秒），`0` 关闭（**同时关闭执行记录保留清理**） |
+| `SCENE_SWEEP_BATCH_SIZE` | `200` | 单轮巡检处理上限 |
+| `SCENE_STEP_TIMEOUT_MS` | `300000` | 单步执行超时（毫秒），超时由巡检置 `FAILED` |
+| `SCENE_EXECUTION_RETENTION_DAYS` | `30` | 执行记录保留天数（**仅清理终态** `SUCCESS`/`FAILED`，`PENDING`/`RUNNING` 永不清理）；`0` 表示不清理 |
+| `SCENE_TIMER_ZONE` | `Asia/Shanghai` | `TIMER` 触发源 cron 的时区 |
+
+> 翻转上述任一变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend`，无需重跑 `emqx-init`。
+
+**指标**：经 `/actuator/prometheus` 暴露（公开抓取）：
+
+| 指标 | 含义 |
+|------|------|
+| `scene_trigger_total` | 场景命中（属性 / 事件触发）并落执行记录次数 |
+| `scene_timer_trigger_total` | 定时（`TIMER`）触发评估命中次数 |
+| `scene_rejected_total` | 步骤动作投递被线程池拒绝次数（对应步骤直接 `FAILED`） |
+
+**场景与执行记录排查**：
+
+```sql
+-- 某用户的场景（触发源 / 条件组 / 冷却 / 启用态）
+SELECT id, name, trigger_type, trigger_identifier, trigger_operator, trigger_threshold,
+       condition_logic, cooldown_seconds, last_triggered_at, enabled, deleted
+FROM scene_definition WHERE user_id = <userId> ORDER BY updated_at DESC;
+-- 某场景的最近执行记录（状态 / 触发方式 / 完成进度 / 失败原因）
+SELECT id, trigger_type, trigger_source, trigger_device_key, total_steps, finished_steps,
+       status, error_message, started_at, finished_at, created_at
+FROM scene_execution WHERE scene_id = <sceneId> ORDER BY created_at DESC LIMIT 20;
+-- 某次执行的步骤流（顺序 / 状态 / 尝试次数 / 排期与重试锚点）
+SELECT seq, action_type, status, attempt_count, scheduled_at, next_attempt_at, error_message, forward_payload
+FROM scene_step_run WHERE execution_id = <executionId> ORDER BY seq;
+-- 到期待补投的步骤：应被巡检收敛
+SELECT id, execution_id, seq, status, attempt_count, next_attempt_at FROM scene_step_run
+WHERE status IN ('PENDING','RUNNING') AND next_attempt_at IS NOT NULL AND next_attempt_at <= NOW();
+```
+
+**常见排障**：
+
+- **属性 / 事件上报但没有触发场景**：确认场景 `enabled=1`、`deleted=0`，触发源与标识符匹配（`EVENT` 源额外比对 `trigger_event_type`），作用域（`trigger_device_id`，为 `NULL` 表示该用户全部设备）覆盖该设备；`GT`/`GTE`/`LT`/`LTE` 两侧须为可解析十进制数，任一侧不可解析即不命中；确认 `SCENE_ENABLED=true` 且条件组（若有）按 `condition_logic` 同时 / 任一成立。
+- **定时场景未按时触发**：核对 `timer_cron` 为合法 5 字段分钟级表达式、时区符合预期（`SCENE_TIMER_ZONE`，默认 `Asia/Shanghai`）；同一分钟内重复 tick 会被 `last_triggered_at` 去重，属预期。
+- **场景触发但动作没生效**：查 `scene_step_run` 状态——`PENDING` 表示待排期 / 待重试（看 `next_attempt_at` 与 `scheduled_at`），`FAILED` 看 `error_message`；`SKIPPED` 表示前一步失败后被短路。`FORWARD_MQTT` 置 `FAILED` 且提示「外部 MQTT 转发未启用」说明 `RULE_MQTT_ENABLED=false`（该动作受 T-19 外部 Broker 变量约束，参见 §9.14）。
+- **冷却窗口内重复上报只触发一次**：属预期——同一场景在 `cooldown_seconds` 内的重复命中被跳过，冷却锚点在进程内维护（**多副本各自独立**，重启后清空）。
+- **执行记录被清理**：`SCENE_EXECUTION_RETENTION_DAYS>0` 且巡检运行时，终态记录（`SUCCESS`/`FAILED`）超期被物理删除；`PENDING`/`RUNNING` 永不清理。如需长期留档，调大该值或置 `0`。
+- **步骤一直停在 `PENDING` / 不推进**：确认巡检已启用（`SCENE_SWEEP_INTERVAL_MS>0` 且 `SCENE_ENABLED=true`）；查看后端日志中场景巡检 WARN。步骤超 `SCENE_STEP_TIMEOUT_MS` 后由巡检置 `FAILED`。
+- **`6240`~`6245`**：`6240` 场景不存在（`404`）/ `6241` 场景配置非法（`400`）/ `6242` 不支持的步骤动作类型（`400`）/ `6243` 场景执行记录不存在（`404`）/ `6244` 场景 / 步骤 / 条件 / 目标设备数超出上限（`400`）/ `6245` 不支持的触发源（`400`）；场景与执行记录越权访问统一返回 `403`，非 `FAILED` 状态手动重试返回 `409`，设备越权复用 `2003`。
+
 ---
 
 ## 10. 依赖版本与安全扫描
