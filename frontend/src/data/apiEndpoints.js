@@ -131,6 +131,32 @@ export const endpointGroups = [
 }`
       }
     ]
+  },
+  {
+    title: '设备接入（HTTP 上报）',
+    endpoints: [
+      {
+        method: 'POST',
+        path: '/ingest/{deviceKey}/{messageType}',
+        desc: '设备 HTTP 上报入口。使用 HTTP Basic 鉴权，用户名为 {productKey}.{deviceKey}、密码为 device_secret；messageType 取值 data / heartbeat / lwt，其它值返回 400（6247）。请求体为设备原始载荷，后端不做预解析，与 MQTT 上报同分片、同顺序，属性最新值等价。',
+        example: `curl -X POST \\
+  https://your-server/api/ingest/sensor-temp-001/data \\
+  -u "esp32-fall-detect.sensor-temp-001:<device_secret>" \\
+  -H "Content-Type: application/json" \\
+  -d '{"method":"thing.event.property.post","params":{"temperature":26.5}}'`,
+        response: `{
+  "code": 200,
+  "message": "成功",
+  "data": {
+    "deviceKey": "sensor-temp-001",
+    "messageType": "data",
+    "topic": "device/sensor-temp-001/data",
+    "receivedAt": "2026-10-04T12:00:00",
+    "accepted": true
+  }
+}`
+      }
+    ]
   }
 ]
 
@@ -141,7 +167,10 @@ export const errorCodes = [
   { code: 403, message: '无权限', desc: '密钥权限范围不包含该操作' },
   { code: 404, message: '资源不存在', desc: '设备标识或路径不存在' },
   { code: 429, message: '请求过于频繁', desc: '超出密钥的调用频率限制' },
-  { code: 500, message: '服务端错误', desc: '服务内部异常，请稍后重试或联系管理员' }
+  { code: 500, message: '服务端错误', desc: '服务内部异常，请稍后重试或联系管理员' },
+  { code: 6246, message: '设备凭据无效', desc: 'HTTP 上报 Basic 凭据缺失、格式错误、设备不存在/停用/禁用或密钥错误（HTTP 401）' },
+  { code: 6247, message: 'messageType 不支持', desc: 'HTTP 上报 messageType 不在 data / heartbeat / lwt 白名单（HTTP 400）' },
+  { code: 6248, message: '上报载荷过大', desc: 'HTTP 上报请求体超过 max-payload-bytes 限制（HTTP 413）' }
 ]
 
 export const webhookEvents = [

@@ -114,10 +114,10 @@ const sections = {
 const section = computed(() => route.params.section || 'overview')
 const current = computed(() => sections[section.value] || sections.overview)
 
-const connectSample = `# 使用设备凭据连接 Broker 并上报数据
+const connectSample = `# 用户名：{productKey}.{deviceKey}，密码：device_secret
 mosquitto_pub \\
   -h your-server -p 1883 \\
-  -u "deviceKey|secretKey" -P "deviceSecret" \\
+  -u "esp32-fall-detect.sensor-temp-001" -P "<device_secret>" \\
   -t "device/sensor-temp-001/data" \\
   -m '{"temperature": 26.5, "ts": 1750000000}' \\
   -q 1`
