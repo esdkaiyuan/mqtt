@@ -2,6 +2,7 @@ package com.mqtt.cloud.config;
 
 import com.mqtt.cloud.common.security.RestSecurityExceptionHandler;
 import com.mqtt.cloud.filter.ApiKeyAuthFilter;
+import com.mqtt.cloud.filter.DeviceCredentialAuthFilter;
 import com.mqtt.cloud.filter.InternalTokenFilter;
 import com.mqtt.cloud.filter.JwtAuthenticationFilter;
 import jakarta.servlet.DispatcherType;
@@ -91,7 +92,8 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
                                                     JwtAuthenticationFilter jwtFilter,
                                                     ApiKeyAuthFilter apiKeyFilter,
-                                                    InternalTokenFilter internalTokenFilter) throws Exception {
+                                                    InternalTokenFilter internalTokenFilter,
+                                                    DeviceCredentialAuthFilter deviceCredentialFilter) throws Exception {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
@@ -108,6 +110,8 @@ public class SecurityConfig {
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                     // 内部回调：不参与 JWT 鉴权，由 InternalTokenFilter 校验共享令牌
                     .requestMatchers("/internal/**").permitAll()
+                    // 设备上报：鉴权由 DeviceCredentialAuthFilter 负责，与 /internal/** 同构
+                    .requestMatchers("/ingest/**").permitAll()
                     .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                     // 开放接口：必须携带合法 API Key（由 ApiKeyAuthFilter 注入 EXTERNAL 角色）
                     .requestMatchers("/external/v1/**").hasRole("EXTERNAL")
@@ -126,6 +130,8 @@ public class SecurityConfig {
             // 必须在其之前完成 jwtFilter 的注册，否则锚点无已知顺序会抛 IllegalStateException
             .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class)
+            // 设备上报（T-24 P4）：以 JwtAuthenticationFilter 为锚点插入，必须先完成 jwtFilter 的注册
+            .addFilterBefore(deviceCredentialFilter, JwtAuthenticationFilter.class)
             .formLogin(form -> form.disable())
             .httpBasic(basic -> basic.disable())
             .logout(logout -> logout.disable());
