@@ -337,6 +337,15 @@ app:
     # 定时触发使用的时区
     timer-zone: ${SCENE_TIMER_ZONE:Asia/Shanghai}
 
+  # ── HTTP 上报（T-24 多协议接入） ──
+  http-ingest:
+    # 是否启用 HTTP 上报端点与设备凭据过滤器；false 时 /ingest/** 返回 404，MQTT 链路不受影响
+    enabled: ${HTTP_INGEST_ENABLED:true}
+    # 单次上报请求体大小上限（字节），超限返回 413 + 6248，防止大包打爆内存
+    max-payload-bytes: ${HTTP_INGEST_MAX_PAYLOAD_BYTES:65536}
+    # Basic 认证失败时 WWW-Authenticate 头的 realm 值
+    realm: ${HTTP_INGEST_REALM:mqtt-cloud-device}
+
 # 日志配置
 logging:
   level:

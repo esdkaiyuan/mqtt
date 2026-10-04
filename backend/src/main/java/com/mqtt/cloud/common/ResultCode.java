@@ -103,7 +103,11 @@ public enum ResultCode {
     SCENE_STEP_UNSUPPORTED(6242, "不支持的场景步骤动作类型", HttpStatus.BAD_REQUEST),
     SCENE_EXECUTION_NOT_FOUND(6243, "场景执行记录不存在", HttpStatus.NOT_FOUND),
     SCENE_LIMIT_EXCEEDED(6244, "场景数量或步骤数超出上限", HttpStatus.BAD_REQUEST),
-    SCENE_TRIGGER_UNSUPPORTED(6245, "不支持或非法的场景触发源", HttpStatus.BAD_REQUEST);
+    SCENE_TRIGGER_UNSUPPORTED(6245, "不支持或非法的场景触发源", HttpStatus.BAD_REQUEST),
+
+    DEVICE_CREDENTIAL_INVALID(6246, "设备凭据缺失或非法", HttpStatus.UNAUTHORIZED),
+    INGEST_MESSAGE_TYPE_UNSUPPORTED(6247, "不支持的 HTTP 上报消息类型", HttpStatus.BAD_REQUEST),
+    INGEST_PAYLOAD_TOO_LARGE(6248, "HTTP 上报载荷超出上限", HttpStatus.PAYLOAD_TOO_LARGE);
 
     private final Integer code;
     private final String message;
