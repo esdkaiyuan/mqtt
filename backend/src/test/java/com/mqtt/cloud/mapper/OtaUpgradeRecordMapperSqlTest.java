@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 的做法：用 MyBatis <b>动态 SQL 渲染</b>（{@link MappedStatement#getBoundSql}）+ 结构断言，覆盖可离线验证点：
  * <ul>
  *   <li>{@code selectDispatchCandidates}：只取 {@code status='PENDING'} 且设备 {@code status='ONLINE'}，
- *       主键升序，受 {@code LIMIT} 约束；{@code device} 无逻辑删除列，不带 {@code deleted} 条件；</li>
+ *       主键升序，受 {@code LIMIT} 约束；{@code device} 有逻辑删除列，须带 {@code AND d.deleted = 0} 过滤；</li>
  *   <li>{@code selectLatestActiveByDevice}：按 {@code device_id} 等值取「最近一条非终态」记录，
  *       状态集合不含 {@code SUCCESS/FAILED/TIMEOUT}，主键降序 {@code LIMIT 1}；</li>
  *   <li>{@code refreshCounters}：按 {@code task_id} 聚合重算五项计数与任务状态，子查询一次
@@ -66,7 +66,7 @@ class OtaUpgradeRecordMapperSqlTest {
 
         assertThat(sql)
                 .contains("FROM ota_upgrade_record r")
-                .contains("JOIN device d ON d.id = r.device_id")
+                .contains("JOIN device d ON d.id = r.device_id AND d.deleted = 0")
                 .contains("WHERE r.status = ? AND d.status = 'ONLINE'")
                 .contains("ORDER BY r.id ASC")
                 .endsWith("LIMIT ?");
@@ -74,14 +74,14 @@ class OtaUpgradeRecordMapperSqlTest {
     }
 
     @Test
-    void selectDispatchCandidates_does_not_filter_deleted_devices() {
+    void selectDispatchCandidates_filters_deleted_devices() {
         Map<String, Object> params = new HashMap<>();
         params.put("status", "PENDING");
         params.put("limit", 200);
 
         String sql = normalize(render(RECORD_NAMESPACE, "selectDispatchCandidates", params));
 
-        assertThat(sql).as("device 无逻辑删除列，不得出现 deleted 条件").doesNotContain("deleted");
+        assertThat(sql).as("device 有逻辑删除列，须过滤 d.deleted = 0").contains("AND d.deleted = 0");
     }
 
     @Test

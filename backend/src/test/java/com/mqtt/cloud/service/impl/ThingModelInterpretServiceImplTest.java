@@ -11,6 +11,7 @@ import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.PropertyHistoryService;
 import com.mqtt.cloud.service.RuleEvaluationService;
+import com.mqtt.cloud.service.SceneEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
 import io.micrometer.core.instrument.Counter;
@@ -58,6 +59,7 @@ class ThingModelInterpretServiceImplTest {
     private DeviceShadowService deviceShadowService;
     private AlertEvaluationService alertEvaluationService;
     private RuleEvaluationService ruleEvaluationService;
+    private SceneEvaluationService sceneEvaluationService;
     private PropertyHistoryService propertyHistoryService;
     private ThingModelProperties properties;
     private SimpleMeterRegistry registry;
@@ -71,12 +73,14 @@ class ThingModelInterpretServiceImplTest {
         deviceShadowService = mock(DeviceShadowService.class);
         alertEvaluationService = mock(AlertEvaluationService.class);
         ruleEvaluationService = mock(RuleEvaluationService.class);
+        sceneEvaluationService = mock(SceneEvaluationService.class);
         propertyHistoryService = mock(PropertyHistoryService.class);
         properties = new ThingModelProperties();
         registry = new SimpleMeterRegistry();
         service = new ThingModelInterpretServiceImpl(thingModelService, propertyLatestMapper,
                 eventRecordMapper, deviceShadowService, alertEvaluationService, ruleEvaluationService,
-                propertyHistoryService, new ThingModelInterpretMetrics(registry), properties, new ObjectMapper());
+                sceneEvaluationService, propertyHistoryService, new ThingModelInterpretMetrics(registry),
+                properties, new ObjectMapper());
     }
 
     @Test
