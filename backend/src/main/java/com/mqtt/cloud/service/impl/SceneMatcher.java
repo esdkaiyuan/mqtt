@@ -6,6 +6,7 @@ import com.mqtt.cloud.dto.response.SceneTestResult;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
+import com.mqtt.cloud.util.SceneCronSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Component;
@@ -89,7 +90,7 @@ public class SceneMatcher {
             return false;
         }
         try {
-            CronExpression expression = CronExpression.parse(cron);
+            CronExpression expression = SceneCronSupport.parse(cron);
             ZonedDateTime minuteFloor = now.atZone(resolveZone()).truncatedTo(ChronoUnit.MINUTES);
             ZonedDateTime next = expression.next(minuteFloor.minusMinutes(1));
             return next != null && next.truncatedTo(ChronoUnit.MINUTES).equals(minuteFloor);

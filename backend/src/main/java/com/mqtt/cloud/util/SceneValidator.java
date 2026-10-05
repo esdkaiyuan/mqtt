@@ -16,7 +16,6 @@ import com.mqtt.cloud.entity.SceneStep;
 import com.mqtt.cloud.service.DeviceBatchService;
 import com.mqtt.cloud.service.DeviceService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -150,7 +149,7 @@ public class SceneValidator {
                 throw invalid("定时触发必须填写 cron 表达式");
             }
             try {
-                CronExpression.parse(cron);
+                SceneCronSupport.parse(cron);
             } catch (IllegalArgumentException e) {
                 throw invalid("cron 表达式非法：" + e.getMessage());
             }
