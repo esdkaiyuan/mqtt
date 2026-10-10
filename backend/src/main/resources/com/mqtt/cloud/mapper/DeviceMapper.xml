@@ -10,9 +10,11 @@
 
     <select id="findByDeviceKey" resultType="com.mqtt.cloud.entity.Device">
         <!-- 认证回源（EmqxAuthServiceImpl.loadMeta）依赖 product_id/enabled/device_secret_hash，
-             故此处必须显式全列，不能用 baseColumns（其不含敏感字段，供列表类查询复用）。 -->
+             故此处必须显式全列，不能用 baseColumns（其不含敏感字段，供列表类查询复用）。
+             T-26：授权元数据（AuthMeta）另需 node_type/parent_id 判定委托收发，一并显式列出。 -->
         SELECT id, product_id, device_name, device_key, device_type, topic, description,
                owner_id, status, last_seen, enabled, device_secret_hash, secret_updated_at,
+               node_type, parent_id,
                metadata, created_at, updated_at, deleted
         FROM device
         WHERE device_key = #{deviceKey}
@@ -86,7 +88,8 @@
     </select>
 
     <!-- 离线告警巡检：status=OFFLINE 且离线时长达到规则阈值。
-         last_seen 为空视为「从未上报」，同样满足；offlineSeconds=0 时 DATE_SUB 为当前时刻，任何离线段均满足。 -->
+         last_seen 为空视为「从未上报」，同样满足；offlineSeconds=0 时 DATE_SUB 为当前时刻，任何离线段均满足。
+         T-28：deviceIds 为空集表示不限设备（ALL 档，保持既有全量语义），非空按 id IN 限定作用域设备集。 -->
     <select id="findOfflineDevicesForAlert" resultType="com.mqtt.cloud.entity.Device">
         SELECT <include refid="baseColumns"/>
         FROM device
@@ -95,8 +98,11 @@
           <if test="userId != null">
             AND owner_id = #{userId}
           </if>
-          <if test="deviceId != null">
-            AND id = #{deviceId}
+          <if test="deviceIds != null and deviceIds.size() > 0">
+            AND id IN
+            <foreach collection="deviceIds" item="did" open="(" separator="," close=")">
+                #{did}
+            </foreach>
           </if>
           AND (last_seen IS NULL
                OR last_seen &lt;= DATE_SUB(NOW(), INTERVAL #{offlineSeconds} SECOND))
@@ -107,6 +113,7 @@
     <select id="pageQuery" resultType="com.mqtt.cloud.entity.Device">
         SELECT d.id, d.device_name, d.device_key, d.device_type, d.topic,
                d.description, d.owner_id, d.status, d.last_seen, d.metadata,
+               d.node_type, d.parent_id,
                d.created_at, d.updated_at,
                u.username AS owner_username
         FROM device d
@@ -143,7 +150,54 @@
                   AND tr.tag_id = #{dto.tagId}
             )
           </if>
+          <!-- T-26：拓扑角色与父网关过滤。 -->
+          <if test="dto.nodeType != null and dto.nodeType != ''">
+            AND d.node_type = #{dto.nodeType}
+          </if>
+          <if test="dto.parentId != null">
+            AND d.parent_id = #{dto.parentId}
+          </if>
         ORDER BY d.created_at DESC
+    </select>
+
+    <!-- T-26 拓扑校验：仅取校验所需列（含 node_type/parent_id），不带密钥哈希。
+         与 findByDeviceKey 的区别是此处按主键定位且强制 deleted=0。 -->
+    <select id="findActiveById" resultType="com.mqtt.cloud.entity.Device">
+        SELECT id, product_id, device_name, device_key, device_type, topic, description,
+               owner_id, status, last_seen, enabled, node_type, parent_id,
+               metadata, created_at, updated_at, deleted
+        FROM device
+        WHERE id = #{id}
+          AND deleted = 0
+    </select>
+
+    <!-- T-26：按父网关列子设备。parent_id 上有 idx_device_parent (parent_id, deleted) 覆盖，
+         过滤条件与该索引前导列一致。 -->
+    <select id="findByParentId" resultType="com.mqtt.cloud.entity.Device">
+        SELECT d.id, d.product_id, d.device_name, d.device_key, d.device_type, d.topic,
+               d.description, d.owner_id, d.status, d.last_seen,
+               d.node_type, d.parent_id,
+               d.metadata, d.created_at, d.updated_at
+        FROM device d
+        WHERE d.deleted = 0
+          AND d.parent_id = #{parentId}
+          <if test="dto.deviceName != null and dto.deviceName != ''">
+            AND d.device_name LIKE CONCAT('%', #{dto.deviceName}, '%')
+          </if>
+          <if test="dto.deviceType != null and dto.deviceType != ''">
+            AND d.device_type = #{dto.deviceType}
+          </if>
+          <if test="dto.status != null and dto.status != ''">
+            AND d.status = #{dto.status}
+          </if>
+        ORDER BY d.created_at DESC
+    </select>
+
+    <select id="countByParentId" resultType="long">
+        SELECT COUNT(*)
+        FROM device
+        WHERE parent_id = #{parentId}
+          AND deleted = 0
     </select>
 
 </mapper>

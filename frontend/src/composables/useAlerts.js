@@ -191,6 +191,20 @@ export function useRecoverAlertMutation() {
   }
 }
 
+/** 指派 / 解除指派处理人（T-27）；成功后失效列表与未读数。 */
+export function useAssignAlertMutation() {
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: ({ id, payload }) => alertApi.assign(id, payload),
+    onSuccess: () => invalidateAlertCaches(queryClient)
+  })
+
+  return {
+    assigning: computed(() => mutation.isPending.value),
+    assignAlert: (id, payload) => mutation.mutateAsync({ id, payload })
+  }
+}
+
 /** 规则增删改；成功后失效规则列表。 */
 export function useAlertRuleMutations() {
   const queryClient = useQueryClient()

@@ -168,7 +168,7 @@ class DeviceCredentialAuthFilterTest {
 
     @Test
     void doFilter_not_permitted_device_is_rejected() throws Exception {
-        DeviceAuthCacheService.AuthMeta meta = new DeviceAuthCacheService.AuthMeta(1L, "DISABLED", 1, "$2a$hash");
+        DeviceAuthCacheService.AuthMeta meta = new DeviceAuthCacheService.AuthMeta(1L, 1L, "DISABLED", 1, "SECRET", "$2a$hash", null, null, null);
         when(deviceSecretService.parseUsername("pk1.dev001")).thenReturn(new String[]{"pk1", "dev001"});
         when(deviceAccessGuard.resolve("pk1", "dev001")).thenReturn(meta);
         when(deviceAccessGuard.isPermitted(meta)).thenReturn(false);
@@ -182,7 +182,7 @@ class DeviceCredentialAuthFilterTest {
 
     @Test
     void doFilter_wrong_secret_is_rejected() throws Exception {
-        DeviceAuthCacheService.AuthMeta meta = new DeviceAuthCacheService.AuthMeta(1L, "ENABLED", 1, "$2a$hash");
+        DeviceAuthCacheService.AuthMeta meta = new DeviceAuthCacheService.AuthMeta(1L, 1L, "ENABLED", 1, "SECRET", "$2a$hash", null, null, null);
         when(deviceSecretService.parseUsername("pk1.dev001")).thenReturn(new String[]{"pk1", "dev001"});
         when(deviceAccessGuard.resolve("pk1", "dev001")).thenReturn(meta);
         when(deviceAccessGuard.isPermitted(meta)).thenReturn(true);
@@ -199,7 +199,7 @@ class DeviceCredentialAuthFilterTest {
 
     @Test
     void doFilter_valid_credential_sets_device_key_and_continues() throws Exception {
-        DeviceAuthCacheService.AuthMeta meta = new DeviceAuthCacheService.AuthMeta(1L, "ENABLED", 1, "$2a$hash");
+        DeviceAuthCacheService.AuthMeta meta = new DeviceAuthCacheService.AuthMeta(1L, 1L, "ENABLED", 1, "SECRET", "$2a$hash", null, null, null);
         when(deviceSecretService.parseUsername("pk1.dev001")).thenReturn(new String[]{"pk1", "dev001"});
         when(deviceAccessGuard.resolve("pk1", "dev001")).thenReturn(meta);
         when(deviceAccessGuard.isPermitted(meta)).thenReturn(true);

@@ -33,7 +33,7 @@ class DeviceAccessGuardTest {
     }
 
     private DeviceAuthCacheService.AuthMeta meta(String productStatus, Integer deviceEnabled) {
-        return new DeviceAuthCacheService.AuthMeta(10L, productStatus, deviceEnabled, "hash");
+        return new DeviceAuthCacheService.AuthMeta(10L, 1L, productStatus, deviceEnabled, "SECRET", "hash", null, "DIRECT", null);
     }
 
     @Test

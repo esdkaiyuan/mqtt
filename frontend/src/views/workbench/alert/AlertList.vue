@@ -205,6 +205,44 @@
           <span class="detail-label">恢复时间</span>
           <span class="detail-value">{{ formatDateTime(detail.recoveredAt) }}</span>
         </div>
+        <div class="detail-row">
+          <span class="detail-label">处理人</span>
+          <span class="detail-value">{{ detail.assigneeId ? `用户 #${detail.assigneeId}` : '未指派' }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">升级级别</span>
+          <span class="detail-value">{{ formatEscalationLevel(detail.escalationLevel) }}</span>
+        </div>
+        <div class="detail-row">
+          <span class="detail-label">最近升级</span>
+          <span class="detail-value">{{ formatDateTime(detail.lastEscalatedAt) }}</span>
+        </div>
+
+        <div class="detail-assign">
+          <span class="detail-label">指派处理人</span>
+          <div class="detail-assign__control">
+            <el-input-number
+              v-model="assignForm.assigneeId"
+              :min="1"
+              :controls="false"
+              placeholder="处理人用户ID"
+              class="detail-assign__input"
+            />
+            <el-checkbox v-model="assignForm.notify">同时通知</el-checkbox>
+            <el-button size="small" type="primary" :loading="assigning" @click="handleAssign">
+              指派
+            </el-button>
+            <el-button
+              v-if="detail.assigneeId"
+              size="small"
+              :loading="assigning"
+              @click="handleUnassign"
+            >
+              解除
+            </el-button>
+          </div>
+          <p class="detail-assign__hint">填写系统内用户的 ID；解除指派后处理人置空</p>
+        </div>
       </div>
 
       <template #footer>
@@ -230,7 +268,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SvgIcon from '@/components/Icon.vue'
@@ -241,7 +279,8 @@ import { unwrapResult } from '@/utils/result'
 import {
   useAlertListQuery,
   useAckAlertMutation,
-  useRecoverAlertMutation
+  useRecoverAlertMutation,
+  useAssignAlertMutation
 } from '@/composables/useAlerts'
 import {
   SOURCE_TYPE_LABELS,
@@ -273,17 +312,26 @@ const {
 
 const { acknowledging, ackAlert } = useAckAlertMutation()
 const { recovering, recoverAlert } = useRecoverAlertMutation()
+const { assigning, assignAlert } = useAssignAlertMutation()
 
 const route = useRoute()
 const detailVisible = ref(false)
 const detail = ref(null)
+const assignForm = reactive({ assigneeId: null, notify: false })
 
 function rowClassName({ row }) {
   return row.status === 'RECOVERED' ? 'alert-row--recovered' : 'alert-row--open'
 }
 
+function formatEscalationLevel(level) {
+  const value = level ?? 0
+  return value > 0 ? `已升级 ${value} 级` : '未升级'
+}
+
 function openDetail(row) {
   detail.value = row
+  assignForm.assigneeId = row.assigneeId ?? null
+  assignForm.notify = false
   detailVisible.value = true
 }
 
@@ -333,6 +381,31 @@ async function handleRecover(row) {
     if (detail.value?.id === row.id) detailVisible.value = false
   } catch {
     // 失败原因由拦截器提示
+  }
+}
+
+async function handleAssign() {
+  if (!assignForm.assigneeId) {
+    ElMessage.warning('请填写处理人用户ID')
+    return
+  }
+  await submitAssign(assignForm.assigneeId)
+}
+
+async function handleUnassign() {
+  await submitAssign(null)
+}
+
+async function submitAssign(assigneeId) {
+  const record = detail.value
+  if (!record) return
+  try {
+    await assignAlert(record.id, { assigneeId, notify: assignForm.notify })
+    record.assigneeId = assigneeId
+    assignForm.assigneeId = assigneeId
+    ElMessage.success(assigneeId ? '已指派处理人' : '已解除指派')
+  } catch {
+    // 处理人非法（6267）等失败原因由 axios 拦截器统一提示
   }
 }
 </script>

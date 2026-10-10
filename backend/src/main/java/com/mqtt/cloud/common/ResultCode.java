@@ -107,7 +107,48 @@ public enum ResultCode {
 
     DEVICE_CREDENTIAL_INVALID(6246, "设备凭据缺失或非法", HttpStatus.UNAUTHORIZED),
     INGEST_MESSAGE_TYPE_UNSUPPORTED(6247, "不支持的 HTTP 上报消息类型", HttpStatus.BAD_REQUEST),
-    INGEST_PAYLOAD_TOO_LARGE(6248, "HTTP 上报载荷超出上限", HttpStatus.PAYLOAD_TOO_LARGE);
+    INGEST_PAYLOAD_TOO_LARGE(6248, "HTTP 上报载荷超出上限", HttpStatus.PAYLOAD_TOO_LARGE),
+
+    AUTH_MODE_UNSUPPORTED(6249, "不支持的认证方式", HttpStatus.BAD_REQUEST),
+    TOPIC_PREFIX_TEMPLATE_INVALID(6250, "主题前缀模板非法", HttpStatus.BAD_REQUEST),
+    DEVICE_CERTIFICATE_ISSUE_FAILED(6251, "设备证书签发失败", HttpStatus.INTERNAL_SERVER_ERROR),
+    DEVICE_CERTIFICATE_REVOKE_FAILED(6252, "设备证书吊销失败", HttpStatus.BAD_REQUEST),
+    DEVICE_TOKEN_ISSUE_FAILED(6253, "设备令牌签发失败", HttpStatus.INTERNAL_SERVER_ERROR),
+
+    DEVICE_TOPOLOGY_INVALID(6254, "设备拓扑配置非法", HttpStatus.BAD_REQUEST),
+    DEVICE_PARENT_NOT_FOUND(6255, "父网关设备不存在", HttpStatus.NOT_FOUND),
+    DEVICE_PARENT_KIND_INVALID(6256, "父设备不是网关，无法挂载子设备", HttpStatus.BAD_REQUEST),
+    DEVICE_TOPOLOGY_DEPTH_EXCEEDED(6257, "设备拓扑层级超出上限", HttpStatus.BAD_REQUEST),
+    DEVICE_PRODUCT_MISMATCH(6258, "子设备与网关不属于同一产品", HttpStatus.BAD_REQUEST),
+    DEVICE_HAS_SUBDEVICES(6259, "网关下存在子设备，无法执行该操作", HttpStatus.CONFLICT),
+    DEVICE_SUBDEVICE_LIMIT_EXCEEDED(6260, "网关子设备数量超出上限", HttpStatus.BAD_REQUEST),
+
+    NOTIFICATION_CHANNEL_NOT_FOUND(6261, "通知渠道不存在", HttpStatus.NOT_FOUND),
+    NOTIFICATION_CHANNEL_INVALID(6262, "通知渠道参数非法", HttpStatus.BAD_REQUEST),
+    NOTIFICATION_CHANNEL_TYPE_UNSUPPORTED(6263, "不支持的通知渠道类型或渠道数超限", HttpStatus.BAD_REQUEST),
+    NOTIFICATION_SEND_FAILED(6264, "通知测试发送失败", HttpStatus.BAD_REQUEST),
+    ESCALATION_POLICY_NOT_FOUND(6265, "告警升级策略不存在", HttpStatus.NOT_FOUND),
+    ESCALATION_POLICY_INVALID(6266, "告警升级策略参数非法", HttpStatus.BAD_REQUEST),
+    ALERT_ASSIGNEE_INVALID(6267, "指派处理人非法", HttpStatus.BAD_REQUEST),
+
+    ALERT_RULE_SCOPE_INVALID(6268, "告警规则作用域非法（档位、字段一致性或数量超限）", HttpStatus.BAD_REQUEST),
+    RULE_SCOPE_INVALID(6269, "消息规则作用域非法（档位、字段一致性或数量超限）", HttpStatus.BAD_REQUEST),
+
+    // ── T-30 · 批量注册与设备激活 ──
+    REG_BATCH_NOT_FOUND(6270, "注册批次不存在", HttpStatus.NOT_FOUND),
+    REG_BATCH_COUNT_INVALID(6271, "批量注册数量非法（须为 1~1000）", HttpStatus.BAD_REQUEST),
+    REG_BATCH_PATTERN_INVALID(6272, "deviceKey 生成模板非法（仅允许字母数字中划线下划线与 {index}）", HttpStatus.BAD_REQUEST),
+    DEVICE_ACTIVATE_CODE_INVALID(6273, "设备激活码非法或已被使用", HttpStatus.BAD_REQUEST),
+    DEVICE_ACTIVATE_CODE_EXPIRED(6274, "设备激活码已过期", HttpStatus.BAD_REQUEST),
+
+    // ── T-30 · 限流 ──
+    /** 开放接口按 API Key 维度限流。文档（apiEndpoints.js）早已宣称 429，此处补齐后端实现。 */
+    RATE_LIMIT_EXCEEDED(4002, "超出密钥的调用频率限制", HttpStatus.TOO_MANY_REQUESTS),
+
+    // ── T-30 · 死信处置闭环 ──
+    DEAD_LETTER_NOT_FOUND(5002, "死信记录不存在", HttpStatus.NOT_FOUND),
+    DEAD_LETTER_ALREADY_DISPOSED(5003, "死信已被处置（已重放或已丢弃）", HttpStatus.CONFLICT),
+    DEAD_LETTER_REPLAY_FAILED(5004, "死信重放入队失败", HttpStatus.SERVICE_UNAVAILABLE);
 
     private final Integer code;
     private final String message;

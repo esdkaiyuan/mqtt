@@ -62,6 +62,112 @@ bash scripts/health-check.sh
 
 > 指标由 `spring-boot-starter-actuator` + `micrometer-registry-prometheus` 提供；暴露范围与鉴权见 `application.yml` 的 `management.*` 与 `SecurityConfig`。
 
+### 步骤6.5：健康探针、日志与死信处置（T-30）
+
+**探针三态语义**（务必区分，误配会引发重启风暴）：
+
+| 端点 | 语义 | 何时 DOWN | 用途 |
+|------|------|-----------|------|
+| `GET /api/health` | 存活liveness | 进程无法响应 | Docker healthcheck |
+| `GET /api/health/ready` | 就绪 readiness | 数据库/Redis 不可用，或队列深度、死信积压超阈值 | 负载均衡、外部监控 |
+| `GET /api/health/detail` | 排障明细 | 不返回 DOWN | 运维定位（仅 ADMIN） |
+
+> `docker-compose.yml` 的 backend healthcheck 挂在 **liveness** 上。这是刻意的：
+> 数据库抖动不应触发容器重启，而应通过 readiness 告警交人工介入。
+> 若改为挂 readiness，数据库短暂不可用会导致全部副本同时被判定不健康并重启。
+
+**调整阈值**（`.env`）：
+
+```bash
+HEALTH_QUEUE_DEPTH_THRESHOLD=5000# 摄取队列总深度上限
+HEALTH_DEAD_LETTER_THRESHOLD=1000   # PENDING 死信条数上限
+```
+
+**结构化日志（T-30 E1）**：
+
+改造前日志只进 Docker `json-file`（20m x 5 = 100MB），容器重建即丢，且无 traceId。
+现改为：
+
+- 容器内落盘到 `/var/log/mqtt-cloud`（`backend_logs` 命名卷），按天 + 按大小滚动，保留 14 天
+- 同时输出 JSON（`.json`，供 Loki/ELK 索引）与可读文本（`.log`，供人工 tail）
+- 每行含 `traceId`，来源优先级：`X-Trace-Id` 请求头 → `X-Device-Key` → 随机生成
+- 响应头回写 `X-Trace-Id`，排障时把这个值给到用户即可定位全链路
+
+```bash
+# 查看某次调用的完整链路
+docker compose --env-file .env -f docker/docker-compose.yml exec backend \
+  sh -c "grep '<traceId>' /var/log/mqtt-cloud/mqtt-cloud-backend.log"
+
+# 导出日志卷
+docker run --rm -v mqtt自建站点_backend_logs:/logs -v $(pwd):/out alpine \
+  tar czf /out/backend-logs.tar.gz -C /logs .
+```
+
+> dev / test profile 下只打控制台、不落文件，避免污染开发机。
+
+**死信处置（T-30 E2）**：
+
+`ingest_dead_letter` 表此前只有查询接口，消息丢失只能手工改库。现补齐闭环：
+
+```bash
+# 查看待处理死信
+curl -H "Authorization: Bearer $JWT" \
+  "http://localhost/api/admin/dead-letters?status=PENDING"
+
+# 重放单条（返回成功仅代表已受理，不代表已落库）
+curl -X POST -H "Authorization: Bearer $JWT" \
+  http://localhost/api/admin/dead-letters/123/replay
+
+# 批量重放
+curl -X POST -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '[123,124,125]' http://localhost/api/admin/dead-letters/replay-batch
+
+# 确认无需重放时丢弃（终态不可覆盖，重复调用返回 5003）
+curl -X POST -H "Authorization: Bearer $JWT" \
+  http://localhost/api/admin/dead-letters/123/discard
+```
+
+> 重放采用条件更新（`WHERE status='PENDING'`），并发重放只有一方成功，
+> 防止同一条消息被反复投递造成数据翻倍。队列不可用时状态自动回退为 `PENDING` 并返回 5004。
+
+**开放接口限流（T-30 E4）**：
+
+`/external/v1/**` 按 API Key 固定窗口限流。默认关闭，正式对外前开启：
+
+```bash
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_MAX_REQUESTS=600# 每 60 秒 600 次
+RATE_LIMIT_FAIL_OPEN=true         # Redis 不可用时降级放行
+```
+
+超限返回 HTTP 429 + 业务码 `4002`，并带 `Retry-After` 响应头。
+
+> 限流键取 API Key 的 SHA-256 前 8 字节，**不把凭证明文写进 Redis key**
+> （Redis key 可能被 `KEYS`、慢日志或运维导出泄露）。
+
+### 步骤6.6：设备批量注册与激活（T-30）
+
+对标阿里云 IoT / 腾讯云物联网的标准接入流程：
+
+```bash
+# 批量注册 100 台（prefix=sensor → sensor-1 ... sensor-100）
+curl -X POST -H "Authorization: Bearer $JWT" -H "Content-Type: application/json" \
+  -d '{"productId":1,"prefix":"sensor","deviceType":"sensor","count":100,"issueActivateCode":true}' \
+  http://localhost/api/device-registration/batch
+
+# 设备侧消费激活码（免登录，供设备直连）
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"deviceKey":"sensor-1","activateCode":"<上一步返回的激活码>"}' \
+  http://localhost/api/device-registration/activate
+```
+
+要点：
+
+- 响应中的 `credentials` 是**一次性明文凭据**，仅本次返回，平台不提供二次查询；前端提供 CSV 导出
+- 走激活流程的设备（`issueActivateCode=true`）初始为**禁用**，激活成功后才允许连接
+- 激活码一次性消费：激活后置空，同一码无法重复使用（重复返回 5003）
+- 单批上限 1000；单台失败（如 deviceKey 重复 2001）不阻断整批，失败明细见 `failedItems`
+
 ### 步骤7：接入访问控制（设备接入与身份体系）
 
 设备接入的认证与主题授权由后端裁决，EMQX 通过 HTTP 回调请求后端，相关配置全部来自 `.env`：
@@ -197,6 +303,8 @@ cd frontend
 npm install
 npm run build
 ```
+
+T-29 可视化编排使用 `@vue-flow/core` `^1.48.2` 与官方配套 `@vue-flow/background`、`@vue-flow/controls`、`@vue-flow/minimap`（均 MIT）。Vite 将依赖拆为 `vue-flow` chunk；规则与场景画布按需加载，默认表单视图不加载画布组件。该功能只改前端，无需后端或数据库配套变更。
 
 ### 步骤4：启动服务（在仓库根目录执行）
 ```bash
@@ -676,7 +784,7 @@ WHERE r.deleted = 1 GROUP BY r.id, r.name;
 
 **常见排障**：
 
-- **属性越限但没有告警**：确认规则 `enabled=1`、`deleted=0`，且规则作用域（`device_id`）覆盖该设备；确认设备已按物模型上报该 `identifier` 且值可解析（`GT`/`GTE`/`LT`/`LTE` 两侧须为十进制数，不可解析值会跳过并记 WARN）；确认 `ALERT_ENABLED=true`。
+- **属性越限但没有告警**：确认规则 `enabled=1`、`deleted=0`，且规则作用域覆盖该设备（T-28 起为 `scope_type` 四档：`ALL` 全部设备 / `DEVICE` 看 `device_id` / `GROUP` 看分组隶属（含祖先）/ `TAG` 看标签隶属，详见 §9.23）；确认设备已按物模型上报该 `identifier` 且值可解析（`GT`/`GTE`/`LT`/`LTE` 两侧须为十进制数，不可解析值会跳过并记 WARN）；确认 `ALERT_ENABLED=true`。
 - **有告警记录但没收到 Webhook**：`ALERT_NOTIFY_ENABLED` / `ALERT_RECOVER_NOTIFY_ENABLED` 是否开启；Webhook 配置是否订阅了 `alert.triggered` / `alert.recovered`；查询 `notified_at` 是否为最近时间以确认已尝试投递。
 - **离线告警不触发 / 不恢复**：确认 `OFFLINE` 规则已启用且 `offline_seconds` 合理；确认 `ALERT_SWEEP_INTERVAL_MS>0`（巡检已注册）；设备重新上线（`data` / `heartbeat`）后由巡检的在线集差集置恢复，恢复延迟最多一个巡检周期。
 - **重复告警刷屏**：属抑制窗口内计数累加，`trigger_count` 增长但只有 `last_triggered_at` 变化、不重复通知；如需更长静默期，调大规则或全局 `ALERT_SUPPRESS_WINDOW_SECONDS`。
@@ -809,7 +917,7 @@ WHERE status = 'PENDING' AND next_attempt_at IS NOT NULL AND next_attempt_at <= 
 
 **常见排障**：
 
-- **属性 / 事件上报但没有触发规则**：确认规则 `enabled=1`、`deleted=0`，作用域（`device_id`，为空表示全部设备）覆盖该设备；确认来源与标识符匹配（`EVENT` 还需匹配 `eventType`）；`GT`/`GTE`/`LT`/`LTE` 两侧须为十进制数，任一侧不可解析即不命中；确认 `RULE_ENABLED=true`。
+- **属性 / 事件上报但没有触发规则**：确认规则 `enabled=1`、`deleted=0`，作用域覆盖该设备（T-28 起为 `scope_type` 四档：`ALL` 全部设备 / `DEVICE` 指定设备 / `GROUP` 分组（含子分组）/ `TAG` 标签，详见 §9.23）；确认来源与标识符匹配（`EVENT` 还需匹配 `eventType`）；`GT`/`GTE`/`LT`/`LTE` 两侧须为十进制数，任一侧不可解析即不命中；确认 `RULE_ENABLED=true`。
 - **规则触发了但动作没生效**：查 `rule_execution` 状态——`PENDING` 表示待执行 / 待重试（看 `next_attempt_at`），`FAILED` 看 `error_message`（如「执行队列已满」「补发重试次数耗尽」类原因）。`FORWARD_MQTT` 置 `FAILED` 且提示「外部 MQTT 转发未启用」说明 `RULE_MQTT_ENABLED=false`。
 - **冷却窗口内重复上报只触发一次**：属预期——同一规则在 `cooldown_seconds` 内的重复命中被跳过，冷却锚点在进程内维护（**多副本各自独立**，重启后清空）。
 - **执行记录被清理**：`RULE_EXECUTION_RETENTION_DAYS>0` 且巡检运行时，终态记录（`SUCCESS`/`FAILED`）超期被物理删除；`PENDING` 永不清理。如需长期留档，调大该值或置 `0`。
@@ -1137,6 +1245,181 @@ WHERE status IN ('PENDING','RUNNING') AND next_attempt_at IS NOT NULL AND next_a
 - **执行记录被清理**：`SCENE_EXECUTION_RETENTION_DAYS>0` 且巡检运行时，终态记录（`SUCCESS`/`FAILED`）超期被物理删除；`PENDING`/`RUNNING` 永不清理。如需长期留档，调大该值或置 `0`。
 - **步骤一直停在 `PENDING` / 不推进**：确认巡检已启用（`SCENE_SWEEP_INTERVAL_MS>0` 且 `SCENE_ENABLED=true`）；查看后端日志中场景巡检 WARN。步骤超 `SCENE_STEP_TIMEOUT_MS` 后由巡检置 `FAILED`。
 - **`6240`~`6245`**：`6240` 场景不存在（`404`）/ `6241` 场景配置非法（`400`）/ `6242` 不支持的步骤动作类型（`400`）/ `6243` 场景执行记录不存在（`404`）/ `6244` 场景 / 步骤 / 条件 / 目标设备数超出上限（`400`）/ `6245` 不支持的触发源（`400`）；场景与执行记录越权访问统一返回 `403`，非 `FAILED` 状态手动重试返回 `409`，设备越权复用 `2003`。
+
+### 9.20 MQTT TLS 与 X.509 设备认证（T-25）
+
+T-25 在原有「一机一密」（`SECRET`）之外，为产品新增 `X509` 与 `JWT` 两种认证方式（`product.auth_mode`）。三者由后端在 `POST /api/internal/emqx/auth` 内按产品 `auth_mode` 分派：`SECRET` 校验 `{productKey}.{deviceKey}` + `deviceSecret`，`JWT` 校验设备令牌（`password` 位承载），`X509` 以客户端证书的 `cert_common_name` 反查设备并确认其证书未吊销。`SECRET` 链路行为不变，存量设备无需改动。**X.509 认证必须走 TLS**——客户端证书只在握手阶段提交，故本节同时说明 8883 监听器与自有证书的投放。
+
+**认证器请求体**：`scripts/emqx-init.sh` 已把认证回调请求体扩展为五个占位符——`${username}` / `${password}` / `${clientid}` / `${cert_subject}` / `${cert_common_name}`。后两者由 EMQX 从客户端证书提取，**仅在 TLS 双向认证连接下非空**，非 TLS 连接缺失或为空串，后端按可空处理；幂等重建（先删后建）与回读校验顺序不变。
+
+**ssl 监听器与端口**（`.env` → `docker/docker-compose.yml` 的 `emqx` 服务）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `MQTT_TLS_PORT` | `8883` | 8883 端口映射的宿主侧端口 |
+| `MQTT_TLS_ENABLED` | `true` | 对应 `EMQX_LISTENERS__SSL__DEFAULT__ENABLE`；置 `false` 后 8883 仍映射但不监听 |
+| `MQTT_TLS_CERTFILE` | `etc/certs/cert.pem` | 服务端证书路径（emqx 容器内）；启用自有证书时改为 `etc/mqtt-certs/server.crt` |
+| `MQTT_TLS_KEYFILE` | `etc/certs/key.pem` | 服务端私钥路径；自有证书改为 `etc/mqtt-certs/server.key` |
+| `MQTT_TLS_CACERTFILE` | `etc/certs/cacert.pem` | 受信 CA 链路径；`verify_peer` 下用它校验客户端证书链，须与设备证书的签发 CA 一致，自有证书改为 `etc/mqtt-certs/ca.crt` |
+| `MQTT_TLS_VERIFY` | `verify_peer` | 只有 `verify_peer` 才向客户端索要证书，`${cert_subject}` / `${cert_common_name}` 才非空 |
+
+> `EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__FAIL_IF_NO_PEER_CERT` 固定为 `"false"`（非可调项）：配合 `verify_peer` 实现「有证书则校验、无证书也放行」，使不带客户端证书的 `SECRET` / `JWT` 设备仍可走 8883 接入。默认证书路径取镜像自带演示证书，目录为空时容器照常启动。
+
+**证书投放**：`docker/certs/` 以只读方式挂进两个容器——`emqx` 挂到 `/opt/emqx/etc/mqtt-certs`（ssl 监听器证书与 CA 链），`backend` 挂到 `/etc/mqtt/certs`（设备证书签发所依赖的 CA）。目录需放置四个文件：`ca.crt`（设备证书签发 CA）、`ca.key`（该 CA 私钥，不得加密）、`server.crt`（8883 服务端证书，CN / SAN 须含设备实际连接使用的主机名或 IP）、`server.key`（服务端私钥，不得加密）。后端与 EMQX 均以非 root 身份读取，四文件须 `chmod 644`；CA 私钥落在宿主机，建议本目录 `chmod 750` 并只允许部署账号进入。`.gitignore` 已忽略本目录下 `*.key` / `*.crt`。
+
+```sh
+chmod 644 ca.crt ca.key server.crt server.key
+chmod 750 .
+```
+
+**启用步骤**：
+
+1. 生成 CA 与服务端证书放入 `docker/certs/`（命名同上）；
+2. 在仓库根目录 `.env` 中开启：
+
+   ```dotenv
+   AUTH_X509_ENABLED=true
+   MQTT_TLS_CERTFILE=etc/mqtt-certs/server.crt
+   MQTT_TLS_KEYFILE=etc/mqtt-certs/server.key
+   MQTT_TLS_CACERTFILE=etc/mqtt-certs/ca.crt
+   ```
+
+3. 重建相关容器：`docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate emqx backend`；
+4. 在产品上把认证方式改为 X.509，于设备详情页「证书与令牌」面板签发证书；设备改连 8883 并携带客户端证书。
+
+**后端可调项**（`.env` → 环境变量 → `application.yml` 的 `app.auth-extension`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `AUTH_X509_ENABLED` | `false` | X.509 签发总开关；`false` 或产品非 X.509 模式时签发 / 吊销报 `6249` |
+| `AUTH_X509_CA_CERT` | `/etc/mqtt/certs/ca.crt` | 签发 CA 证书路径（backend 容器内） |
+| `AUTH_X509_CA_KEY` | `/etc/mqtt/certs/ca.key` | 签发 CA 私钥路径 |
+| `AUTH_X509_VALIDITY_DAYS` | `365` | 签发证书的有效期天数 |
+| `AUTH_JWT_ENABLED` | `false` | JWT 令牌签发总开关 |
+| `AUTH_JWT_SECRET` | 空 | 令牌签名密钥（HS256）；置 `AUTH_JWT_ENABLED=true` 时必须显式配置，**不得与平台 `JWT_SECRET` 复用** |
+| `AUTH_JWT_TTL_SECONDS` | `3600` | 设备令牌有效期（秒） |
+
+> 翻转上述任一变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend`，无需重跑 `emqx-init`（认证器占位符与监听器环境变量在上一节已下发）。
+
+**签发与吊销**：三端点均属产品管理动作（`ADMIN`），以设备为主体——`POST /api/devices/{deviceId}/certificate`（签发，返回 `subject` / `serial` / 证书 PEM / 私钥 PEM）、`POST /api/devices/{deviceId}/certificate/revoke`（吊销，请求体可带 `reason`，不超过 64 字符）、`POST /api/devices/{deviceId}/token`（签发设备令牌）。**签发结果仅本次响应返回、平台不落库**（`device_certificate` 表只存证书元数据，不存私钥），前端弹窗亦提示「仅本次签发时返回」；已吊销行保留供审计、不删除。
+
+> **吊销即时生效**：EMQX 5.0.26 的 ssl 监听器没有 `crl_check` / `crl_file`，吊销不走 TLS 层 CRL，而由后端在认证回调内查询 `device_certificate`（`revoked_at` 非空即拒）并清空该设备认证缓存；已连接会话需待重新认证或缓存过期（`ACCESS_CONTROL_CACHE_TTL_SECONDS`）后收敛。
+
+**常见排障**：
+
+- **设备连 8883 被拒且 `cert_common_name` 为空**：客户端未携带证书，或 `MQTT_TLS_VERIFY` 未为 `verify_peer`（非 `verify_peer` 时 EMQX 不索要证书）；确认 `.env` 已透传并重建 emqx。
+- **TLS 握手失败 / 证书链校验错误**：`server.crt` 的 CN / SAN 未包含设备实际连接使用的主机名或 IP；或 `MQTT_TLS_CACERTFILE` 指向的 CA 与签发链不一致。
+- **签发报 `6249`**：`AUTH_X509_ENABLED`（或 `AUTH_JWT_ENABLED`）仍为 `false`，或该产品 `auth_mode` 未改为对应模式——两种情况后端不区分提示，以免暴露部署配置。
+- **签发报 `6251` / 吊销报 `6252`**：`6251` 多为 `ca.crt` / `ca.key` 路径不存在、权限不足或私钥被加密；`6252` 表示该设备当前无有效证书行（未签发或已吊销）。
+- **令牌签发报 `6253`**：`AUTH_JWT_SECRET` 为空或长度不足，签发失败。
+- **产品保存报 `6250`**：`topic_prefix` 模板非法，占位符只支持 `{productKey}` / `{deviceKey}`，且不得为空或含非法字符。
+- **吊销后设备仍能发布 / 订阅**：`ACCESS_CONTROL_ENFORCE_AUTH=false` 期间认证与授权一律放行（迁移期双轨），吊销不生效属预期；置为 `true` 后按 `device_certificate` 与 `topic_prefix` 生效。
+- **`6249`~`6253` 汇总**：`6249` 不支持的认证方式（`400`）/ `6250` 主题前缀模板非法（`400`）/ `6251` 设备证书签发失败（`500`）/ `6252` 设备证书吊销失败（`400`）/ `6253` 设备令牌签发失败（`500`）。
+
+### 9.21 设备拓扑与网关代连（T-26）
+
+T-26 引入两层设备拓扑：网关设备 `node_type=GATEWAY` 代子设备 `node_type=SUB`（`parent_id` 指向网关），二者须同一产品；子设备不再各自直连，其上行 / 下行主题由网关代为收发，主题形状（`device/{subKey}/data|heartbeat|lwt|reply|ota` 与 `device/{subKey}/cmd/down`）与直连设备完全一致，故 MQTT 侧零改动、无需重跑 `emqx-init`。存量设备行迁移后一律回退为 `DIRECT` 且 `parent_id` 为空，行为不变。
+
+**后端可调项**（`.env` → 环境变量 → `application.yml` 的 `app.device-topology`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `DEVICE_TOPOLOGY_ENABLED` | `true` | 拓扑总开关；置 `false` 时六端点一律返回 `404`、授权委托分支不生效，既有直连设备链路不受影响，**用于现场回滚** |
+| `DEVICE_TOPOLOGY_MAX_DEPTH` | `2` | 拓扑深度上限；本期仅支持两层（父不得为 `SUB`），低于 `2` 视为仅允许 `DIRECT`、不接受任何挂载 |
+| `DEVICE_TOPOLOGY_MAX_SUB_DEVICES_PER_GATEWAY` | `200` | 单网关子设备数量上限，超限挂载报 `6260` |
+
+> 翻转上述任一变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效；`DEVICE_TOPOLOGY_ENABLED=false` 是灰度或故障时的**回滚开关**——拓扑端点立即 `404`、网关不再获得代子设备授权，但已挂载数据保留（`node_type` / `parent_id` 不变），复位为 `true` 即恢复。
+
+**数据库改动**：`V14__device_topology.sql` 对 `device` 表**只加列与索引、不改既有列**——新增 `node_type VARCHAR(16) NOT NULL DEFAULT 'DIRECT'`、`parent_id BIGINT NULL`，并建 `idx_device_parent (parent_id, deleted)` 索引与 `fk_device_parent` 外键（`ON DELETE SET NULL`）。存量库经 `baseline-on-migrate` 只需正常启动即由 Flyway 执行 `V14`；升级前请照常备份，回滚应用版本前先确认 `device` 表已含该两列（`enabled=false` 不阻止迁移执行）。
+
+**常见排障**：
+
+- **拓扑端点一律 `404`**：`DEVICE_TOPOLOGY_ENABLED=false`（控制器内 `requireEnabled()` 直接返回 `404`，**非鉴权问题**）；确认环境变量已透传并 `--force-recreate backend` 生效。
+- **挂载报 `6255`（`DEVICE_PARENT_NOT_FOUND`）**：`{gatewayId}` 指向的设备不存在或已逻辑删除。
+- **挂载报 `6256`（`DEVICE_PARENT_KIND_INVALID`）**：父设备当前为 `SUB`（本期仅两层，禁止三层嵌套）。
+- **挂载报 `6257`（`DEVICE_TOPOLOGY_DEPTH_EXCEEDED`）**：拓扑深度超过 `DEVICE_TOPOLOGY_MAX_DEPTH`；确认该值不低于 `2`。
+- **挂载报 `6258`（`DEVICE_PRODUCT_MISMATCH`）**：父网关与子设备不属于同一产品；子设备须与网关同产品。
+- **变更角色报 `6259`（`DEVICE_HAS_SUBDEVICES`）**：该网关仍有挂载子设备，须先解绑全部子设备再降级。
+- **挂载报 `6260`（`DEVICE_SUBDEVICE_LIMIT_EXCEEDED`）**：超过 `DEVICE_TOPOLOGY_MAX_SUB_DEVICES_PER_GATEWAY`；调大该值或清理闲置子设备。
+- **网关代子设备发布 / 订阅被拒**：确认 `ACCESS_CONTROL_ENFORCE_AUTH=true`（`false` 期间认证与授权一律放行，委托判定不参与）；再确认委托方确为 `GATEWAY`、目标确为同产品 `SUB` 且 `parent_id` 等于委托方 `deviceId`，拓扑变更后两侧认证缓存已即时失效。
+- **`6254`~`6260` 汇总**：`6254` 拓扑参数非法（`400`）/ `6255` 父网关不存在（`404`）/ `6256` 父设备类型非法（`400`）/ `6257` 拓扑深度超限（`400`）/ `6258` 父设备与子设备产品不一致（`400`）/ `6259` 网关仍有子设备（`409`）/ `6260` 单网关子设备数超限（`400`）。
+
+### 9.22 通知渠道与告警升级运维（T-27）
+
+T-27 在既有「单一 Webhook 出口」之外新增站内信（`INAPP`，落库即达的必达通道）、邮件（`EMAIL`）与短信（`SMS`）三类通知渠道，并补齐告警超时升级与处理人分派。告警触发 / 恢复 / 升级统一经 `NotificationDispatcher` 按「站内信 → 内置 Webhook → 邮件 → 短信」固定顺序投递并写 `notification_delivery` 留痕；内置 `WEBHOOK` 通道经适配器复用既有 `WebhookDispatcher`，**投递语义、签名与重试行为与 T-17 完全一致**。本链路不改 `MqttMessageHandler` / `IngestPipeline` / `IngestDispatcher` / `IngestPersistenceService`、不改 ACL、不改 `emqx-init.sh`、不改 `webhook_config` 表与 `WebhookController`，故 MQTT 侧零改动、无需重跑 `emqx-init`。
+
+**后端可调项**（`.env` → 环境变量 → `application.yml` 的 `app.notification`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `NOTIFICATION_ENABLED` | `true` | 本链路新增能力总开关；置 `false` 时渠道与升级端点一律返回 `404`、站内信不再新增、邮件与短信不投递、升级巡检不注册；`/notifications/**` 读取与已读操作保留，既有 Webhook 通道照常投递，**用于现场回滚** |
+| `NOTIFICATION_INAPP_ENABLED` | `true` | 站内信通道开关；置 `false` 时站内信不再新增（顶栏未读角标不再变化） |
+| `NOTIFICATION_EMAIL_ENABLED` | `true` | 邮件渠道开关；置 `false` 时 `EMAIL` 渠道行不投递 |
+| `NOTIFICATION_SMS_ENABLED` | `true` | 短信渠道开关；置 `false` 时 `SMS` 渠道行不投递 |
+| `NOTIFICATION_MAX_CHANNELS_PER_USER` | `20` | 单用户渠道数上限，超限报 `6263` |
+| `NOTIFICATION_MAX_ESCALATION_POLICIES_PER_USER` | `20` | 单用户升级策略数上限，超限报 `6266` |
+| `NOTIFICATION_MAX_ESCALATION_LEVEL` | `3` | 单条告警最大升级级数，达到后只刷新 `last_escalated_at` 不再升级 |
+| `NOTIFICATION_INAPP_RETENTION_PER_USER` | `500` | 单用户站内信保留上限，超出时清理最旧已读条目；`0` 表示不清理 |
+| `NOTIFICATION_DELIVERY_MAX_ATTEMPTS` | `3` | 投递最大尝试次数，达到后置终态 `FAILED` 并停止重试 |
+| `NOTIFICATION_DELIVERY_BACKOFF_SECONDS` | `60` | 指数退避基数（秒），第 n 次重试顺延 `backoffSeconds × 2^(n-1)` |
+| `NOTIFICATION_DELIVERY_SWEEP_INTERVAL_MS` | `60000` | 投递巡检间隔（毫秒），`<=0` 关闭（同时关闭保留清理） |
+| `NOTIFICATION_DELIVERY_BATCH_SIZE` | `200` | 单轮投递巡检处理上限 |
+| `NOTIFICATION_DELIVERY_RETENTION_DAYS` | `30` | 投递记录保留天数，`0` 表示不清理 |
+| `NOTIFICATION_DELIVERY_EXECUTOR_CORE_SIZE` | `2` | 投递线程池核心线程数 |
+| `NOTIFICATION_DELIVERY_EXECUTOR_MAX_SIZE` | `8` | 投递线程池最大线程数 |
+| `NOTIFICATION_DELIVERY_EXECUTOR_QUEUE_CAPACITY` | `500` | 投递线程池队列容量 |
+| `NOTIFICATION_DELIVERY_TIMEOUT_MS` | `5000` | 单渠道投递超时（毫秒） |
+| `NOTIFICATION_ESCALATION_SWEEP_INTERVAL_MS` | `60000` | 升级巡检间隔（毫秒），`<=0` 关闭 |
+| `NOTIFICATION_ESCALATION_BATCH_SIZE` | `200` | 单轮升级巡检处理上限 |
+
+**邮件渠道前置条件**：`EMAIL` 渠道投递依赖 `spring-boot-starter-mail`（已随 T-27 引入），SMTP 参数优先取渠道行 `config`（`host` / `port` / `username` / `password` / `from` / `ssl`），未在渠道行填写时回退全局 `spring.mail.*`：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `SPRING_MAIL_HOST` | 空 | SMTP 主机；为空且渠道行未填 `host` 时邮件投递记 `FAILED` |
+| `SPRING_MAIL_PORT` | `465` | SMTP 端口 |
+| `SPRING_MAIL_USERNAME` | 空 | SMTP 用户名 |
+| `SPRING_MAIL_PASSWORD` | 空 | SMTP 密码（响应一律脱敏 `******`，不落投递记录） |
+
+> 短信渠道不新增依赖：`SMS` 走通用 HTTP 供应商，参数（`url` / `method` / `headers` / `bodyTemplate` / `successKeyword`）全部在渠道配置行内填写，由部署方在 `bodyTemplate` 中表达签名与模板规则。收件人默认取当前登录用户的 `sys_user.email` 与 `sys_user.phone`，渠道行 `to` / `phones` 给出时覆盖默认值。
+
+> 翻转上述任一变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效，无需重跑 `emqx-init`。`NOTIFICATION_ENABLED=false` 是灰度或故障时的**回滚开关**——渠道与升级端点立即 `404`、站内信与邮件 / 短信停止投递、升级巡检不再注册，但已落库的站内信与投递记录保留，复位为 `true` 即恢复；**既有 Webhook 告警通知在任何配置下均不受影响**。
+
+**数据库改动**：`V15__notification_channel.sql` 新建 `notification` / `notification_channel` / `notification_delivery` / `alert_escalation_policy` 四表，并对 `alert_record` **只加三列**——`assignee_id BIGINT NULL`、`escalation_level INT NOT NULL DEFAULT 0`、`last_escalated_at DATETIME NULL`，`V1`~`V14` 零改动。存量库经 `baseline-on-migrate` 只需正常启动即由 Flyway 执行 `V15`；升级前请照常备份，回滚应用版本前先确认 `alert_record` 表已含该三列（`enabled=false` 不阻止迁移执行）。
+
+**常见排障**：
+
+- **渠道 / 升级端点一律 `404`**：`NOTIFICATION_ENABLED=false`（控制器内 `requireEnabled()` 直接返回 `404`，**非鉴权问题**）；确认环境变量已透传并 `--force-recreate backend` 生效。
+- **邮件渠道测试报 `6264`**：`NOTIFICATION_SEND_FAILED`，多为 SMTP 参数错误、`from` 与账号不匹配或网络不通；渠道行 `config` 与 `spring.mail.*` 两处逐一核对。
+- **短信渠道投递记 `FAILED` 且错误摘要为「无收件人」**：`sys_user.phone` 为空且渠道行 `phones` 未填写；补用户手机号或在渠道配置中填写 `phones`。
+- **站内信未读数不变化**：`NOTIFICATION_INAPP_ENABLED` 或 `NOTIFICATION_ENABLED` 为 `false`；或既有告警通知开关 `ALERT_NOTIFY_ENABLED` / `ALERT_RECOVER_NOTIFY_ENABLED` 关闭（T-17 语义优先，关闭即不触发任何通知）。
+- **告警长时间未升级**：确认已建启用中的升级策略且 `severity` 命中（`ALL` 不限）；基准时间取 `last_escalated_at`（为空时用 `first_triggered_at`），达到 `after_seconds` 才升级；`escalation_level` 已达 `NOTIFICATION_MAX_ESCALATION_LEVEL` 时只刷新时间不再升级属预期。
+- **告警列表指派报 `6267`**：`ALERT_ASSIGNEE_INVALID`，处理人须为同租户存在的用户；解除指派时 `assigneeId` 传空。
+- **`6261`~`6267` 汇总**：`6261` 通知渠道不存在（`404`）/ `6262` 渠道参数非法（`400`）/ `6263` 不支持的渠道类型或渠道数超限（`400`）/ `6264` 测试发送失败（`400`）/ `6265` 升级策略不存在（`404`）/ `6266` 升级策略参数非法（`400`）/ `6267` 指派处理人非法（`400`）；渠道与策略越权访问统一返回 `403`。
+
+### 9.23 规则与告警作用域运维（T-28）
+
+T-28 把「消息规则」（`rule_definition`）与「告警规则」（`alert_rule`）的作用域从「单设备 / 全部设备」两档扩为**四档** —— `ALL`（全部设备）/ `DEVICE`（指定设备）/ `GROUP`（按分组，含所有后代分组）/ `TAG`（按标签）。作用域由判别列 `scope_type` 加各档数据列表达，**不改既有 `device_id` 列语义**；存量规则迁移后按 `device_id` 是否为空回填为 `ALL` / `DEVICE`，逐位等价于旧行为。本链路只改服务端规则 / 告警的**匹配与校验**，**不改 `MqttMessageHandler` / `IngestPipeline` / 摄取管线、不改 ACL、不改 `emqx-init.sh`**，故 MQTT 侧零改动、无需重跑 `emqx-init`。
+
+**后端可调项**（`.env` → 环境变量 → `application.yml` 的 `app.scope`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `SCOPE_MAX_TARGETS` | `50` | 单条规则 / 告警作用域内分组或标签的数量上限；超限创建 / 更新按对应错误码拒绝（告警规则 `6268`、消息规则 `6269`） |
+
+> 本链路**无独立总开关**：作用域是既有能力的粒度扩展（非新增可禁用能力），迁移只加列，应用回滚后新列被忽略、存量规则按回填的 `ALL` / `DEVICE` 继续按旧语义运行。翻转上述变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效，无需重跑 `emqx-init`。
+
+**数据库改动**：`V16__rule_alert_scope.sql` 对 `alert_rule` 与 `rule_definition` 两表**各只加三列与一索引、不改既有列** —— 新增 `scope_type VARCHAR(16) NOT NULL DEFAULT 'ALL'`、`group_ids TEXT NULL`（`GROUP` 档分组 ID 的 JSON 数组）、`tag_ids TEXT NULL`（`TAG` 档标签 ID 的 JSON 数组），并建 `idx_alert_rule_scope (user_id, scope_type)` / `idx_rule_scope (user_id, scope_type)` 索引；随后按 `device_id` 是否为空把存量行回填为 `DEVICE` / `ALL`。存量库经 `baseline-on-migrate` 只需正常启动即由 Flyway 执行 `V16`；升级前请照常备份，回滚应用版本前先确认两表已含该三列（**回滚后新列留存、旧代码忽略**，`enabled=false` 不阻止迁移执行）。
+
+**匹配方向与生效时机**：分组档**不落库预展开**（不存「自身 + 全部后代」），匹配时把设备的分组隶属沿 `parent_id` 上溯祖先再求交，故**作用域与分组树变更解耦** —— 分组移动 / 重命名 / 增删后无需任何重算，规则即时按最新树形生效。标签档无层级，按标签关联设备求交。推评估（属性 / 事件上报）走「设备 → 隶属」方向，离线巡检走「作用域 → 设备集合」方向。
+
+**常见排障**：
+
+- **规则 / 告警未命中某设备**：确认作用域档位（`scope_type`）与目标一致 —— `ALL` 恒命中、`DEVICE` 需 `device_id` 精确等于该设备、`GROUP` 需该设备隶属（含祖先）与所选分组有交集、`TAG` 需标签有交集；确认规则 `enabled=1`、`deleted=0`。
+- **保存规则 / 告警报 `6268` / `6269`**：作用域非法 —— 档位与字段不一致（如 `GROUP` 档却传了 `deviceId`）、所选分组 / 标签不属于当前用户（越权返回 `403`）、或作用域内分组 / 标签数量超过 `SCOPE_MAX_TARGETS`。
+- **分组调整后规则未生效**：属预期 —— 匹配按设备当前隶属实时计算、无需重算；若仍未命中，确认设备已挂入目标分组（或其后代分组）。
+- **分组被删除后规则「少管一批设备」**：属预期 —— `group_ids` 只存 ID 不存名称快照，被删分组从作用域中「失联」后匹配自然落空，规则静默降级；如需避免，删除前先核对引用该分组的规则。
+- **`6268` / `6269` 汇总**：`6268` 告警规则作用域非法（`400`）/ `6269` 消息规则作用域非法（`400`）；分组 / 标签越权访问统一返回 `403`。
 
 ---
 

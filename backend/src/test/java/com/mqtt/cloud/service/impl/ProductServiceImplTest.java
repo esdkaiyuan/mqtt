@@ -10,12 +10,14 @@ import com.mqtt.cloud.mapper.ProductMapper;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.EmqxClientKicker;
+import com.mqtt.cloud.service.TopicPrefixResolver;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
@@ -45,6 +47,10 @@ class ProductServiceImplTest {
 
     @Mock
     private EmqxClientKicker emqxClientKicker;
+
+    /** 模板校验属纯函数逻辑，用真实实例而非 mock，避免断言退化为复制桩返回值。 */
+    @Spy
+    private TopicPrefixResolver topicPrefixResolver = new TopicPrefixResolver();
 
     @InjectMocks
     private ProductServiceImpl productService;
@@ -182,5 +188,97 @@ class ProductServiceImplTest {
         productService.update(9L, request("new-key"));
 
         verify(authCacheService).evictProduct("old-key");
+    }
+
+    @Test
+    void create_should_use_provided_auth_mode() {
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        ProductRequest req = request("esp32-fall");
+        req.setAuthMode("X509");
+
+        Product created = productService.create(req);
+
+        assertThat(created.getAuthMode()).isEqualTo("X509");
+    }
+
+    @Test
+    void create_should_reject_unsupported_auth_mode() {
+        ProductRequest req = request("esp32-fall");
+        req.setAuthMode("TLS");
+
+        assertThatThrownBy(() -> productService.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的认证方式");
+    }
+
+    @Test
+    void create_should_reject_invalid_topic_prefix() {
+        ProductRequest req = request("esp32-fall");
+        req.setTopicPrefix("device/+/data");
+
+        assertThatThrownBy(() -> productService.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("主题前缀模板");
+    }
+
+    @Test
+    void update_should_evict_auth_cache_when_auth_mode_changes() {
+        Product existing = product(9L, "esp32-fall", "ENABLED");
+        existing.setAuthMode("SECRET");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        ProductRequest req = request("esp32-fall");
+        req.setAuthMode("JWT");
+
+        productService.update(9L, req);
+
+        assertThat(existing.getAuthMode()).isEqualTo("JWT");
+        verify(authCacheService).evictProduct("esp32-fall");
+    }
+
+    @Test
+    void update_should_evict_auth_cache_when_topic_prefix_changes() {
+        Product existing = product(9L, "esp32-fall", "ENABLED");
+        existing.setAuthMode("SECRET");
+        existing.setTopicPrefix("device/{deviceKey}");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        ProductRequest req = request("esp32-fall");
+        req.setTopicPrefix("site/{productKey}/{deviceKey}");
+
+        productService.update(9L, req);
+
+        assertThat(existing.getTopicPrefix()).isEqualTo("site/{productKey}/{deviceKey}");
+        verify(authCacheService).evictProduct("esp32-fall");
+    }
+
+    @Test
+    void update_should_not_evict_auth_cache_when_auth_mode_and_prefix_absent() {
+        Product existing = product(9L, "esp32-fall", "ENABLED");
+        existing.setAuthMode("SECRET");
+        existing.setTopicPrefix("device/{deviceKey}");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(productMapper.selectCount(any())).thenReturn(0L);
+
+        ProductRequest req = request("esp32-fall");
+        req.setTopicPrefix("device/{deviceKey}");
+
+        productService.update(9L, req);
+
+        assertThat(existing.getAuthMode()).isEqualTo("SECRET");
+        verifyNoInteractions(authCacheService);
+    }
+
+    @Test
+    void update_should_reject_unsupported_auth_mode() {
+        Product existing = product(9L, "esp32-fall", "ENABLED");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        ProductRequest req = request("esp32-fall");
+        req.setAuthMode("SECRET2");
+
+        assertThatThrownBy(() -> productService.update(9L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的认证方式");
     }
 }

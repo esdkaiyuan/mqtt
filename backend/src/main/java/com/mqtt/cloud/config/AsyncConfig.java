@@ -4,6 +4,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.util.concurrent.ThreadPoolExecutor;
+
 /**
  * 异步任务配置
  */
@@ -59,6 +61,26 @@ public class AsyncConfig {
         executor.setMaxPoolSize(properties.getExecutorMaxSize());
         executor.setQueueCapacity(properties.getExecutorQueueCapacity());
         executor.setThreadNamePrefix("scene-");
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
+        executor.initialize();
+        return executor;
+    }
+
+    /**
+     * 通知投递专用线程池（T-27 设计文档 §4.4 / §12）。
+     * <p>
+     * 邮件与短信的投递走网络，不得占用告警评估线程；有界队列在过载时由调用方线程兜底执行
+     * （{@code CallerRunsPolicy}），避免告警评估因投递积压而丢事件。
+     */
+    @Bean("notificationDeliveryExecutor")
+    public ThreadPoolTaskExecutor notificationDeliveryExecutor(NotificationProperties properties) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(properties.getDelivery().getExecutorCoreSize());
+        executor.setMaxPoolSize(properties.getDelivery().getExecutorMaxSize());
+        executor.setQueueCapacity(properties.getDelivery().getExecutorQueueCapacity());
+        executor.setThreadNamePrefix("notif-deliver-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(10);
         executor.initialize();

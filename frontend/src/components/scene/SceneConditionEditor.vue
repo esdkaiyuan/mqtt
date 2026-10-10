@@ -72,7 +72,7 @@
 <script setup>
 import { computed } from 'vue'
 import SvgIcon from '@/components/Icon.vue'
-import { CONDITION_LOGIC_OPTIONS, OPERATOR_OPTIONS } from '@/utils/scene'
+import { CONDITION_LOGIC_OPTIONS, OPERATOR_OPTIONS, createCondition } from '@/utils/scene'
 
 defineProps({
   devices: {
@@ -90,10 +90,6 @@ const conditions = defineModel({ type: Array, required: true })
 const logic = defineModel('logic', { type: String, default: 'AND' })
 
 const list = computed(() => conditions.value || [])
-
-function createCondition() {
-  return { deviceId: null, identifier: '', operator: 'GT', threshold: '' }
-}
 
 function addCondition() {
   conditions.value = [...list.value, createCondition()]

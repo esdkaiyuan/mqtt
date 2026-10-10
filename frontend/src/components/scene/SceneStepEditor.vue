@@ -242,7 +242,16 @@
 <script setup>
 import { computed, watch } from 'vue'
 import SvgIcon from '@/components/Icon.vue'
-import { ACTION_TYPE_OPTIONS, TARGET_TYPE_OPTIONS, isForwardAction } from '@/utils/scene'
+import {
+  ACTION_TYPE_OPTIONS,
+  TARGET_TYPE_OPTIONS,
+  isForwardAction,
+  createTargetConfig,
+  createActionConfig,
+  createStep,
+  normalizeStep,
+  withNormalizedSeq
+} from '@/utils/scene'
 
 /** 与后端 app.rule 限制保持一致：单场景步骤数与单步最大延时（设计文档 §12）。 */
 const MAX_STEPS = 20
@@ -279,38 +288,6 @@ const steps = defineModel({ type: Array, required: true })
 
 const list = computed(() => steps.value || [])
 
-function createTargetConfig() {
-  return { deviceIds: [], productIds: [], groupIds: [], tagIds: [] }
-}
-
-/** 各动作类型的 action_config 缺省形状（设计文档 §5.3）。 */
-function createActionConfig(actionType) {
-  switch (actionType) {
-    case 'SEND_COMMAND':
-      return { commandType: 'property_set', identifier: '', params: '' }
-    case 'FORWARD_MQTT':
-      return { topic: '', qos: 1, payloadTemplate: '' }
-    case 'FORWARD_HTTP':
-      return { url: '', method: 'POST', headers: '', payloadTemplate: '' }
-    case 'UPDATE_PROPERTY':
-    default:
-      return { identifier: '', value: '' }
-  }
-}
-
-function createStep() {
-  return {
-    seq: 0,
-    delaySeconds: 0,
-    actionType: 'UPDATE_PROPERTY',
-    targetType: props.timerSource ? 'FIXED' : 'TRIGGER',
-    targetMode: 'device',
-    targetConfig: createTargetConfig(),
-    actionConfig: createActionConfig('UPDATE_PROPERTY'),
-    enabled: true
-  }
-}
-
 /** 转发类动作目标锁 TRIGGER；TIMER 源下其余动作锁 FIXED。 */
 function effectiveTargetType(step) {
   if (isForwardAction(step.actionType)) return 'TRIGGER'
@@ -322,44 +299,9 @@ function targetTypeLocked(step) {
   return isForwardAction(step.actionType) || props.timerSource
 }
 
-/** 修正步骤的目标类型与 target_config，保证与触发源 / 动作类型约束一致。 */
-function normalizeStep(step) {
-  if (isForwardAction(step.actionType)) {
-    step.targetType = 'TRIGGER'
-    step.targetConfig = null
-    return
-  }
-  if (!step.targetConfig || typeof step.targetConfig !== 'object') {
-    step.targetConfig = createTargetConfig()
-  }
-  if (props.timerSource) {
-    step.targetType = 'FIXED'
-  }
-  if (!step.targetMode) {
-    step.targetMode = resolveTargetMode(step.targetConfig)
-  }
-}
-
-/** 编辑既有场景时，按已选中的维度推断目标模式。 */
-function resolveTargetMode(config) {
-  if (!config) return 'device'
-  if (config.productIds?.length) return 'product'
-  if (config.groupIds?.length) return 'group'
-  if (config.tagIds?.length) return 'tag'
-  return 'device'
-}
-
-/** 步骤序号归一化为 1..N 连续，避免删除 / 移动后出现空洞（设计文档 §7.4）。 */
-function withNormalizedSeq(items) {
-  return items.map((step, index) => {
-    step.seq = index + 1
-    return step
-  })
-}
-
 function addStep() {
   if (list.value.length >= MAX_STEPS) return
-  steps.value = withNormalizedSeq([...list.value, createStep()])
+  steps.value = withNormalizedSeq([...list.value, createStep(props.timerSource)])
 }
 
 function removeStep(index) {
@@ -378,7 +320,7 @@ function moveStep(index, offset) {
 function handleActionTypeChange(step, actionType) {
   step.actionType = actionType
   step.actionConfig = createActionConfig(actionType)
-  normalizeStep(step)
+  normalizeStep(step, props.timerSource)
 }
 
 function handleTargetTypeChange(step, targetType) {
@@ -398,7 +340,7 @@ watch(
   () => props.timerSource,
   () => {
     steps.value = withNormalizedSeq([...list.value])
-    list.value.forEach((step) => normalizeStep(step))
+    list.value.forEach((step) => normalizeStep(step, props.timerSource))
   }
 )
 </script>

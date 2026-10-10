@@ -6,6 +6,7 @@
     <sql id="ruleColumns">
         id, user_id, device_id, name, source_type, severity, identifier, operator,
         threshold_value, event_type, offline_seconds, suppress_window_seconds, enabled,
+        scope_type, group_ids, tag_ids,
         created_at, updated_at, deleted
     </sql>
 
@@ -22,14 +23,17 @@
         ORDER BY id DESC
     </select>
 
-    <!-- 某设备适用的启用规则：作用域为全部设备（device_id IS NULL）或正是该设备 -->
+    <!-- 某设备适用的启用规则（T-28 设计文档 §7.2）：ALL 档不限设备；DEVICE 档精确匹配；
+         GROUP / TAG 档全取后由 Java 侧按设备隶属二次过滤（递归祖先与 JSON 交集不下推 SQL）。 -->
     <select id="selectEnabledForDevice" resultType="com.mqtt.cloud.entity.AlertRule">
         SELECT <include refid="ruleColumns"/>
         FROM alert_rule
         WHERE user_id = #{userId}
           AND enabled = 1
           AND deleted = 0
-          AND (device_id IS NULL OR device_id = #{deviceId})
+          AND ( scope_type = 'ALL'
+                OR (scope_type = 'DEVICE' AND device_id = #{deviceId})
+                OR scope_type IN ('GROUP', 'TAG') )
         <if test="sourceType != null and sourceType != ''">
             AND source_type = #{sourceType}
         </if>

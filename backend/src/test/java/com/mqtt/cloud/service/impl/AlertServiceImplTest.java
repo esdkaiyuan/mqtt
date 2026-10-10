@@ -12,7 +12,9 @@ import com.mqtt.cloud.entity.AlertRecord;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.mapper.AlertRecordMapper;
 import com.mqtt.cloud.mapper.DeviceMapper;
+import com.mqtt.cloud.mapper.UserMapper;
 import com.mqtt.cloud.service.AlertNotifier;
+import com.mqtt.cloud.service.NotificationDispatcher;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,7 +55,13 @@ class AlertServiceImplTest {
     private DeviceMapper deviceMapper;
 
     @Mock
+    private UserMapper userMapper;
+
+    @Mock
     private AlertNotifier alertNotifier;
+
+    @Mock
+    private NotificationDispatcher notificationDispatcher;
 
     @InjectMocks
     private AlertServiceImpl service;

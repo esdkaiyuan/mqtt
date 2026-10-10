@@ -28,6 +28,12 @@ public class DeviceQueryDTO {
     /** 设备标签ID，选填 */
     private Long tagId;
 
+    /** 拓扑角色，选填：DIRECT/GATEWAY/SUB（T-26） */
+    private String nodeType;
+
+    /** 父网关ID，选填；指定后仅返回该网关下的子设备（T-26） */
+    private Long parentId;
+
     /**
      * 服务端解析出的分组ID集合（分组自身 + 所有后代）。
      * <p>

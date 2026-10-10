@@ -102,7 +102,7 @@ class DeviceCommandServiceImplTest {
         when(deviceService.getById(DEVICE_ID)).thenReturn(device(1));
         when(productService.requireById(PRODUCT_ID)).thenReturn(product());
         when(accessGuard.resolve(PRODUCT_KEY, DEVICE_KEY))
-                .thenReturn(new DeviceAuthCacheService.AuthMeta(PRODUCT_ID, "ENABLED", 1, "hash"));
+                .thenReturn(new DeviceAuthCacheService.AuthMeta(PRODUCT_ID, 1L, "ENABLED", 1, "SECRET", "hash", null, "DIRECT", null));
         when(accessGuard.isPermitted(any())).thenReturn(true);
         when(thingModelService.get(PRODUCT_ID))
                 .thenReturn(new ThingModelResponse(TSL, 3, LocalDateTime.of(2026, 10, 2, 12, 0)));

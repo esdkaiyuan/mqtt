@@ -3,6 +3,7 @@ package com.mqtt.cloud.service;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.spring.service.IService;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
+import com.mqtt.cloud.dto.request.CreateSubDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
@@ -22,6 +23,17 @@ public interface DeviceService extends IService<Device> {
      * @return 含一次性明文密钥的创建结果，明文仅此一次返回
      */
     DeviceCreatedDTO createDevice(Long userId, CreateDeviceDTO dto);
+
+    /**
+     * 在指定网关下创建子设备并挂载（T-26 设计文档 §8.1）。
+     * <p>
+     * 子设备的产品与归属取自网关，请求体不携带 {@code productId}。先按网关产品落一条普通设备行，
+     * 再经 {@link DeviceTopologyService#attach(Long, Long)} 完成父设备、同产品、层级与数量校验并挂载，
+     * 最后在同一事务内签发一机一密凭据；两个入口共用同一套校验与同一写路径，任一步失败整体回滚。
+     *
+     * @return 含一次性明文密钥的创建结果，明文仅此一次返回
+     */
+    DeviceCreatedDTO createSubDevice(Long gatewayId, CreateSubDeviceDTO dto);
 
     Device updateDevice(Long deviceId, UpdateDeviceDTO dto);
 

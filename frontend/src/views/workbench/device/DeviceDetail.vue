@@ -26,6 +26,13 @@
       </template>
     </PageHeader>
 
+    <div v-if="parent" class="parent-gateway-bar">
+      <span class="parent-gateway-bar__label">所属网关</span>
+      <span class="parent-gateway-bar__name">{{ parent.deviceName }}</span>
+      <span class="parent-gateway-bar__key">{{ parent.deviceKey }}</span>
+      <el-button link type="primary" size="small" @click="goParentGateway">查看网关</el-button>
+    </div>
+
     <div class="detail-main">
       <div class="info-card card">
         <h3 class="card-title">基本信息</h3>
@@ -57,6 +64,34 @@
             <span class="info-value">{{ device.description }}</span>
           </div>
         </div>
+      </div>
+
+      <div v-if="isGateway" id="device-sub-device-section" class="info-card card">
+        <SubDevicePanel
+          :sub-devices="subDevices"
+          :loading="subDevicesLoading"
+          :attaching="attaching"
+          :detaching="detaching"
+          :can-write="canWrite"
+          @attach="openAttachDialog"
+          @detach="handleDetach"
+          @view="goSubDevice"
+        />
+      </div>
+
+      <div id="device-credential-section" class="info-card card">
+        <DeviceCredentialPanel
+          :auth-mode="authMode"
+          :auth-mode-loading="authModeLoading"
+          :issuing="issuing"
+          :revoking="revoking"
+          :token-issuing="tokenIssuing"
+          :revoked="revoked"
+          :can-write="canWrite"
+          @issue-certificate="handleIssueCertificate"
+          @revoke-certificate="handleRevokeCertificate"
+          @issue-token="handleIssueToken"
+        />
       </div>
 
       <div id="device-property-section" class="info-card card">
@@ -118,9 +153,46 @@
     <EditDeviceDialog
       v-model:visible="showEdit"
       :device="device"
+      :parent-gateway="parent"
       :loading="editLoading"
       @submit="handleEditSubmit"
+      @view-gateway="goParentGateway"
     />
+
+    <el-dialog v-model="attachVisible" title="挂载既有设备" width="440px">
+      <p class="attach-hint">仅列出本网关所属产品下的普通设备；挂载后该设备经本网关代连</p>
+      <el-select
+        v-model="attachTargetId"
+        placeholder="选择要挂载的设备"
+        clearable
+        filterable
+        class="attach-select"
+      >
+        <el-option
+          v-for="item in candidates"
+          :key="item.id"
+          :label="`${item.deviceName}（${item.deviceKey}）`"
+          :value="item.id"
+        />
+      </el-select>
+      <p v-if="!candidatesLoading && candidates.length === 0" class="attach-empty">
+        当前产品下没有可挂载的普通设备
+      </p>
+      <template #footer>
+        <el-button @click="attachVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          :loading="attaching"
+          :disabled="!attachTargetId"
+          @click="handleAttachConfirm"
+        >
+          挂载
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <CertificateDialog v-model:visible="showCertificate" :certificate="certificate || {}" />
+    <TokenDialog v-model:visible="showToken" :token="token || {}" />
   </div>
 </template>
 
@@ -129,23 +201,31 @@ import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
 import { useUiStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EditDeviceDialog from '@/components/device/EditDeviceDialog.vue'
+import CertificateDialog from '@/components/device/CertificateDialog.vue'
+import TokenDialog from '@/components/device/TokenDialog.vue'
+import DeviceCredentialPanel from '@/components/device/DeviceCredentialPanel.vue'
 import DevicePropertyPanel from '@/components/device/DevicePropertyPanel.vue'
 import DevicePropertyTrend from '@/components/device/DevicePropertyTrend.vue'
 import DeviceEventPanel from '@/components/device/DeviceEventPanel.vue'
 import DeviceControlPanel from '@/components/device/DeviceControlPanel.vue'
 import DeviceShadowPanel from '@/components/device/DeviceShadowPanel.vue'
 import DeviceCommandHistory from '@/components/device/DeviceCommandHistory.vue'
+import SubDevicePanel from '@/components/device/SubDevicePanel.vue'
 import { useDeviceData } from '@/composables/useDeviceData'
 import { useDeviceCommand } from '@/composables/useDeviceCommand'
 import { useDeviceShadow } from '@/composables/useDeviceShadow'
+import { useDeviceCredentials } from '@/composables/useDeviceCredentials'
+import { useDeviceTopology } from '@/composables/useDeviceTopology'
 
 const route = useRoute()
 const router = useRouter()
 const deviceStore = useDeviceStore()
 const ui = useUiStore()
+const authStore = useAuthStore()
 
 const device = ref({})
 const showEdit = ref(false)
@@ -170,6 +250,101 @@ const { capability, capabilityLoading, records, recordsTotal, recordsLoading, se
 // 设备影子（T-16）：desired / reported / delta 三份状态与期望值下发
 const { shadow, shadowLoading, setting, setDesired } = useDeviceShadow(deviceKey)
 
+// 证书与令牌（T-25）：认证方式取决于所属产品，产品列表加载后回填
+const showCertificate = ref(false)
+const showToken = ref(false)
+const credentialDeviceId = computed(() => device.value.id || null)
+const credentialProductId = computed(() => device.value.productId || null)
+const {
+  authMode,
+  authModeLoading,
+  issuing,
+  revoking,
+  tokenIssuing,
+  certificate,
+  token,
+  revoked,
+  loadAuthMode,
+  issueCertificate,
+  revokeCertificate,
+  issueToken
+} = useDeviceCredentials(credentialDeviceId, credentialProductId)
+
+// 签发与吊销为管理员动作，前端置灰仅作体验层提示，后端仍独立鉴权
+const canWrite = computed(() => authStore.hasRole(['ADMIN']))
+
+// 设备拓扑（T-26）：nodeType 由详情接口带回，决定是否展示子设备区块
+const isGateway = computed(() => device.value.nodeType === 'GATEWAY')
+const topologyDeviceId = computed(() => device.value.id || null)
+const {
+  subDevices,
+  subDevicesLoading,
+  candidates,
+  candidatesLoading,
+  attaching,
+  detaching,
+  parent,
+  loadSubDevices,
+  loadCandidates,
+  attachSubDevice,
+  detachSubDevice,
+  loadParent
+} = useDeviceTopology(topologyDeviceId)
+
+const attachVisible = ref(false)
+const attachTargetId = ref(null)
+
+async function openAttachDialog() {
+  attachTargetId.value = null
+  attachVisible.value = true
+  await loadCandidates(device.value.productId)
+}
+
+async function handleAttachConfirm() {
+  if (!attachTargetId.value) return
+  try {
+    await attachSubDevice(attachTargetId.value)
+    attachVisible.value = false
+    ElMessage.success('子设备已挂载')
+  } catch {
+    // 失败提示由 axios 拦截器统一给出（含 6255~6260 业务错误）
+  }
+}
+
+async function handleDetach(subDevice) {
+  try {
+    await ElMessageBox.confirm(
+      `确定将「${subDevice.deviceName}」从本网关解绑吗？设备与凭据保留，可重新挂载。`,
+      '确认解绑',
+      { confirmButtonText: '解绑', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await detachSubDevice(subDevice.id)
+    ElMessage.success('已解绑')
+  } catch {
+    // 失败提示由 axios 拦截器统一给出
+  }
+}
+
+function goSubDevice(subDevice) {
+  router.push(`/workbench/devices/${subDevice.id}`)
+}
+
+function goParentGateway() {
+  router.push(`/workbench/devices/${parent.value?.id}`)
+}
+
+watch(
+  credentialProductId,
+  (value) => {
+    if (value) loadAuthMode()
+  },
+  { immediate: true }
+)
+
 function handleEventPageChange(page) {
   eventPage.value = page
 }
@@ -181,10 +356,21 @@ function handleCommandPageChange(page) {
 // 右上下文栏只读消费该上下文，页面卸载时清空避免残留上一台设备
 watch(device, (value) => ui.setRailContext({ device: value }), { immediate: true })
 
-onMounted(async () => {
-  const deviceId = route.params.id
-  device.value = await deviceStore.fetchDeviceById(deviceId)
-})
+onMounted(loadDevice)
+
+// 网关与其子设备之间互跳复用同一个路由组件，须按 id 变化重新加载
+watch(() => route.params.id, loadDevice)
+
+async function loadDevice() {
+  device.value = await deviceStore.fetchDeviceById(route.params.id)
+  subDevices.value = []
+  parent.value = null
+  if (isGateway.value) {
+    await loadSubDevices()
+  } else if (device.value?.nodeType === 'SUB') {
+    await loadParent()
+  }
+}
 
 onUnmounted(() => ui.setRailContext({}))
 
@@ -255,6 +441,46 @@ async function handleSetDesired({ params }) {
     }
   } catch {
     // 失败提示由 axios 拦截器统一给出（含 6206 业务错误）
+  }
+}
+
+// 证书与令牌（T-25）：签发结果仅在本次弹层展示，关闭后不再回显
+async function handleIssueCertificate() {
+  try {
+    const result = await issueCertificate()
+    if (!result) return
+    showCertificate.value = true
+  } catch {
+    // 失败提示由 axios 拦截器统一给出（含 6249 认证方式不支持 / 6251 签发失败）
+  }
+}
+
+async function handleRevokeCertificate() {
+  try {
+    await ElMessageBox.confirm(
+      `确定要吊销设备「${device.value.deviceName}」的当前证书吗？吊销后该设备将立即无法接入。`,
+      '确认吊销',
+      { confirmButtonText: '吊销', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    const result = await revokeCertificate('控制台手动吊销')
+    if (!result) return
+    ElMessage.success('证书已吊销')
+  } catch {
+    // 失败提示由 axios 拦截器统一给出（含 6252 吊销失败）
+  }
+}
+
+async function handleIssueToken() {
+  try {
+    const result = await issueToken()
+    if (!result) return
+    showToken.value = true
+  } catch {
+    // 失败提示由 axios 拦截器统一给出（含 6249 认证方式不支持 / 6253 令牌签发失败）
   }
 }
 
@@ -366,6 +592,49 @@ function formatTime(timeStr) {
   padding: 2px 6px;
   border-radius: var(--border-radius-sm);
   align-self: flex-start;
+}
+
+.parent-gateway-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--grid-gutter);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius);
+  flex-wrap: wrap;
+}
+
+.parent-gateway-bar__label {
+  color: var(--color-primary);
+  font-weight: 600;
+}
+
+.parent-gateway-bar__name {
+  color: var(--color-text-primary);
+}
+
+.parent-gateway-bar__key {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.attach-hint {
+  margin-bottom: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+.attach-select {
+  width: 100%;
+}
+
+.attach-empty {
+  margin-top: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
 }
 
 @media (max-width: 768px) {

@@ -108,5 +108,58 @@ export const deviceApi = {
    * types 逗号分隔（MESSAGE/COMMAND/EVENT/STATUS），startTime / endTime 形如 yyyy-MM-dd HH:mm:ss，
    * 时间跨度上限 31 天（后端参数 app.device-log.max-range-days）。
    */
-  getDeviceLogs: (deviceId, params) => api.get(`/devices/${deviceId}/logs`, { params })
+  getDeviceLogs: (deviceId, params) => api.get(`/devices/${deviceId}/logs`, { params }),
+
+  // ---------- 证书与令牌（T-25） ----------
+
+  /**
+   * 签发设备 X.509 证书：调用方须具备产品管理权限，产品 auth_mode 为 X509。
+   * 返回证书链与私钥 PEM；私钥不留存，仅本次响应返回。
+   */
+  issueCertificate: (deviceId) => api.post(`/devices/${deviceId}/certificate`),
+
+  /**
+   * 吊销设备当前有效证书：reason 可空（上限 64 字符），吊销后认证即时失效。
+   */
+  revokeCertificate: (deviceId, data) => api.post(`/devices/${deviceId}/certificate/revoke`, data),
+
+  /**
+   * 签发设备 JWT 令牌：产品 auth_mode 为 JWT 时可用，明文令牌仅本次返回。
+   */
+  issueToken: (deviceId) => api.post(`/devices/${deviceId}/token`),
+
+  // ---------- 设备拓扑（T-26） ----------
+
+  /**
+   * 在网关下创建设备并直接挂载为子设备：产品与归属取自网关，请求体不含 productId，
+   * 返回含一次性明文密钥的创建结果。能力未开启时后端返回 404。
+   */
+  createSubDevice: (gatewayId, data) => api.post(`/devices/${gatewayId}/sub-devices`, data),
+
+  /**
+   * 把既有设备挂载为指定网关的子设备：校验父设备、同产品、层级与子设备数量上限。
+   */
+  attachSubDevice: (gatewayId, subDeviceId) => api.post(`/devices/${gatewayId}/sub-devices/${subDeviceId}`),
+
+  /**
+   * 解绑子设备：仅清除父子关系，设备行与凭据保留，可再挂载到其它网关。
+   */
+  detachSubDevice: (gatewayId, subDeviceId) =>
+    api.delete(`/devices/${gatewayId}/sub-devices/${subDeviceId}`),
+
+  /**
+   * 分页查询网关下的子设备，返回含 deviceKey / status / lastSeen 的 Page<Device>。
+   */
+  listSubDevices: (gatewayId, params) => api.get(`/devices/${gatewayId}/sub-devices`, { params }),
+
+  /**
+   * 查询设备的父网关：普通设备与网关无父，返回 data 为 null。
+   */
+  getParentDevice: (subDeviceId) => api.get(`/devices/${subDeviceId}/parent`),
+
+  /**
+   * 变更设备拓扑角色，取值 DIRECT / GATEWAY / SUB。
+   * 置为 GATEWAY 要求无父；置为 DIRECT 或 SUB 要求无子设备。
+   */
+  changeNodeType: (deviceId, nodeType) => api.put(`/devices/${deviceId}/node-type`, { nodeType })
 }

@@ -68,27 +68,36 @@
         <div class="notify">
           <div class="notify__header">
             <span class="notify__title">通知</span>
-            <span v-if="unreadCount > 0" class="notify__count">{{ unreadCount }} 条未处理</span>
+            <button
+              v-if="unreadCount > 0"
+              class="notify__read-all"
+              :disabled="markingAll"
+              @click="handleMarkAllRead"
+            >
+              全部已读
+            </button>
+            <span v-else class="notify__count">已全部读完</span>
           </div>
 
-          <div v-if="recentLoading && recentAlerts.length === 0" class="notify__hint">加载中...</div>
-          <div v-else-if="recentAlerts.length === 0" class="notify__hint">暂无活动告警</div>
+          <div v-if="recentLoading && recentNotifications.length === 0" class="notify__hint">加载中...</div>
+          <div v-else-if="recentNotifications.length === 0" class="notify__hint">暂无通知</div>
           <ul v-else class="notify__list">
             <li
-              v-for="alert in recentAlerts"
-              :key="alert.id"
+              v-for="item in recentNotifications"
+              :key="item.id"
               class="notify__item"
-              @click="goToAlert(alert)"
+              @click="openNotification(item)"
             >
-              <el-tag size="small" :type="SEVERITY_TAG_TYPES[alert.severity] || 'info'">
-                {{ SEVERITY_LABELS[alert.severity] || alert.severity }}
+              <el-tag size="small" :type="SEVERITY_TAG_TYPES[item.level] || 'info'">
+                {{ SEVERITY_LABELS[item.level] || item.level }}
               </el-tag>
               <div class="notify__body">
-                <p class="notify__alert-title">{{ alert.title }}</p>
-                <p class="notify__meta">
-                  {{ alert.deviceKey }} · {{ formatRelativeTime(alert.lastTriggeredAt) }}
+                <p class="notify__alert-title" :class="{ 'notify__alert-title--unread': !item.readAt }">
+                  {{ item.title }}
                 </p>
+                <p class="notify__meta">{{ formatRelativeTime(item.createdAt) }}</p>
               </div>
+              <span v-if="!item.readAt" class="notify__dot" />
             </li>
           </ul>
 
@@ -123,7 +132,7 @@ import { ElMessage } from 'element-plus'
 import { Fold, Expand, Search, Bell, ArrowDown, Menu, Operation } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { useUiStore } from '@/stores/ui'
-import { useAlertUnreadCountQuery, useAlertRecentQuery } from '@/composables/useAlerts'
+import { useNotificationUnreadCountQuery, useNotificationRecentQuery, useNotificationMutations } from '@/composables/useNotifications'
 import { SEVERITY_LABELS, SEVERITY_TAG_TYPES, formatRelativeTime } from '@/utils/alert'
 import SvgIcon from '@/components/Icon.vue'
 import BrandLogo from '@/components/common/BrandLogo.vue'
@@ -137,13 +146,33 @@ const keyword = ref('')
 const env = computed(() => import.meta.env.VITE_ENV || 'PROD')
 const navCollapsed = computed(() => ui.navCollapsed)
 
-const { unreadCount } = useAlertUnreadCountQuery()
-const { recentAlerts, loading: recentLoading } = useAlertRecentQuery(10)
+const { unreadCount } = useNotificationUnreadCountQuery()
+const { recentNotifications, loading: recentLoading } = useNotificationRecentQuery(10)
+const { markingAll, markRead, markAllRead } = useNotificationMutations()
 const notificationVisible = ref(false)
 
-function goToAlert(alert) {
+/** 点击通知：先标记已读，再按关联对象跳转（本期关联告警）。 */
+async function openNotification(item) {
   notificationVisible.value = false
-  router.push({ path: '/workbench/alerts', query: { alertId: alert.id } })
+  if (!item.readAt) {
+    try {
+      await markRead(item.id)
+    } catch {
+      // 已读失败不阻断跳转，原因由 axios 拦截器提示
+    }
+  }
+  if (item.refType === 'ALERT' && item.refId) {
+    router.push({ path: '/workbench/alerts', query: { alertId: item.refId } })
+  }
+}
+
+async function handleMarkAllRead() {
+  try {
+    await markAllRead()
+    ElMessage.success('已全部标记为已读')
+  } catch {
+    // 失败原因由 axios 拦截器统一提示
+  }
 }
 
 function goToAllAlerts() {
@@ -310,7 +339,21 @@ function handleUserCommand(command) {
 
 .notify__count {
   font-size: var(--font-size-xs);
-  color: var(--color-danger, #f56c6c);
+  color: var(--color-text-tertiary);
+}
+
+.notify__read-all {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-primary);
+  cursor: pointer;
+}
+
+.notify__read-all:disabled {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
 }
 
 .notify__hint {
@@ -352,6 +395,19 @@ function handleUserCommand(command) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.notify__alert-title--unread {
+  font-weight: var(--font-weight-semibold);
+}
+
+.notify__dot {
+  flex-shrink: 0;
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-danger, #f56c6c);
 }
 
 .notify__meta {

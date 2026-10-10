@@ -134,4 +134,18 @@ public final class RuleConstants {
             PLACEHOLDER_DEVICE_ID, PLACEHOLDER_DEVICE_KEY, PLACEHOLDER_DEVICE_NAME,
             PLACEHOLDER_DEVICE_TYPE, PLACEHOLDER_SOURCE_TYPE, PLACEHOLDER_IDENTIFIER,
             PLACEHOLDER_VALUE, PLACEHOLDER_REPORTED_AT, PLACEHOLDER_TIMESTAMP);
+
+    // ---------- 作用域档位（T-28） ----------
+
+    /** 作用域：该用户全部设备（等价于既有 {@code device_id IS NULL}）。 */
+    public static final String SCOPE_ALL = "ALL";
+    /** 作用域：单台设备（等价于既有 {@code device_id} 非空）。 */
+    public static final String SCOPE_DEVICE = "DEVICE";
+    /** 作用域：选中分组及其全部后代分组内的设备。 */
+    public static final String SCOPE_GROUP = "GROUP";
+    /** 作用域：选中标签关联的设备。 */
+    public static final String SCOPE_TAG = "TAG";
+
+    /** 全部作用域档位。 */
+    public static final Set<String> SCOPES = Set.of(SCOPE_ALL, SCOPE_DEVICE, SCOPE_GROUP, SCOPE_TAG);
 }

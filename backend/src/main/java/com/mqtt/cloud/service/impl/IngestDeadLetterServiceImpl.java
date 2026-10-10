@@ -3,19 +3,26 @@ package com.mqtt.cloud.service.impl;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.entity.IngestDeadLetter;
 import com.mqtt.cloud.ingest.IngestMetrics;
+import com.mqtt.cloud.ingest.IngestPipeline;
 import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.mapper.IngestDeadLetterMapper;
 import com.mqtt.cloud.service.IngestDeadLetterService;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -40,15 +47,22 @@ public class IngestDeadLetterServiceImpl implements IngestDeadLetterService {
 
     private final IngestDeadLetterMapper deadLetterMapper;
     private final IngestMetrics metrics;
+    /**
+     * 延迟注入以打断循环依赖：IngestPipeline → IngestDeadLetterService（溢出兜底）
+     * → IngestPipeline（重放重投）。重放是低频的管理动作，构造期不需要管线实例。
+     */
+    private final ObjectProvider<IngestPipeline> ingestPipelineProvider;
     private final TransactionTemplate transactionTemplate;
     private final ExecutorService writer;
     private final AtomicLong lastLogAt = new AtomicLong(0L);
 
     public IngestDeadLetterServiceImpl(IngestDeadLetterMapper deadLetterMapper,
                                        IngestMetrics metrics,
+                                       ObjectProvider<IngestPipeline> ingestPipelineProvider,
                                        PlatformTransactionManager transactionManager) {
         this.deadLetterMapper = deadLetterMapper;
         this.metrics = metrics;
+        this.ingestPipelineProvider = ingestPipelineProvider;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.writer = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "ingest-dead-letter");
@@ -79,6 +93,114 @@ public class IngestDeadLetterServiceImpl implements IngestDeadLetterService {
         return deadLetterMapper.selectPage(page, Wrappers.<IngestDeadLetter>lambdaQuery()
                 .eq(StringUtils.hasText(status), IngestDeadLetter::getStatus, status)
                 .orderByDesc(IngestDeadLetter::getCreatedAt));
+    }
+
+    @Override
+    public boolean replay(Long id) {
+        IngestDeadLetter row = deadLetterMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(ResultCode.DEAD_LETTER_NOT_FOUND);
+        }
+        if (!IngestDeadLetter.STATUS_PENDING.equals(row.getStatus())) {
+            // 终态不可覆盖：重复重放直接拒绝，避免同一条消息被反复投递造成数据翻倍
+            throw new BusinessException(ResultCode.DEAD_LETTER_ALREADY_DISPOSED);
+        }
+        // 条件更新（WHERE status='PENDING'）：并发重放时只有一方能改成功
+        int updated = deadLetterMapper.update(null, Wrappers.<IngestDeadLetter>lambdaUpdate()
+                .eq(IngestDeadLetter::getId, id)
+                .eq(IngestDeadLetter::getStatus, IngestDeadLetter.STATUS_PENDING)
+                .set(IngestDeadLetter::getStatus, IngestDeadLetter.STATUS_REPLAYED)
+                .setSql("attempts = attempts + 1"));
+        if (updated == 0) {
+            throw new BusinessException(ResultCode.DEAD_LETTER_ALREADY_DISPOSED);
+        }
+
+        // 重新投回摄取管线：submit 只做入队受理，worker 异步落库
+        try {
+            IngestPipeline pipeline = ingestPipelineProvider.getIfAvailable();
+            if (pipeline == null) {
+                throw new IllegalStateException("摄取管线未就绪");
+            }
+            pipeline.submit(toIngestRecord(row));
+        } catch (Exception e) {
+            // 管线满或已停机：回退状态为 PENDING，让运维稍后重试，避免消息静默丢失
+            deadLetterMapper.update(null, Wrappers.<IngestDeadLetter>lambdaUpdate()
+                    .eq(IngestDeadLetter::getId, id)
+                    .set(IngestDeadLetter::getStatus, IngestDeadLetter.STATUS_PENDING)
+                    .setSql("attempts = attempts + 1"));
+            log.warn("死信重放入队失败，已回退为 PENDING: id={}, err={}", id, e.getMessage());
+            throw new BusinessException(ResultCode.DEAD_LETTER_REPLAY_FAILED, "摄取队列不可用，请稍后重试");
+        }
+        log.info("死信已重放: id={}, deviceKey={}", id, row.getDeviceKey());
+        return true;
+    }
+
+    @Override
+    public boolean discard(Long id) {
+        int updated = deadLetterMapper.update(null, Wrappers.<IngestDeadLetter>lambdaUpdate()
+                .eq(IngestDeadLetter::getId, id)
+                .eq(IngestDeadLetter::getStatus, IngestDeadLetter.STATUS_PENDING)
+                .set(IngestDeadLetter::getStatus, IngestDeadLetter.STATUS_DISCARDED));
+        if (updated == 0) {
+            // 区分「不存在」与「已处置」，给运维可操作的提示
+            if (deadLetterMapper.selectById(id) == null) {
+                throw new BusinessException(ResultCode.DEAD_LETTER_NOT_FOUND);
+            }
+            throw new BusinessException(ResultCode.DEAD_LETTER_ALREADY_DISPOSED);
+        }
+        log.info("死信已丢弃: id={}", id);
+        return true;
+    }
+
+    @Override
+    public int replayBatch(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return 0;
+        }
+        int replayed = 0;
+        for (Long id : ids) {
+            try {
+                replay(id);
+                replayed++;
+            } catch (BusinessException e) {
+                // 逐条隔离：单条已处置 / 不可用不阻断其余条目
+                log.warn("批量重放跳过 id={} reason={}", id, e.getMessage());
+            }
+        }
+        log.info("批量重放完成: 请求={}, 成功={}", ids.size(), replayed);
+        return replayed;
+    }
+
+    @Override
+    public Map<String, Long> countByStatus() {
+        // 只统计三态计数，避免把未知状态也带进来
+        List<IngestDeadLetter> rows = deadLetterMapper.selectList(Wrappers.<IngestDeadLetter>lambdaQuery()
+                .select(IngestDeadLetter::getStatus)
+                .groupBy(IngestDeadLetter::getStatus));
+        Map<String, Long> result = new HashMap<>();
+        result.put(IngestDeadLetter.STATUS_PENDING, 0L);
+        result.put(IngestDeadLetter.STATUS_REPLAYED, 0L);
+        result.put(IngestDeadLetter.STATUS_DISCARDED, 0L);
+        for (IngestDeadLetter row : rows) {
+            if (row.getStatus() != null) {
+                result.merge(row.getStatus(), 1L, Long::sum);
+            }
+        }
+        return result;
+    }
+
+    /** 死信行还原为摄取载体：字段与 IngestRecord 一一对应。 */
+    private IngestRecord toIngestRecord(IngestDeadLetter row) {
+        return new IngestRecord(
+                row.getDeviceKey(),
+                row.getTopic(),
+                row.getMessageType(),
+                row.getPayload(),
+                row.getQos() == null ? 1 : row.getQos(),
+                row.getReceivedAt() == null ? LocalDateTime.now() : row.getReceivedAt(),
+                // 重放不沿用原 traceId：重放是一次新的处理动作，
+                // 独立 traceId 才能与「当初为何失败」的原链路日志区分开
+                "replay-" + row.getId() + "-" + System.currentTimeMillis());
     }
 
     private void persist(List<IngestDeadLetter> rows, String reason) {

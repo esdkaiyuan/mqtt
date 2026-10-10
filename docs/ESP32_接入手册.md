@@ -1,6 +1,6 @@
 # ESP32 接入 MQTT 云平台 - 接入手册
 
-> 版本：v1.4 | 日期：2026-10-02
+> 版本：v1.6 | 日期：2026-10-06
 
 ---
 
@@ -12,8 +12,9 @@
 | MQTT TCP 端口 | 1883 | 设备通过此端口连接 |
 | MQTT WebSocket 端口 | 8083 | 前端实时消息监控使用（设备无需关心） |
 | EMQX Dashboard | 18083 | 管理后台，查看连接/启用认证 |
-| MQTT 用户名 | `{产品标识}.{设备标识}` | 例：`esp32-fall.sensor-livingroom-01`，见 4.4 |
-| MQTT 密码 | 设备密钥 `deviceSecret` | 创建设备时一次性返回，平台不提供二次查询 |
+| MQTT 用户名 | `{产品标识}.{设备标识}` | 例：`esp32-fall.sensor-livingroom-01`，三种认证方式通用，见 4.4 |
+| MQTT 认证方式 | 一机一密（默认）/ X.509 证书 / JWT 令牌 | 由产品 `auth_mode` 决定，见 4.4；T-25 起支持后两种 |
+| MQTT 密码 | `SECRET` 填 `deviceSecret`；`JWT` 填设备令牌 | 均一次性返回，平台不提供二次查询 |
 | 后端服务 | http://localhost:8080/api | 负责接收并持久化设备消息 |
 | 前端管理页 | http://localhost:3000 | 创建产品与设备、查看数据（Docker 部署为 80 端口） |
 | 设备注册方式 | 前端页面创建产品 + 设备 | ESP32 须先在前端注册才能发消息 |
@@ -343,6 +344,18 @@ void loop() {
   全部设备刷机完成后须置为 `true`，操作见《存量设备凭据迁移手册》（`scripts/migrate-device-secrets.md`）
 - 后端自身连接 Broker 使用平台账号：用户名固定 `PLATFORM`，密码为 `.env` 中的 `PLATFORM_SECRET`
 
+**三种认证方式（T-25）**：产品在创建时选择认证方式（`auth_mode`），设备接入时后端按产品配置分派。用户名一律为 `{productKey}.{deviceKey}`，区别只在凭据与端口：
+
+| 方式 | 端口 | 密码位 | 凭据来源 |
+|------|------|--------|----------|
+| `SECRET`（默认，一机一密） | 1883 或 8883 | 设备密钥 `deviceSecret` | 创建设备时一次性返回 |
+| `X.509` | **8883（TLS）** | 可留空 | 设备详情页「证书与令牌」面板签发，返回证书与私钥 PEM，仅一次 |
+| `JWT` | 1883 或 8883 | 设备令牌 | 「证书与令牌」面板签发，带过期时间，到期需重签 |
+
+- **X.509 必须走 TLS**：客户端证书只在 TLS 握手阶段提交，明文 1883 下 EMQX 不索要证书、`cert_common_name` 为空，后端直接拒绝；证书 CN 固定为 `{productKey}.{deviceKey}`（签发时写入），故设备只需携带证书、用户名不变，密码位留空即可。启用前须在服务端投放 CA 与服务端证书并把 EMQX 8883 监听器切到自有证书，步骤见《部署手册》§9.20。
+- **JWT 令牌过期即失效**：令牌默认有效期 `AUTH_JWT_TTL_SECONDS`（默认 3600 秒），到期后连接被拒，需在面板重新签发；令牌签名密钥与平台自身登录密钥相互独立。
+- **吊销即时生效**：X.509 证书被吊销后，后端在认证回调内查表拒绝，无需等待证书本身过期；已连接会话在下次认证或缓存过期后断开。
+
 ---
 
 ## 5. Topic 规范
@@ -361,7 +374,28 @@ void loop() {
 - `{device_key}` 必须与前端创建设备时的标识 **完全一致**
 - 每个设备的 Topic 是独立的，互不干扰
 - 多个 ESP32 可以连接到同一个 Broker，各自使用不同的 device_key
-- 设备**只能**发布/订阅自己 `device/{device_key}/**` 下的主题；`cmd/` 前缀禁止设备发布（防伪造下行），回执因此走独立的 `reply` 主题（详见 §6.5）
+- 设备**只能**发布/订阅自己设备主题前缀下的主题；`cmd/` 前缀禁止设备发布（防伪造下行），回执因此走独立的 `reply` 主题（详见 §6.5）
+
+> 上表是产品 `topic_prefix` 为默认模板 `device/{deviceKey}` 时的形态。产品可把 `topic_prefix` 改为自定义模板（占位符只支持 `{productKey}` 与 `{deviceKey}`，且不得含 `+` / `#` / 空白字符，见 §4.4 与错误码 `6250`）；例如改为 `iot/{productKey}/{deviceKey}` 后，设备主题相应变为 `iot/{productKey}/{deviceKey}/data` 等。同一产品下所有设备共用该模板，改模板后设备侧代码须同步修改，否则授权回调会拒绝收发。
+
+### 5.1 网关与子设备（网关代连，T-26）
+
+网关是一台被标记为 `GATEWAY` 的普通设备，子设备是挂在网关下、标记为 `SUB` 的设备，二者必须属于**同一产品**（跨产品挂载返 `6258`）。子设备键仍是本产品内唯一的 `device_key`，主题形状与直连设备完全一致，链路上没有任何一层为子设备改变取键方式：
+
+| 方向 | 主题 | 说明 |
+|------|------|------|
+| 上行 | `device/{subKey}/data` | 子设备数据，由网关发布 |
+| 上行 | `device/{subKey}/heartbeat` | 子设备心跳，由网关发布 |
+| 上行 | `device/{subKey}/lwt` | 子设备遗嘱，由网关发布 |
+| 上行 | `device/{subKey}/reply` | 子设备命令回执，由网关发布 |
+| 上行 | `device/{subKey}/ota` | 子设备升级进度，由网关发布 |
+| 下行 | `device/{subKey}/cmd/down` | 平台下发命令，**网关须订阅** |
+
+- 网关用**自己的**用户名与凭据连接（`{productKey}.{gatewayKey}`），连接时不带子设备身份；子设备主题里的设备位是子设备键，平台在授权回调里按「该设备是否为当前网关的同产品子设备」委托放行，网关因此能代表子设备收发。
+- **网关只能订阅子设备的下行主题**：订阅 `device/{subKey}/cmd/down` 放行，订阅子设备的 `data` 等非 `cmd/` 主题被拒；发布侧规则相反，网关可发布子设备的 `data` / `heartbeat` / `lwt` / `reply` / `ota`，但不得发布 `device/{subKey}/cmd/down`（与设备自身前缀的规则同形，防伪造下行）。
+- 子设备不需要用自身凭据连接。凭据签发位置与普通设备相同：在控制台设备页或 `POST /devices` / `POST /devices/{gatewayId}/sub-devices` 建设备时一次性返回 `deviceSecret`，明文仅此一次。子设备若确实要直连，按 §4.4 的三种方式走自身凭据，与代连互不排斥。
+- 父子关系在控制台建立：设备详情页「子设备」区块的「挂载既有设备」，或调用 `POST /devices/{gatewayId}/sub-devices/{subDeviceId}`；解绑用 `DELETE /devices/{gatewayId}/sub-devices/{subDeviceId}`，子设备回落为普通设备。挂载边界为深度上限 2（本期只允许网关 → 子设备一层）与单网关 200 台，超限分别返 `6257` / `6260`。
+- `topic_prefix` 自定义模板对子设备同样生效；因同产品共用同一模板，平台共享订阅天然覆盖子设备主题，无需为子设备另开订阅。
 
 ---
 
@@ -558,7 +592,7 @@ MQTT Broker：localhost:1883
 | Redis | 7+ | 缓存（或使用 compose 内置） |
 | EMQX | 5.x | MQTT Broker（或使用 compose 内置） |
 | Node.js | 18+ | 前端（可选，可 Nginx 托管构建产物） |
-| 防火墙 | — | 开放 1883（MQTT）、8080（API）、80/443（前端） |
+| 防火墙 | — | 开放 1883（MQTT）、8883（MQTT over TLS，可选）、8080（API）、80/443（前端） |
 
 ### 8.2 服务器 MQTT Broker（EMQX）
 
@@ -566,9 +600,12 @@ MQTT Broker：localhost:1883
 
 | 端口 | 用途 |
 |------|------|
-| 1883 | MQTT over TCP（设备连接） |
+| 1883 | MQTT over TCP（设备连接，`SECRET` / `JWT` 认证） |
+| 8883 | MQTT over TLS（mTLS 双向认证，X.509 认证设备连接） |
 | 8083 | MQTT over WebSocket（前端实时消息） |
 | 18083 | EMQX Dashboard（管理后台，初始账号 `admin` / `public`） |
+
+> **8883 为 T-25 新增**：仅产品 `auth_mode` 选 `X509` 时设备才需连接；需先在 `docker/certs` 投放服务端证书并重启 `emqx`（详见 `DEPLOYMENT.md` §9.20）。
 
 > **重要**：EMQX 5 默认**不启用认证**（允许匿名接入），但本项目的认证与授权由 `emqx-init` 服务自动下发：
 > 它通过 EMQX REST API 配置 HTTP 认证源（回调后端 `/api/internal/emqx/auth`）与 HTTP 授权源
@@ -618,12 +655,14 @@ const char* MQTT_SERVER = "mqtt.yourdomain.com";  // 如有域名
 ```bash
 # UFW（Ubuntu）
 sudo ufw allow 1883/tcp   # MQTT
+sudo ufw allow 8883/tcp   # MQTT over TLS（X.509 设备认证，可选）
 sudo ufw allow 8080/tcp   # API
 sudo ufw allow 80/tcp     # 前端
 sudo ufw allow 443/tcp    # 前端 HTTPS
 
 # firewalld（CentOS）
 sudo firewall-cmd --add-port=1883/tcp --permanent
+sudo firewall-cmd --add-port=8883/tcp --permanent
 sudo firewall-cmd --add-port=8080/tcp --permanent
 sudo firewall-cmd --add-port=80/tcp --permanent
 sudo firewall-cmd --reload
@@ -674,6 +713,17 @@ server {
 | device_key 是否已注册 | 前端「设备管理」查看 |
 | 防火墙是否放行 | 服务器 `ufw status` 或 `iptables -L` |
 
+### X.509 / JWT 方式连接失败
+
+| 检查项 | 方法 |
+|--------|------|
+| 产品 `auth_mode` 是否选对 | 前端产品管理页查看；`X509` 须连 8883，`JWT` 走 1883 |
+| X.509 端口与证书 | 确认连接 `8883`，客户端已加载设备证书与私钥（设备证书由控制台签发，见 `DEPLOYMENT.md` §9.20） |
+| 证书是否被吊销 | 控制台签发 / 吊销端点查看 `device_certificate`；已吊销设备接入返回 `rc=5` |
+| 证书 CN 是否与用户名一致 | 认证回调按证书 `cert_common_name` 与 MQTT 用户名逐字比对，须填 `{productKey}.{deviceKey}` |
+| JWT 令牌是否过期 | 令牌 TTL 默认 3600 秒（`AUTH_JWT_TTL_SECONDS`），过期需重新 `POST` 设备令牌端点换新 |
+| 服务端证书是否就位 | `8883` 未启动多为 `docker/certs` 缺服务端证书；投放后重启 `emqx` |
+
 ### 消息发出去但后端没收到
 
 | 检查项 | 方法 |
@@ -694,11 +744,18 @@ server {
 
 ---
 
-## 10. 下一步可扩展功能
+## 10. 功能落地情况与后续扩展
 
-1. **OTA 固件升级** — 通过 MQTT 下发固件更新指令
-2. **规则引擎** — 阈值告警（如温度 > 40°C 触发告警）
-3. **多用户隔离** — 每个用户只能查看自己的设备
-4. **MQTT over TLS** — 生产环境使用 `mqtts://` 加密传输
+早期版本列出的四项设备侧扩展均已落地，设备侧接入方式见前文各节：
+
+| 功能 | 落地情况 | 设备侧用法 |
+|------|----------|-----------|
+| OTA 固件升级 | 已交付（T-22） | 订阅 `device/{deviceKey}/ota` 接收升级指令并上报进度 |
+| 规则引擎 / 告警 | 已交付（T-17 / T-19） | 属性 / 事件上报即触发，设备侧无需改动 |
+| 多用户隔离 | 已交付（T-11 平台账号体系） | 设备凭据与账号绑定，前端按用户隔离 |
+| MQTT over TLS | 已交付（T-25） | 产品 `auth_mode=X509` 时连 `8883` 并携带设备证书 |
+| 子设备 / 网关代连 | 已交付（T-26） | 网关代表同产品子设备收发 `device/{subKey}/**`，见 §5.1 |
 
 > **设备影子（desired / reported / delta）与离线补发已于 T-16 落地**，设备侧无需改动即可享受「离线可下发、上线自动补发」（见 §6.6）。
+
+子设备与网关代理接入已于 T-26 落地：网关可代表同产品子设备收发 `device/{subKey}/**`，控制台可挂载、解绑并查看子设备，设备侧用法见 §5.1。后续仍待补强的方向不影响现有接入，详见《头部平台对标：尚未补齐功能项清单》。

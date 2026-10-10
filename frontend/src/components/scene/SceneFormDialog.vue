@@ -1,27 +1,51 @@
 <template>
   <el-drawer
     :model-value="modelValue"
-    :title="editingId ? '编辑场景' : '新建场景'"
-    size="640px"
+    :size="drawerSize"
+    :class="['scene-form-drawer', { 'scene-form-drawer--canvas': viewMode === 'canvas' }]"
     :close-on-click-modal="false"
     @update:model-value="(value) => emit('update:modelValue', value)"
   >
-    <el-form label-position="top" class="scene-form" @submit.prevent>
-      <div class="form-section-title">① 基础信息</div>
-      <el-form-item label="场景名称" required>
-        <el-input v-model="form.name" maxlength="64" placeholder="如：回家开灯" />
-      </el-form-item>
-      <el-form-item label="描述">
-        <el-input
-          v-model="form.description"
-          type="textarea"
-          :rows="2"
-          maxlength="255"
-          placeholder="可选，说明场景的用途"
-        />
-      </el-form-item>
+    <template #header>
+      <div class="scene-form__header">
+        <div class="scene-form__header-top">
+          <span class="scene-form__title">{{ editingId ? '编辑场景' : '新建场景' }}</span>
+          <el-radio-group v-model="viewMode" size="small" class="scene-form__view-toggle">
+            <el-radio-button value="form">表单</el-radio-button>
+            <el-radio-button value="canvas">画布</el-radio-button>
+          </el-radio-group>
+        </div>
 
-      <div class="form-section-title">② 触发源</div>
+        <!-- 全局属性：非节点字段，表单 / 画布两视图共用（T-29 设计文档 §5.1） -->
+        <div class="scene-form__global">
+          <div class="scene-form__global-field scene-form__global-field--name">
+            <span class="scene-form__global-label">场景名称 <em>*</em></span>
+            <el-input v-model="form.name" maxlength="64" placeholder="如：回家开灯" />
+          </div>
+          <div class="scene-form__global-field">
+            <span class="scene-form__global-label">描述</span>
+            <el-input v-model="form.description" maxlength="255" placeholder="可选，说明场景的用途" />
+          </div>
+          <div class="scene-form__global-field scene-form__global-field--cooldown">
+            <span class="scene-form__global-label">冷却窗口（秒）</span>
+            <el-input-number
+              v-model="form.cooldownSeconds"
+              :min="0"
+              :max="86400"
+              controls-position="right"
+            />
+            <span class="scene-form__global-hint">0 表示不限制</span>
+          </div>
+          <div class="scene-form__global-field scene-form__global-field--enabled">
+            <span class="scene-form__global-label">启用</span>
+            <el-switch v-model="form.enabled" />
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <el-form v-if="viewMode === 'form'" label-position="top" class="scene-form" @submit.prevent>
+      <div class="form-section-title">① 触发源</div>
       <el-form-item label="触发方式" required>
         <el-select v-model="form.triggerType" class="form-control" @change="handleTriggerTypeChange">
           <el-option
@@ -95,7 +119,7 @@
         </el-form-item>
       </template>
 
-      <div class="form-section-title">③ 条件组</div>
+      <div class="form-section-title">② 条件组</div>
       <SceneConditionEditor
         v-model="form.conditions"
         v-model:logic="form.conditionLogic"
@@ -103,7 +127,7 @@
         :timer-source="timerSource"
       />
 
-      <div class="form-section-title">④ 执行步骤</div>
+      <div class="form-section-title">③ 执行步骤</div>
       <SceneStepEditor
         v-model="form.steps"
         :devices="devices"
@@ -112,22 +136,17 @@
         :tags="tags"
         :timer-source="timerSource"
       />
-
-      <div class="form-section-title">高级</div>
-      <el-form-item label="冷却窗口（秒）">
-        <el-input-number
-          v-model="form.cooldownSeconds"
-          :min="0"
-          :max="86400"
-          controls-position="right"
-          class="form-control"
-        />
-        <p class="form-hint">窗口内重复命中只触发一次；0 表示不限制</p>
-      </el-form-item>
-      <el-form-item label="启用">
-        <el-switch v-model="form.enabled" />
-      </el-form-item>
     </el-form>
+
+    <SceneOrchestrationView
+      v-else
+      ref="canvasViewRef"
+      :form="form"
+      :devices="devices"
+      :products="products"
+      :group-tree="groupTree"
+      :tags="tags"
+    />
 
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">取消</el-button>
@@ -157,6 +176,7 @@ import SvgIcon from '@/components/Icon.vue'
 import SceneConditionEditor from '@/components/scene/SceneConditionEditor.vue'
 import SceneStepEditor from '@/components/scene/SceneStepEditor.vue'
 import SceneTestDialog from '@/components/scene/SceneTestDialog.vue'
+import SceneOrchestrationView from '@/views/workbench/scene/SceneOrchestrationView.vue'
 import { deviceApi } from '@/api/device'
 import { productApi } from '@/api/product'
 import { useDeviceGroupTreeQuery, useTagListQuery } from '@/composables/useDeviceGroups'
@@ -167,6 +187,7 @@ import {
   OPERATOR_OPTIONS,
   EVENT_TYPE_OPTIONS,
   isForwardAction,
+  normalizeTriggerSource,
   parseJsonObject
 } from '@/utils/scene'
 
@@ -186,13 +207,20 @@ const emit = defineEmits(['update:modelValue', 'saved'])
 const NUMERIC_OPERATORS = new Set(['GT', 'GTE', 'LT', 'LTE'])
 const MAX_CONDITIONS = 10
 const MAX_STEPS = 20
+/** 默认视图：既有表单视图（T-29 设计文档 §11）。 */
+const DEFAULT_VIEW_MODE = 'form'
 
 const { saving, createScene, updateScene } = useSceneMutations()
 
 const editingId = computed(() => props.scene?.id ?? null)
 const timerSource = computed(() => form.triggerType === 'TIMER')
 
+const viewMode = ref(DEFAULT_VIEW_MODE)
+const canvasViewRef = ref(null)
 const testVisible = ref(false)
+
+/** 画布视图放宽抽屉宽度以容纳图形（T-29 设计文档 §10.1）。 */
+const drawerSize = computed(() => (viewMode.value === 'canvas' ? 'min(1100px, 92vw)' : '640px'))
 
 const { tree: groupTree } = useDeviceGroupTreeQuery()
 const { tags } = useTagListQuery()
@@ -331,28 +359,18 @@ function fillForm(scene) {
 watch(
   () => [props.modelValue, props.scene],
   ([visible]) => {
-    if (visible) fillForm(props.scene)
+    if (visible) {
+      fillForm(props.scene)
+      // 每次打开回到默认表单视图；切换视图不重置 form（设计文档 §10.1 / §11）
+      viewMode.value = DEFAULT_VIEW_MODE
+    }
   },
   { immediate: true }
 )
 
-/** 切换触发方式时清理其他源专属字段（设计文档 §7.2）。 */
+/** 切换触发方式时清理其他源专属字段，与画布触发节点面板共用同一口径（设计文档 §7.2 / §10.5）。 */
 function handleTriggerTypeChange() {
-  if (form.triggerType === 'TIMER') {
-    form.triggerDeviceId = null
-    form.triggerIdentifier = ''
-    form.triggerOperator = null
-    form.triggerThreshold = ''
-    form.thresholdEnabled = false
-    form.triggerEventType = ''
-  } else {
-    form.timerCron = ''
-    if (form.triggerType === 'EVENT') {
-      form.triggerOperator = null
-      form.triggerThreshold = ''
-      form.thresholdEnabled = false
-    }
-  }
+  normalizeTriggerSource(form)
 }
 
 function isValidCron(expr) {
@@ -558,6 +576,8 @@ async function handleSubmit() {
   const error = validateForm()
   if (error) {
     ElMessage.warning(error)
+    // 画布视图下把「第 N 个条件 / 第 N 步」错误定位到对应节点（设计文档 §10.3）
+    if (viewMode.value === 'canvas') canvasViewRef.value?.focusError?.(error)
     return
   }
   const payload = buildPayload()
@@ -586,6 +606,59 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.scene-form__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.scene-form__header-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
+.scene-form__title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+
+.scene-form__global {
+  display: grid;
+  grid-template-columns: 1.4fr 2fr 1fr auto;
+  gap: var(--spacing-md);
+  align-items: start;
+}
+
+.scene-form__global-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs, 4px);
+  min-width: 0;
+}
+
+.scene-form__global-label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.scene-form__global-label em {
+  color: var(--color-danger);
+  font-style: normal;
+}
+
+.scene-form__global-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.scene-form__global-field--cooldown :deep(.el-input-number),
+.scene-form__global-field--cooldown :deep(.el-input) {
+  width: 100%;
+}
+
 .form-section-title {
   margin: var(--spacing-md) 0 var(--spacing-sm);
   padding-left: var(--spacing-sm);
@@ -614,5 +687,10 @@ onMounted(() => {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   line-height: 1.5;
+}
+
+/* 画布视图：内容区撑满抽屉，交由画布自身滚动 / 缩放 */
+.scene-form-drawer--canvas :deep(.el-drawer__body) {
+  overflow: hidden;
 }
 </style>

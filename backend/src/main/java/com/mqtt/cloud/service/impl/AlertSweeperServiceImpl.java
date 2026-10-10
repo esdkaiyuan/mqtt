@@ -10,6 +10,8 @@ import com.mqtt.cloud.mapper.AlertRuleMapper;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.AlertSweeperService;
+import com.mqtt.cloud.service.DeviceScopeService;
+import com.mqtt.cloud.service.scope.RuleScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,6 +41,7 @@ public class AlertSweeperServiceImpl implements AlertSweeperService {
     private final AlertRecordMapper alertRecordMapper;
     private final DeviceMapper deviceMapper;
     private final AlertEvaluationService alertEvaluationService;
+    private final DeviceScopeService deviceScopeService;
     private final AlertProperties properties;
 
     @Override
@@ -65,24 +68,32 @@ public class AlertSweeperServiceImpl implements AlertSweeperService {
     }
 
     private void sweepRule(AlertRule rule, int batchSize, Map<Long, Map<Long, Device>> onlineCache) {
+        RuleScope scope = deviceScopeService.toScope(
+                rule.getScopeType(), rule.getDeviceId(), rule.getGroupIds(), rule.getTagIds());
+        List<Long> scopeDeviceIds = deviceScopeService.deviceIds(rule.getUserId(), scope);
+        // 非 ALL 档解析为空集表示作用域内无设备：不触发也不恢复；ALL 档空集表示不限（交全量分支）
+        if (!AlertConstants.SCOPE_ALL.equals(scope.scopeType()) && scopeDeviceIds.isEmpty()) {
+            return;
+        }
         int offlineSeconds = rule.getOfflineSeconds() == null ? 0 : rule.getOfflineSeconds();
         List<Device> offlineDevices = deviceMapper.findOfflineDevicesForAlert(
-                rule.getUserId(), rule.getDeviceId(), offlineSeconds, batchSize);
+                rule.getUserId(), scopeDeviceIds, offlineSeconds, batchSize);
         for (Device device : offlineDevices) {
             alertEvaluationService.evaluateOffline(rule, device);
         }
-        recoverOnline(rule, onlineCache);
+        recoverOnline(rule, scopeDeviceIds, onlineCache);
     }
 
     /** 恢复分支：作用域内已上线的设备，其该规则的活动告警一并置恢复。 */
-    private void recoverOnline(AlertRule rule, Map<Long, Map<Long, Device>> onlineCache) {
+    private void recoverOnline(AlertRule rule, List<Long> scopeDeviceIds,
+                               Map<Long, Map<Long, Device>> onlineCache) {
         Map<Long, Device> online = onlineCache.computeIfAbsent(rule.getUserId(), this::loadOnlineDevices);
         List<Long> scopeOnlineIds;
-        if (rule.getDeviceId() != null) {
-            scopeOnlineIds = online.containsKey(rule.getDeviceId())
-                    ? List.of(rule.getDeviceId()) : List.of();
-        } else {
+        if (scopeDeviceIds.isEmpty()) {
+            // ALL 档：不限设备，取全部在线设备
             scopeOnlineIds = new ArrayList<>(online.keySet());
+        } else {
+            scopeOnlineIds = scopeDeviceIds.stream().filter(online::containsKey).toList();
         }
         if (scopeOnlineIds.isEmpty()) {
             return;

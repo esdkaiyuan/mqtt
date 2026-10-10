@@ -28,6 +28,8 @@
 *.pem
 *.key
 pwfile
+# 证书投放目录（T-25）：仅由 compose 以只读卷挂载，不进入构建上下文
+docker/certs
 
 # 本地运行数据与日志
 *.log

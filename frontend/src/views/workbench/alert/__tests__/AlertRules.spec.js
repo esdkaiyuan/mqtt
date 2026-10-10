@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { computed, h, inject, provide } from 'vue'
+import { computed, h, inject, nextTick, provide } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
 
 const { messageMock, confirmMock } = vi.hoisted(() => ({
@@ -60,6 +60,19 @@ vi.mock('@/api/device', () => ({
     )
   }
 }))
+
+/** 分组 / 标签候选列表以可写容器暴露，供作用范围文案解析用例注入数据。 */
+const scopeHooks = vi.hoisted(() => ({ groups: null, tags: null }))
+
+vi.mock('@/composables/useDeviceGroups', async () => {
+  const { ref } = await import('vue')
+  scopeHooks.groups = ref([])
+  scopeHooks.tags = ref([])
+  return {
+    useDeviceGroupListQuery: () => ({ groups: scopeHooks.groups, loading: ref(false) }),
+    useTagListQuery: () => ({ tags: scopeHooks.tags, loading: ref(false) })
+  }
+})
 
 import AlertRules from '../AlertRules.vue'
 
@@ -169,6 +182,50 @@ const passthrough = (name) => ({
   }
 })
 
+const ElSelectStub = {
+  name: 'ElSelect',
+  props: ['modelValue', 'placeholder', 'multiple'],
+  emits: ['update:modelValue', 'change'],
+  setup(_, { slots }) {
+    return () => h('div', { class: 'stub-select' }, slots.default?.())
+  }
+}
+
+const ElOptionStub = {
+  name: 'ElOption',
+  props: ['label', 'value'],
+  setup(props) {
+    return () => h('div', { class: 'stub-option' }, props.label)
+  }
+}
+
+const ElInputStub = {
+  name: 'ElInput',
+  props: ['modelValue', 'placeholder', 'type'],
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
+    return () =>
+      h('input', {
+        class: 'stub-input',
+        value: props.modelValue ?? '',
+        placeholder: props.placeholder,
+        onInput: (event) => emit('update:modelValue', event.target.value)
+      })
+  }
+}
+
+const ElFormItemStub = {
+  name: 'ElFormItem',
+  props: ['label'],
+  setup(props, { slots }) {
+    return () =>
+      h('div', { class: 'stub-form-item' }, [
+        props.label ? h('span', { class: 'stub-form-label' }, props.label) : null,
+        slots.default?.()
+      ])
+  }
+}
+
 const EmptyStateStub = {
   name: 'EmptyState',
   props: ['description', 'imageSize'],
@@ -181,11 +238,11 @@ const STUBS = {
   ElButton: ElButtonStub,
   ElSwitch: ElSwitchStub,
   ElDrawer: ElDrawerStub,
-  ElSelect: passthrough('ElSelect'),
-  ElOption: passthrough('ElOption'),
+  ElSelect: ElSelectStub,
+  ElOption: ElOptionStub,
   ElForm: passthrough('ElForm'),
-  ElFormItem: passthrough('ElFormItem'),
-  ElInput: passthrough('ElInput'),
+  ElFormItem: ElFormItemStub,
+  ElInput: ElInputStub,
   ElInputNumber: passthrough('ElInputNumber'),
   ElTag: passthrough('ElTag'),
   EmptyState: EmptyStateStub
@@ -193,6 +250,11 @@ const STUBS = {
 
 function buttonByText(wrapper, text) {
   return wrapper.findAll('button').find((button) => button.text().includes(text))
+}
+
+/** 按选项文案定位下拉，作用范围选择器含「按分组」，分组多选含分组名，彼此不重名。 */
+function findSelectByOption(wrapper, text) {
+  return wrapper.findAllComponents({ name: 'ElSelect' }).find((select) => select.text().includes(text))
 }
 
 function mountPage() {
@@ -206,6 +268,11 @@ describe('views/workbench/alert/AlertRules', () => {
     hooks.rules.value = []
     hooks.sourceType.value = ''
     hooks.enabled.value = ''
+    scopeHooks.groups.value = [
+      { id: 1, name: '华东厂区' },
+      { id: 2, name: '一号车间' }
+    ]
+    scopeHooks.tags.value = [{ id: 9, name: '重点设备' }]
     confirmMock.mockResolvedValue(undefined)
   })
 
@@ -279,5 +346,115 @@ describe('views/workbench/alert/AlertRules', () => {
 
     expect(wrapper.find('.stub-drawer').exists()).toBe(true)
     expect(wrapper.find('.stub-drawer-title').text()).toBe('新建告警规则')
+  })
+
+  it('作用范围默认全部设备，切档后展示对应条件控件', async () => {
+    wrapper = mountPage()
+    await flushPromises()
+
+    await buttonByText(wrapper, '新建规则').trigger('click')
+    await nextTick()
+
+    const drawer = wrapper.find('.stub-drawer')
+    expect(drawer.text()).toContain('作用范围')
+    expect(drawer.text()).not.toContain('作用分组')
+
+    const scopeSelect = findSelectByOption(wrapper, '按分组')
+    expect(scopeSelect).toBeTruthy()
+
+    scopeSelect.vm.$emit('update:modelValue', 'GROUP')
+    await nextTick()
+    expect(drawer.text()).toContain('作用分组')
+    expect(drawer.text()).toContain('含子分组')
+    expect(drawer.text()).not.toContain('作用标签')
+
+    scopeSelect.vm.$emit('update:modelValue', 'TAG')
+    await nextTick()
+    expect(drawer.text()).toContain('作用标签')
+    expect(drawer.text()).not.toContain('作用分组')
+
+    scopeSelect.vm.$emit('update:modelValue', 'DEVICE')
+    await nextTick()
+    expect(drawer.text()).toContain('作用设备')
+  })
+
+  it('按分组作用时提交体携带 scopeType 与 groupIds', async () => {
+    wrapper = mountPage()
+    await flushPromises()
+
+    await buttonByText(wrapper, '新建规则').trigger('click')
+    await nextTick()
+
+    await wrapper.find('input[placeholder="如：高温告警"]').setValue('分组高温告警')
+    await wrapper.find('input[placeholder="如：temperature"]').setValue('temperature')
+    await wrapper.find('input[placeholder="如：80"]').setValue('80')
+
+    findSelectByOption(wrapper, '按分组').vm.$emit('update:modelValue', 'GROUP')
+    await nextTick()
+    findSelectByOption(wrapper, '华东厂区').vm.$emit('update:modelValue', [1, 2])
+    await nextTick()
+
+    await buttonByText(wrapper, '创建').trigger('click')
+    await flushPromises()
+
+    expect(hooks.createRule).toHaveBeenCalledTimes(1)
+    expect(hooks.createRule.mock.calls[0][0]).toMatchObject({
+      name: '分组高温告警',
+      scopeType: 'GROUP',
+      deviceId: null,
+      groupIds: [1, 2],
+      tagIds: []
+    })
+  })
+
+  it('作用范围缺失必填项时拦截提交', async () => {
+    wrapper = mountPage()
+    await flushPromises()
+
+    await buttonByText(wrapper, '新建规则').trigger('click')
+    await nextTick()
+
+    await wrapper.find('input[placeholder="如：高温告警"]').setValue('空分组告警')
+    findSelectByOption(wrapper, '按分组').vm.$emit('update:modelValue', 'GROUP')
+    await nextTick()
+
+    await buttonByText(wrapper, '创建').trigger('click')
+    await flushPromises()
+
+    expect(hooks.createRule).not.toHaveBeenCalled()
+    expect(messageMock.warning).toHaveBeenCalledWith('请选择至少一个作用分组')
+  })
+
+  it('启停开关保留原作用范围字段', async () => {
+    hooks.rules.value = [{ ...THRESHOLD_RULE, scopeType: 'GROUP', groupIds: [1, 2] }]
+    wrapper = mountPage()
+    await flushPromises()
+
+    await wrapper.find('.stub-switch').trigger('click')
+    await flushPromises()
+
+    expect(hooks.updateRule.mock.calls[0][1]).toMatchObject({
+      scopeType: 'GROUP',
+      deviceId: null,
+      groupIds: [1, 2],
+      enabled: 0
+    })
+  })
+
+  it('列表按作用范围档位渲染文案', async () => {
+    hooks.rules.value = [
+      { ...THRESHOLD_RULE, id: 11, scopeType: 'GROUP', groupIds: [1, 2] },
+      { ...THRESHOLD_RULE, id: 12, scopeType: 'TAG', tagIds: [9] },
+      { ...THRESHOLD_RULE, id: 13, scopeType: 'DEVICE', deviceId: 9 },
+      { ...THRESHOLD_RULE, id: 14, scopeType: 'ALL' }
+    ]
+    wrapper = mountPage()
+    await flushPromises()
+
+    const text = wrapper.text()
+    expect(text).toContain('分组：华东厂区、一号车间')
+    expect(text).toContain('标签：重点设备')
+    expect(text).toContain('1号温控器')
+    expect(text).toContain('全部设备')
   })
 })

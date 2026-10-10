@@ -74,6 +74,8 @@ export default defineConfig({
           // 高亮库仅文档站代码块使用；不单列会被并入 vendor，
           // 而 vendor 由入口 modulepreload，会让工作台首屏白背这份体积
           if (id.includes('highlight.js')) return 'highlight'
+          // 编排画布仅切到画布视图时动态导入；不单列同样会被入口 modulepreload 拖累首屏
+          if (id.includes('@vue-flow')) return 'vue-flow'
           return 'vendor'
         }
       }

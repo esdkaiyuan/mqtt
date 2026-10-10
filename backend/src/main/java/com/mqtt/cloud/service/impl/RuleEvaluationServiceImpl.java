@@ -8,8 +8,12 @@ import com.mqtt.cloud.entity.RuleExecution;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.RuleDefinitionMapper;
 import com.mqtt.cloud.mapper.RuleExecutionMapper;
+import com.mqtt.cloud.service.DeviceScopeService;
 import com.mqtt.cloud.service.RuleActionExecutor;
 import com.mqtt.cloud.service.RuleEvaluationService;
+import com.mqtt.cloud.service.scope.DeviceMemberships;
+import com.mqtt.cloud.service.scope.ScopeMatcher;
+import com.mqtt.cloud.service.scope.RuleScope;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -45,6 +49,7 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
     private final DeviceMapper deviceMapper;
     private final RuleExecutionMapper ruleExecutionMapper;
     private final RuleActionExecutor ruleActionExecutor;
+    private final DeviceScopeService deviceScopeService;
     private final RuleProperties properties;
     private final ThreadPoolTaskExecutor ruleExecutor;
 
@@ -61,6 +66,7 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
                                      DeviceMapper deviceMapper,
                                      RuleExecutionMapper ruleExecutionMapper,
                                      RuleActionExecutor ruleActionExecutor,
+                                     DeviceScopeService deviceScopeService,
                                      RuleProperties properties,
                                      @Qualifier("ruleExecutor") ThreadPoolTaskExecutor ruleExecutor,
                                      MeterRegistry meterRegistry) {
@@ -68,6 +74,7 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
         this.deviceMapper = deviceMapper;
         this.ruleExecutionMapper = ruleExecutionMapper;
         this.ruleActionExecutor = ruleActionExecutor;
+        this.deviceScopeService = deviceScopeService;
         this.properties = properties;
         this.ruleExecutor = ruleExecutor;
         this.triggerCounter = Counter.builder("rule_trigger_total")
@@ -89,9 +96,10 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
                 return;
             }
             List<RuleDefinition> rules = loadRules(device.getOwnerId());
+            DeviceMemberships memberships = deviceScopeService.memberships(device.getOwnerId(), deviceId);
             for (RuleDefinition rule : rules) {
                 if (!RuleConstants.SOURCE_PROPERTY.equals(rule.getSourceType())
-                        || !inScope(rule, deviceId)) {
+                        || !inScope(rule, deviceId, memberships)) {
                     continue;
                 }
                 for (PropertySample sample : samples) {
@@ -122,9 +130,10 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
                 return;
             }
             List<RuleDefinition> rules = loadRules(device.getOwnerId());
+            DeviceMemberships memberships = deviceScopeService.memberships(device.getOwnerId(), deviceId);
             for (RuleDefinition rule : rules) {
                 if (!RuleConstants.SOURCE_EVENT.equals(rule.getSourceType())
-                        || !inScope(rule, deviceId)) {
+                        || !inScope(rule, deviceId, memberships)) {
                     continue;
                 }
                 for (EventSample sample : samples) {
@@ -240,8 +249,11 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
         return device;
     }
 
-    private static boolean inScope(RuleDefinition rule, Long deviceId) {
-        return rule.getDeviceId() == null || rule.getDeviceId().equals(deviceId);
+    /** 作用域判定：把规则读成作用域值对象后按四档匹配（T-28 设计文档 §7.1）。 */
+    private boolean inScope(RuleDefinition rule, Long deviceId, DeviceMemberships memberships) {
+        RuleScope scope = deviceScopeService.toScope(
+                rule.getScopeType(), rule.getDeviceId(), rule.getGroupIds(), rule.getTagIds());
+        return ScopeMatcher.matches(scope, deviceId, memberships);
     }
 
     private static boolean identifierEquals(String ruleIdentifier, String sampleIdentifier) {

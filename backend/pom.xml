@@ -30,6 +30,8 @@
         <jackson-2-bom.version>2.21.7</jackson-2-bom.version>
         <!-- 默认排除压测用例；执行压测时用 -Dloadtest.excludedGroups=none 打开 -->
         <loadtest.excludedGroups>loadtest</loadtest.excludedGroups>
+        <!-- 证书签发（T-25）：bcpkix 依赖 bcprov / bcutil，同版本号一并锁定 -->
+        <bouncycastle.version>1.78.1</bouncycastle.version>
     </properties>
 
     <dependencies>
@@ -97,6 +99,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- 证书签发（T-25）：PEM 读写与 X.509 构建，仅后端签发链路使用 -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>${bouncycastle.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
@@ -117,6 +126,12 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- 邮件通知渠道（T-27）：SMTP 投递，版本由父 POM 托管；短信走既有 RestTemplate，不新增依赖 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-mail</artifactId>
         </dependency>
 
         <dependency>

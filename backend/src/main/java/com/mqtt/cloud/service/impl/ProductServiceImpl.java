@@ -2,6 +2,7 @@ package com.mqtt.cloud.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.constant.AuthModeValue;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.util.AfterCommit;
 import com.mqtt.cloud.dto.request.ProductRequest;
@@ -13,6 +14,7 @@ import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.EmqxClientKicker;
 import com.mqtt.cloud.service.ProductService;
+import com.mqtt.cloud.service.TopicPrefixResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,18 +22,23 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class ProductServiceImpl implements ProductService {
 
-    private static final String DEFAULT_TOPIC_PREFIX = "device/{deviceKey}";
     private static final String DEFAULT_PAYLOAD_FORMAT = "JSON";
-    private static final String AUTH_MODE_SECRET = "SECRET";
     private static final String STATUS_ENABLED = "ENABLED";
     private static final String STATUS_DISABLED = "DISABLED";
     private static final String RESERVED_KEY = "platform";
+
+    /** 支持的产品认证方式，取值集合以 {@link AuthModeValue} 为准。 */
+    private static final Set<String> SUPPORTED_AUTH_MODES =
+            Set.of(AuthModeValue.SECRET, AuthModeValue.X509, AuthModeValue.JWT);
 
     private final ProductMapper productMapper;
 
@@ -43,6 +50,8 @@ public class ProductServiceImpl implements ProductService {
 
     private final EmqxClientKicker emqxClientKicker;
 
+    private final TopicPrefixResolver topicPrefixResolver;
+
     @Override
     @Transactional
     public Product create(ProductRequest request) {
@@ -50,6 +59,9 @@ public class ProductServiceImpl implements ProductService {
         if (RESERVED_KEY.equalsIgnoreCase(productKey)) {
             throw new BusinessException(ResultCode.BAD_REQUEST, "产品标识 " + RESERVED_KEY + " 为保留名");
         }
+        // 先做写入期校验，非法入参不必再走一次查重
+        String authMode = resolveAuthMode(request.getAuthMode());
+        String topicPrefix = topicPrefixResolver.validateTemplate(request.getTopicPrefix());
         if (existsByKey(productKey, null)) {
             throw new BusinessException(ResultCode.PRODUCT_KEY_EXISTS);
         }
@@ -57,9 +69,8 @@ public class ProductServiceImpl implements ProductService {
         product.setProductKey(productKey);
         product.setProductName(request.getProductName());
         product.setDescription(request.getDescription());
-        product.setAuthMode(AUTH_MODE_SECRET);
-        product.setTopicPrefix(StringUtils.hasText(request.getTopicPrefix())
-                ? request.getTopicPrefix() : DEFAULT_TOPIC_PREFIX);
+        product.setAuthMode(authMode);
+        product.setTopicPrefix(topicPrefix);
         product.setPayloadFormat(StringUtils.hasText(request.getPayloadFormat())
                 ? request.getPayloadFormat() : DEFAULT_PAYLOAD_FORMAT);
         product.setMetadataSchema(request.getMetadataSchema());
@@ -75,6 +86,14 @@ public class ProductServiceImpl implements ProductService {
     }
 
     @Override
+    public List<Product> listEnabled() {
+        return productMapper.selectList(
+                Wrappers.<Product>lambdaQuery()
+                        .eq(Product::getStatus, STATUS_ENABLED)
+                        .orderByAsc(Product::getId));
+    }
+
+    @Override
     @Transactional
     public Product update(Long id, ProductRequest request) {
         Product existing = requireById(id);
@@ -82,11 +101,16 @@ public class ProductServiceImpl implements ProductService {
             throw new BusinessException(ResultCode.PRODUCT_KEY_EXISTS);
         }
         String previousKey = existing.getProductKey();
+        String previousAuthMode = existing.getAuthMode();
+        String previousTopicPrefix = existing.getTopicPrefix();
         existing.setProductKey(request.getProductKey());
         existing.setProductName(request.getProductName());
         existing.setDescription(request.getDescription());
         if (StringUtils.hasText(request.getTopicPrefix())) {
-            existing.setTopicPrefix(request.getTopicPrefix());
+            existing.setTopicPrefix(topicPrefixResolver.validateTemplate(request.getTopicPrefix()));
+        }
+        if (StringUtils.hasText(request.getAuthMode())) {
+            existing.setAuthMode(resolveAuthMode(request.getAuthMode()));
         }
         if (StringUtils.hasText(request.getPayloadFormat())) {
             existing.setPayloadFormat(request.getPayloadFormat());
@@ -97,7 +121,27 @@ public class ProductServiceImpl implements ProductService {
         if (!previousKey.equals(existing.getProductKey())) {
             authCacheService.evictProduct(previousKey);
         }
+        // 认证方式与主题前缀直接决定授权判定结果，变更后 TTL 内的旧快照仍会放行，须立即失效
+        if (!Objects.equals(previousAuthMode, existing.getAuthMode())
+                || !Objects.equals(previousTopicPrefix, existing.getTopicPrefix())) {
+            authCacheService.evictProduct(existing.getProductKey());
+        }
         return existing;
+    }
+
+    /**
+     * 校验并归一化认证方式。空值回落 {@link AuthModeValue#SECRET}，与认证回调侧口径一致：
+     * 新增列虽有默认值，但存量缓存快照可能尚未回填，回落可避免整条链路不可用。
+     */
+    private String resolveAuthMode(String authMode) {
+        if (!StringUtils.hasText(authMode)) {
+            return AuthModeValue.SECRET;
+        }
+        String normalized = authMode.trim().toUpperCase(Locale.ROOT);
+        if (!SUPPORTED_AUTH_MODES.contains(normalized)) {
+            throw new BusinessException(ResultCode.AUTH_MODE_UNSUPPORTED, "不支持的认证方式: " + authMode);
+        }
+        return normalized;
     }
 
     @Override

@@ -3,6 +3,7 @@ package com.mqtt.cloud.controller;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.security.SecurityUtils;
+import com.mqtt.cloud.dto.request.AlertAssignRequest;
 import com.mqtt.cloud.dto.request.AlertQuery;
 import com.mqtt.cloud.dto.request.AlertRuleRequest;
 import com.mqtt.cloud.entity.AlertRecord;
@@ -105,6 +106,17 @@ public class AlertController {
     public Result<Void> recover(
             @Parameter(description = "告警 ID", required = true) @PathVariable Long id) {
         alertService.recover(SecurityUtils.requireUserId(), id);
+        return Result.success();
+    }
+
+    @Operation(summary = "指派 / 解除指派处理人",
+            description = "处理人须为系统内用户；不存在返回 6209，越权返回 403，处理人非法返回 6267；"
+                    + "notify=true 时投递一次升级通知")
+    @PostMapping("/{id}/assign")
+    public Result<Void> assign(
+            @Parameter(description = "告警 ID", required = true) @PathVariable Long id,
+            @RequestBody AlertAssignRequest request) {
+        alertService.assign(SecurityUtils.requireUserId(), id, request);
         return Result.success();
     }
 

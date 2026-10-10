@@ -82,7 +82,8 @@ const navGroups = [
     label: '告警',
     items: [
       { path: '/workbench/alerts', title: '告警列表', icon: 'bell' },
-      { path: '/workbench/alerts/rules', title: '告警规则', icon: 'shield' }
+      { path: '/workbench/alerts/rules', title: '告警规则', icon: 'shield' },
+      { path: '/workbench/alerts/escalations', title: '升级策略', icon: 'signal' }
     ]
   },
   {
@@ -98,7 +99,8 @@ const navGroups = [
     label: '开发接入',
     items: [
       { path: '/workbench/access/api-keys', title: 'API 密钥', icon: 'settings' },
-      { path: '/workbench/access/webhooks', title: 'Webhook', icon: 'documentation' }
+      { path: '/workbench/access/webhooks', title: 'Webhook', icon: 'documentation' },
+      { path: '/workbench/access/notification-channels', title: '通知渠道', icon: 'message' }
     ]
   }
 ]

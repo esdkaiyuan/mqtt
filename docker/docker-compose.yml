@@ -77,14 +77,32 @@ services:
     ports:
       - "${MQTT_PORT:-1883}:1883"
       - "${MQTT_WS_PORT:-8083}:8083"
+      # T-25：X.509 认证必须走 TLS，客户端证书只能在 TLS 握手阶段提交
+      - "${MQTT_TLS_PORT:-8883}:8883"
       - "${EMQX_DASHBOARD_PORT:-18083}:18083"
     environment:
       # 必须与 emqx-init 登录所用凭据一致，否则初始化脚本会 401。
       # EMQX 仅在 mnesia 为空（首次初始化）时应用该默认密码；已有数据卷不会被改写。
       EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
+      # ── TLS 监听器（T-25 认证方式扩展） ──
+      # EMQX 5 默认已在 8883 启用 ssl 监听器，此处显式声明便于按需关闭。
+      EMQX_LISTENERS__SSL__DEFAULT__ENABLE: ${MQTT_TLS_ENABLED:-true}
+      # 证书路径默认取镜像自带的演示证书，容器可原样启动；
+      # 生产部署须改为 etc/mqtt-certs/ 下由 ./certs 挂载进来的自有证书（见 docs/DEPLOYMENT.md）。
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CERTFILE: ${MQTT_TLS_CERTFILE:-etc/certs/cert.pem}
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__KEYFILE: ${MQTT_TLS_KEYFILE:-etc/certs/key.pem}
+      # 受信 CA 链：verify_peer 下用它校验证书链，X.509 认证时还须与设备证书的签发 CA 一致
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__CACERTFILE: ${MQTT_TLS_CACERTFILE:-etc/certs/cacert.pem}
+      # verify_peer 才会向客户端索要证书，${cert_subject}/${cert_common_name} 才非空；
+      # 置 verify_peer 但 fail_if_no_peer_cert=false，使 SECRET/JWT 设备不带证书也能接入。
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__VERIFY: ${MQTT_TLS_VERIFY:-verify_peer}
+      EMQX_LISTENERS__SSL__DEFAULT__SSL_OPTIONS__FAIL_IF_NO_PEER_CERT: "false"
     volumes:
       - emqx_data:/opt/emqx/data
       - emqx_log:/opt/emqx/log
+      # 自有服务端证书与 CA 链的投放入口；目录缺失时 Docker 会建空目录，
+      # 此时上面三个路径仍指向镜像自带演示证书，容器不会因此启动失败。
+      - ./certs:/opt/emqx/etc/mqtt-certs:ro
     healthcheck:
       test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
       interval: 10s
@@ -162,6 +180,17 @@ services:
       DIRECT_FRONTEND_ENABLED: ${DIRECT_FRONTEND_ENABLED:-true}
       # 认证元数据缓存 TTL（秒）；0 关闭缓存，认证每次回源查库
       ACCESS_CONTROL_CACHE_TTL_SECONDS: ${ACCESS_CONTROL_CACHE_TTL_SECONDS:-60}
+      # 开放接口限流（T-30 E4）：仅作用于 /external/v1/**。默认关闭；
+      # 正式对外前应置true 并按实际配额调max-requests-per-window
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-false}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-600}
+      RATE_LIMIT_FAIL_OPEN: ${RATE_LIMIT_FAIL_OPEN:-true}
+      # 健康检查阈值（T-30 E3）：超阈值 readiness 报 DOWN，交监控告警而非自动重启
+      HEALTH_DEAD_LETTER_THRESHOLD: ${HEALTH_DEAD_LETTER_THRESHOLD:-1000}
+      HEALTH_QUEUE_DEPTH_THRESHOLD: ${HEALTH_QUEUE_DEPTH_THRESHOLD:-5000}
+      # 结构化日志落盘目录（T-30 E1），与 backend_logs 卷对应
+      LOGGING_FILE_PATH: ${LOG_DIR:-/var/log/mqtt-cloud}
       # EMQX 管理面：禁用 / 停用时踢掉在线连接，凭据与 emqx-init 下发配置所用账号一致
       EMQX_API_BASE_URL: http://emqx:18083/api/v5
       EMQX_DASHBOARD_USER: ${EMQX_DASHBOARD_USER:-admin}
@@ -209,6 +238,8 @@ services:
       ALERT_SUPPRESS_WINDOW_SECONDS: ${ALERT_SUPPRESS_WINDOW_SECONDS:-300}
       ALERT_SWEEP_INTERVAL_MS: ${ALERT_SWEEP_INTERVAL_MS:-30000}
       ALERT_SWEEP_BATCH_SIZE: ${ALERT_SWEEP_BATCH_SIZE:-200}
+      # 规则与告警作用域（T-28）：单条规则 / 告警作用域内分组或标签数量上限
+      SCOPE_MAX_TARGETS: ${SCOPE_MAX_TARGETS:-50}
       # 消息规则 / 规则引擎（T-19）：总开关、缓存、执行线程池与失败重试巡检
       RULE_ENABLED: ${RULE_ENABLED:-true}
       RULE_MAX_RULES_PER_USER: ${RULE_MAX_RULES_PER_USER:-200}
@@ -261,10 +292,28 @@ services:
       HTTP_INGEST_ENABLED: ${HTTP_INGEST_ENABLED:-true}
       HTTP_INGEST_MAX_PAYLOAD_BYTES: ${HTTP_INGEST_MAX_PAYLOAD_BYTES:-65536}
       HTTP_INGEST_REALM: ${HTTP_INGEST_REALM:-mqtt-cloud-device}
-    # 固件包持久化：backend 写入，frontend(nginx) 只读挂载对外托管
+      # 认证方式扩展（T-25）：开关为 false 时，X.509 / JWT 产品无法签发凭据，
+      # 存量 SECRET 设备不受影响；认证分派由后端按产品 auth_mode 决定，与开关无关。
+      # CA 证书 / 私钥取 ./certs 挂载进容器后的文件路径；轮换 CA 会令已签发证书链校验失败。
+      AUTH_X509_ENABLED: ${AUTH_X509_ENABLED:-false}
+      AUTH_X509_CA_CERT: ${AUTH_X509_CA_CERT:-/etc/mqtt/certs/ca.crt}
+      AUTH_X509_CA_KEY: ${AUTH_X509_CA_KEY:-/etc/mqtt/certs/ca.key}
+      AUTH_X509_VALIDITY_DAYS: ${AUTH_X509_VALIDITY_DAYS:-365}
+      # JWT 设备令牌签名密钥：置 AUTH_JWT_ENABLED=true 时必须显式配置，不得与平台 JWT_SECRET 复用
+      AUTH_JWT_ENABLED: ${AUTH_JWT_ENABLED:-false}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      AUTH_JWT_TTL_SECONDS: ${AUTH_JWT_TTL_SECONDS:-3600}
+      # 固件包持久化：backend 写入，frontend(nginx) 只读挂载对外托管
     volumes:
       - ota_firmware:/var/lib/mqtt/ota
+      # T-25：CA 证书与私钥，路径由 AUTH_X509_CA_CERT / AUTH_X509_CA_KEY 指定（只读）
+      - ./certs:/etc/mqtt/certs:ro
+      # T-30 E1：结构化日志落盘卷。此前日志只进 docker json-file（20m x 5，容器重建即丢），
+      # 现按天滚动保留 14 天，容器销毁后日志仍在，可直接挂载出来检索
+      - backend_logs:/var/log/mqtt-cloud
     healthcheck:
+      # 挂在 liveness（/health）而非 readiness：数据库或 Redis 抖动不应触发容器重启，
+      # 积压与依赖故障由监控按 /health/ready 告警并人工介入（T-30 E3）
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
       interval: 30s
       timeout: 10s
@@ -349,6 +398,9 @@ volumes:
   emqx_log:
     driver: local
   ota_firmware:
+    driver: local
+  # T-30 E1：后端结构化日志持久化，避免容器重建即丢
+  backend_logs:
     driver: local
 
 networks:

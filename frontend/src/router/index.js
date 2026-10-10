@@ -90,6 +90,13 @@ export const routes = [
         meta: { title: '分组管理', icon: 'building', group: 'monitor' }
       },
       {
+        // 批量注册（T-30）：同样须排在 devices/:id 之前
+        path: 'devices/batch-register',
+        name: 'DeviceBatchRegister',
+        component: () => import('@/views/workbench/device/DeviceBatchRegister.vue'),
+        meta: { title: '批量注册', icon: 'add', group: 'monitor' }
+      },
+      {
         path: 'devices/:id',
         name: 'DeviceDetail',
         component: () => import('@/views/workbench/device/DeviceDetail.vue'),
@@ -139,6 +146,13 @@ export const routes = [
         meta: { title: 'Webhook', icon: 'settings', group: 'access' }
       },
       {
+        // 通知渠道（T-27）：邮件 / 短信渠道配置与连通性测试
+        path: 'access/notification-channels',
+        name: 'NotificationChannels',
+        component: () => import('@/views/workbench/access/NotificationChannels.vue'),
+        meta: { title: '通知渠道', icon: 'message', group: 'access' }
+      },
+      {
         path: 'alerts',
         name: 'AlertList',
         component: () => import('@/views/workbench/alert/AlertList.vue'),
@@ -149,6 +163,13 @@ export const routes = [
         name: 'AlertRules',
         component: () => import('@/views/workbench/alert/AlertRules.vue'),
         meta: { title: '告警规则', icon: 'shield', group: 'alert' }
+      },
+      {
+        // 升级策略（T-27）：告警超时未确认时自动升级级别、指派处理人
+        path: 'alerts/escalations',
+        name: 'AlertEscalations',
+        component: () => import('@/views/workbench/alert/AlertEscalations.vue'),
+        meta: { title: '升级策略', icon: 'signal', group: 'alert' }
       },
       {
         path: 'rules',

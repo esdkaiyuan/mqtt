@@ -3,6 +3,7 @@ package com.mqtt.cloud.controller;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mqtt.cloud.common.Result;
+import com.mqtt.cloud.dto.request.AlertAssignRequest;
 import com.mqtt.cloud.dto.request.AlertQuery;
 import com.mqtt.cloud.dto.request.AlertRuleRequest;
 import com.mqtt.cloud.entity.AlertRecord;
@@ -141,6 +142,17 @@ class AlertControllerTest {
         controller.recover(ALERT_ID);
 
         verify(alertService).recover(USER_ID, ALERT_ID);
+    }
+
+    @Test
+    void assign_should_delegate_with_current_user() {
+        authenticate();
+        AlertAssignRequest request = new AlertAssignRequest();
+        request.setAssigneeId(77L);
+
+        controller.assign(ALERT_ID, request);
+
+        verify(alertService).assign(USER_ID, ALERT_ID, request);
     }
 
     @Test

@@ -69,9 +69,9 @@
             <span class="rule-condition">{{ formatRuleCondition(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="作用设备" min-width="120">
+        <el-table-column label="作用范围" min-width="160">
           <template #default="{ row }">
-            <span>{{ deviceLabel(row.deviceId) }}</span>
+            <span>{{ formatScopeLabel(row, scopeCandidates) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="抑制窗口" width="110">
@@ -184,14 +184,47 @@
           </el-form-item>
         </template>
 
-        <el-form-item label="作用设备">
-          <el-select v-model="form.deviceId" clearable placeholder="全部设备" style="width: 100%">
+        <el-form-item label="作用范围" required>
+          <el-select v-model="form.scopeType" style="width: 100%" @change="handleScopeTypeChange">
+            <el-option
+              v-for="option in SCOPE_TYPE_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item v-if="form.scopeType === 'DEVICE'" label="作用设备" required>
+          <el-select v-model="form.deviceId" clearable filterable placeholder="选择设备" style="width: 100%">
             <el-option
               v-for="device in devices"
               :key="device.id"
               :label="device.deviceName || device.deviceKey"
               :value="device.id"
             />
+          </el-select>
+        </el-form-item>
+
+        <template v-else-if="form.scopeType === 'GROUP'">
+          <el-form-item label="作用分组" required>
+            <el-select
+              v-model="form.groupIds"
+              multiple
+              filterable
+              clearable
+              placeholder="选择分组"
+              style="width: 100%"
+            >
+              <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
+            </el-select>
+            <p class="form-hint">按分组作用时，含子分组的设备一并生效</p>
+          </el-form-item>
+        </template>
+
+        <el-form-item v-else-if="form.scopeType === 'TAG'" label="作用标签" required>
+          <el-select v-model="form.tagIds" multiple filterable clearable placeholder="选择标签" style="width: 100%">
+            <el-option v-for="tag in tags" :key="tag.id" :label="tag.name" :value="tag.id" />
           </el-select>
         </el-form-item>
 
@@ -222,7 +255,7 @@
 </template>
 
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -230,6 +263,8 @@ import EmptyState from '@/components/common/EmptyState.vue'
 import { deviceApi } from '@/api/device'
 import { unwrapResult } from '@/utils/result'
 import { useAlertRulesQuery, useAlertRuleMutations } from '@/composables/useAlerts'
+import { useDeviceGroupListQuery, useTagListQuery } from '@/composables/useDeviceGroups'
+import { SCOPE_TYPE_OPTIONS, formatScopeLabel, resolveScopeType } from '@/utils/scope'
 import {
   SOURCE_TYPE_LABELS,
   SOURCE_TYPE_OPTIONS,
@@ -245,17 +280,28 @@ const NUMERIC_OPERATORS = new Set(['GT', 'GTE', 'LT', 'LTE'])
 
 const { sourceType, enabled, rules, loading, refresh } = useAlertRulesQuery()
 const { saving, createRule, updateRule, deleteRule } = useAlertRuleMutations()
+const { groups } = useDeviceGroupListQuery()
+const { tags } = useTagListQuery()
 
 const devices = ref([])
 const drawerVisible = ref(false)
 const editingId = ref(null)
 const togglingId = ref(null)
 
+const scopeCandidates = computed(() => ({
+  devices: devices.value,
+  groups: groups.value,
+  tags: tags.value
+}))
+
 const form = reactive({
   name: '',
   sourceType: 'THRESHOLD',
   severity: 'WARNING',
+  scopeType: 'ALL',
   deviceId: null,
+  groupIds: [],
+  tagIds: [],
   identifier: '',
   operator: 'GT',
   thresholdValue: '',
@@ -272,10 +318,33 @@ function setEnabled(value) {
   enabled.value = value || ''
 }
 
-function deviceLabel(deviceId) {
-  if (!deviceId) return '全部设备'
-  const matched = devices.value.find((item) => item.id === deviceId)
-  return matched ? matched.deviceName || matched.deviceKey : `#${deviceId}`
+/** 切档时清掉非当前档位的字段，避免提交体出现档位与字段不一致。 */
+function handleScopeTypeChange() {
+  if (form.scopeType !== 'DEVICE') form.deviceId = null
+  if (form.scopeType !== 'GROUP') form.groupIds = []
+  if (form.scopeType !== 'TAG') form.tagIds = []
+}
+
+/** 规则实体 → 表单作用域字段；档位缺省按 deviceId 推断，兼容未带 scopeType 的存量行。 */
+function scopeFromRule(rule) {
+  const scopeType = resolveScopeType(rule)
+  return {
+    scopeType,
+    deviceId: scopeType === 'DEVICE' ? (rule.deviceId ?? null) : null,
+    groupIds: scopeType === 'GROUP' ? [...(rule.groupIds || [])] : [],
+    tagIds: scopeType === 'TAG' ? [...(rule.tagIds || [])] : []
+  }
+}
+
+/** 表单作用域字段 → 提交体，仅保留当前档位对应的字段。 */
+function buildScopePayload() {
+  const scopeType = form.scopeType || 'ALL'
+  return {
+    scopeType,
+    deviceId: scopeType === 'DEVICE' ? (form.deviceId ?? null) : null,
+    groupIds: scopeType === 'GROUP' ? [...form.groupIds] : [],
+    tagIds: scopeType === 'TAG' ? [...form.tagIds] : []
+  }
 }
 
 function resetForm() {
@@ -283,7 +352,10 @@ function resetForm() {
     name: '',
     sourceType: 'THRESHOLD',
     severity: 'WARNING',
+    scopeType: 'ALL',
     deviceId: null,
+    groupIds: [],
+    tagIds: [],
     identifier: '',
     operator: 'GT',
     thresholdValue: '',
@@ -306,14 +378,14 @@ function openEditDrawer(rule) {
     name: rule.name || '',
     sourceType: rule.sourceType || 'THRESHOLD',
     severity: rule.severity || 'WARNING',
-    deviceId: rule.deviceId ?? null,
     identifier: rule.identifier || '',
     operator: rule.operator || 'GT',
     thresholdValue: rule.thresholdValue || '',
     eventType: rule.eventType || '',
     offlineSeconds: rule.offlineSeconds ?? 0,
     suppressWindowSeconds: rule.suppressWindowSeconds ?? 0,
-    enabled: rule.enabled ?? 1
+    enabled: rule.enabled ?? 1,
+    ...scopeFromRule(rule)
   })
   drawerVisible.value = true
 }
@@ -323,7 +395,7 @@ function buildPayload() {
     name: form.name.trim(),
     sourceType: form.sourceType,
     severity: form.severity,
-    deviceId: form.deviceId ?? null,
+    ...buildScopePayload(),
     suppressWindowSeconds: form.suppressWindowSeconds ?? 0,
     enabled: form.enabled
   }
@@ -342,6 +414,9 @@ function buildPayload() {
 
 function validateForm() {
   if (!form.name.trim()) return '请填写规则名称'
+  if (form.scopeType === 'DEVICE' && !form.deviceId) return '请选择作用设备'
+  if (form.scopeType === 'GROUP' && form.groupIds.length === 0) return '请选择至少一个作用分组'
+  if (form.scopeType === 'TAG' && form.tagIds.length === 0) return '请选择至少一个作用标签'
   if (form.sourceType === 'THRESHOLD') {
     if (!form.identifier.trim()) return '请填写属性标识符'
     const threshold = String(form.thresholdValue).trim()
@@ -393,7 +468,7 @@ function ruleToPayload(rule) {
     name: rule.name,
     sourceType: rule.sourceType,
     severity: rule.severity,
-    deviceId: rule.deviceId ?? null,
+    ...scopeFromRule(rule),
     identifier: rule.identifier,
     operator: rule.operator,
     thresholdValue: rule.thresholdValue,

@@ -10,7 +10,10 @@ import com.mqtt.cloud.entity.AlertRule;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.mapper.AlertRuleMapper;
 import com.mqtt.cloud.service.AlertRuleService;
+import com.mqtt.cloud.service.DeviceScopeService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.scope.RuleScope;
+import com.mqtt.cloud.util.ScopeJson;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -18,19 +21,26 @@ import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * 告警规则服务实现（T-17 设计文档 §7.1）。
+ * 告警规则服务实现（T-17 设计文档 §7.1 / T-28 设计文档 §6）。
  * <p>
- * 校验集中在本类，保证非法配置统一抛 {@code 6208}；设备归属校验交由
+ * 校验集中在本类，保证非法配置统一抛 {@code 6208}、作用域非法抛 {@code 6268}；设备归属校验交由
  * {@link DeviceService#getDeviceById(Long)}（不存在抛 {@code 2002}），
- * 非本人设备抛 {@code 2003}。所有写入方法开启事务。
+ * 非本人设备抛 {@code 2003}；分组 / 标签归属与数量上限交由
+ * {@link DeviceScopeService#validateAndNormalize}（越权 {@code 403}）。所有写入方法开启事务。
  */
 @Service
 public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule> implements AlertRuleService {
 
     private final DeviceService deviceService;
+    private final DeviceScopeService deviceScopeService;
+    private final ScopeJson scopeJson;
 
-    public AlertRuleServiceImpl(DeviceService deviceService) {
+    public AlertRuleServiceImpl(DeviceService deviceService,
+                                DeviceScopeService deviceScopeService,
+                                ScopeJson scopeJson) {
         this.deviceService = deviceService;
+        this.deviceScopeService = deviceScopeService;
+        this.scopeJson = scopeJson;
     }
 
     @Override
@@ -40,6 +50,7 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
         rule.setUserId(userId);
         applyAndValidate(rule, request, userId);
         save(rule);
+        populateScopeView(rule);
         return rule;
     }
 
@@ -49,6 +60,7 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
         AlertRule rule = getOwned(userId, id);
         applyAndValidate(rule, request, userId);
         updateById(rule);
+        populateScopeView(rule);
         return rule;
     }
 
@@ -71,7 +83,9 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
             wrapper.eq(AlertRule::getEnabled, enabled ? 1 : 0);
         }
         wrapper.orderByDesc(AlertRule::getCreatedAt).orderByDesc(AlertRule::getId);
-        return list(wrapper);
+        List<AlertRule> rules = list(wrapper);
+        rules.forEach(this::populateScopeView);
+        return rules;
     }
 
     @Override
@@ -86,6 +100,7 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
         if (!userId.equals(rule.getUserId())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
+        populateScopeView(rule);
         return rule;
     }
 
@@ -118,8 +133,12 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
             throw invalid("级别必须是 INFO / WARNING / CRITICAL");
         }
 
-        Long deviceId = request.getDeviceId();
-        if (deviceId != null) {
+        RuleScope scope = deviceScopeService.validateAndNormalize(userId,
+                RuleScope.of(request.getScopeType(), request.getDeviceId(),
+                        request.getGroupIds(), request.getTagIds()),
+                ResultCode.ALERT_RULE_SCOPE_INVALID);
+        Long deviceId = scope.deviceId();
+        if (AlertConstants.SCOPE_DEVICE.equals(scope.scopeType())) {
             Device device = deviceService.getDeviceById(deviceId);
             if (!userId.equals(device.getOwnerId())) {
                 throw new BusinessException(ResultCode.DEVICE_NOT_OWNED);
@@ -181,7 +200,10 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
         rule.setName(name);
         rule.setSourceType(sourceType);
         rule.setSeverity(severity);
+        rule.setScopeType(scope.scopeType());
         rule.setDeviceId(deviceId);
+        rule.setGroupIds(scopeJson.write(scope.groupIds()));
+        rule.setTagIds(scopeJson.write(scope.tagIds()));
         rule.setIdentifier(identifier);
         rule.setOperator(operator);
         rule.setThresholdValue(thresholdValue);
@@ -189,6 +211,12 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
         rule.setOfflineSeconds(offlineSeconds);
         rule.setSuppressWindowSeconds(suppressWindowSeconds);
         rule.setEnabled(enabled);
+    }
+
+    /** 把库中 JSON 文本解析为 ID 数组写入瞬态字段，供返回前端；空值 / 脏数据按空列表处理。 */
+    private void populateScopeView(AlertRule rule) {
+        rule.setGroupIdsView(scopeJson.toIdList(rule.getGroupIds()));
+        rule.setTagIdsView(scopeJson.toIdList(rule.getTagIds()));
     }
 
     private static void checkIdentifier(String identifier, String ruleKind) {

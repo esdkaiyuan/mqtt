@@ -37,6 +37,9 @@ export const alertApi = {
   /** 人工置恢复 */
   recover: (id) => api.post(`/alerts/${id}/recover`),
 
+  /** 指派 / 解除指派处理人（T-27）：`assigneeId` 为空即解除，`notify=true` 时投递一次升级通知 */
+  assign: (id, data) => api.post(`/alerts/${id}/assign`, data),
+
   /** 未读数（活动告警数），供顶栏角标 */
   unreadCount: () => api.get('/alerts/unread-count'),
 

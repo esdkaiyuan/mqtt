@@ -11,6 +11,12 @@ public interface ProductService {
 
     List<Product> list();
 
+    /**
+     * 列出启用状态的产品。共享订阅按产品模板逐个生成，停用产品的主题不应再被订阅，
+     * 故订阅侧只取启用产品，而非过滤 {@link #list()} 的全量结果。
+     */
+    List<Product> listEnabled();
+
     Product update(Long id, ProductRequest request);
 
     void delete(Long id);

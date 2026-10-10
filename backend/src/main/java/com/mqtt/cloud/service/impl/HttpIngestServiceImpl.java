@@ -2,6 +2,7 @@ package com.mqtt.cloud.service.impl;
 
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.common.logging.TraceIdFilter;
 import com.mqtt.cloud.config.HttpIngestProperties;
 import com.mqtt.cloud.ingest.IngestPipeline;
 import com.mqtt.cloud.ingest.IngestProperties;
@@ -9,6 +10,7 @@ import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.service.HttpIngestService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -58,7 +60,10 @@ public class HttpIngestServiceImpl implements HttpIngestService {
             return new IngestAccepted(deviceKey, messageType, topic, receivedAt, true);
         }
 
-        IngestRecord record = new IngestRecord(deviceKey, topic, messageType, payload, qosOf(messageType), receivedAt);
+        // T-30 E1：沿用 HTTP 请求的 traceId，使「设备上报 → 落库 → 六路 fan-out」的日志可串联
+        String traceId = MDC.get(TraceIdFilter.TRACE_ID);
+        IngestRecord record = new IngestRecord(deviceKey, topic, messageType, payload,
+                qosOf(messageType), receivedAt, traceId);
         ingestPipeline.submit(record);
         return new IngestAccepted(deviceKey, messageType, topic, receivedAt, true);
     }

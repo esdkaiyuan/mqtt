@@ -13,6 +13,7 @@
 export const EP_DIR_ALIAS = {
   option: 'select',
   'option-group': 'select',
+  'descriptions-item': 'descriptions',
   'menu-item': 'menu',
   'menu-item-group': 'menu',
   'sub-menu': 'menu',

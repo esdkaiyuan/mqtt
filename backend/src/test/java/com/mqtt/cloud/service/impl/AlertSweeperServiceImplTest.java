@@ -9,6 +9,8 @@ import com.mqtt.cloud.mapper.AlertRecordMapper;
 import com.mqtt.cloud.mapper.AlertRuleMapper;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
+import com.mqtt.cloud.service.DeviceScopeService;
+import com.mqtt.cloud.service.scope.RuleScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -24,11 +26,12 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 离线巡检服务单测（T-17 实施计划 P7）。
+ * 离线巡检服务单测（T-17 实施计划 P7 / T-28 实施计划 P3）。
  * <p>
  * 覆盖离线超阈值触发 / 未达阈值不触发 / 设备重新上线自动恢复 / 规则删除兜底恢复 /
- * 规则停用或删除不参与评估 / 总开关关闭。巡检只负责挑出 (规则, 设备)，状态流转由评估服务完成，
- * 故断言集中在「是否按预期调用 {@code evaluateOffline} / {@code recover}」。
+ * 规则停用或删除不参与评估 / 总开关关闭；以及作用域（T-28）：分组档解析设备集合后触发、
+ * 非 {@code ALL} 档解析空集不触发也不恢复、按作用域限定恢复范围。巡检只负责挑出 (规则, 设备)，
+ * 状态流转由评估服务完成，故断言集中在「是否按预期调用 {@code evaluateOffline} / {@code recover}」。
  */
 class AlertSweeperServiceImplTest {
 
@@ -41,6 +44,7 @@ class AlertSweeperServiceImplTest {
     private AlertRecordMapper alertRecordMapper;
     private DeviceMapper deviceMapper;
     private AlertEvaluationService alertEvaluationService;
+    private DeviceScopeService deviceScopeService;
     private AlertProperties properties;
     private AlertSweeperServiceImpl service;
 
@@ -50,16 +54,21 @@ class AlertSweeperServiceImplTest {
         alertRecordMapper = mock(AlertRecordMapper.class);
         deviceMapper = mock(DeviceMapper.class);
         alertEvaluationService = mock(AlertEvaluationService.class);
+        deviceScopeService = mock(DeviceScopeService.class);
         properties = new AlertProperties();
         service = new AlertSweeperServiceImpl(alertRuleMapper, alertRecordMapper, deviceMapper,
-                alertEvaluationService, properties);
+                alertEvaluationService, deviceScopeService, properties);
+        // 默认作用域：ALL 档（空集 = 不限设备），既有全量语义用例无需逐个桩
+        when(deviceScopeService.toScope(any(), any(), any(), any()))
+                .thenReturn(RuleScope.of(AlertConstants.SCOPE_ALL, null, List.of(), List.of()));
+        when(deviceScopeService.deviceIds(any(), any())).thenReturn(List.of());
     }
 
     @Test
     void sweep_should_evaluate_offline_devices_past_threshold() {
         AlertRule rule = offlineRule(600);
         when(alertRuleMapper.selectEnabledBySource(AlertConstants.SOURCE_OFFLINE, BATCH)).thenReturn(List.of(rule));
-        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, null, 600, BATCH)).thenReturn(List.of(device()));
+        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, List.of(), 600, BATCH)).thenReturn(List.of(device()));
 
         service.sweep();
 
@@ -70,7 +79,7 @@ class AlertSweeperServiceImplTest {
     void sweep_should_not_evaluate_when_no_device_reached_threshold() {
         AlertRule rule = offlineRule(600);
         when(alertRuleMapper.selectEnabledBySource(AlertConstants.SOURCE_OFFLINE, BATCH)).thenReturn(List.of(rule));
-        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, null, 600, BATCH)).thenReturn(List.of());
+        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, List.of(), 600, BATCH)).thenReturn(List.of());
 
         service.sweep();
 
@@ -82,7 +91,7 @@ class AlertSweeperServiceImplTest {
         AlertRule rule = offlineRule(600);
         AlertRecord open = openRecord();
         when(alertRuleMapper.selectEnabledBySource(AlertConstants.SOURCE_OFFLINE, BATCH)).thenReturn(List.of(rule));
-        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, null, 600, BATCH)).thenReturn(List.of());
+        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, List.of(), 600, BATCH)).thenReturn(List.of());
         when(deviceMapper.findOnlineDevices(USER_ID)).thenReturn(List.of(device()));
         when(alertRecordMapper.selectOpenByRuleAndDevices(RULE_ID, List.of(DEVICE_ID))).thenReturn(List.of(open));
 
@@ -130,13 +139,69 @@ class AlertSweeperServiceImplTest {
         healthy.setId(21L);
         when(alertRuleMapper.selectEnabledBySource(AlertConstants.SOURCE_OFFLINE, BATCH))
                 .thenReturn(List.of(broken, healthy));
-        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, null, 600, BATCH))
+        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, List.of(), 600, BATCH))
                 .thenThrow(new RuntimeException("db down"))
                 .thenReturn(List.of(device()));
 
         service.sweep();
 
         verify(alertEvaluationService).evaluateOffline(eq(healthy), eq(device()));
+    }
+
+    // ---------- 作用域（T-28） ----------
+
+    @Test
+    void sweep_should_evaluate_within_group_scope() {
+        AlertRule rule = offlineRule(600);
+        rule.setScopeType(AlertConstants.SCOPE_GROUP);
+        rule.setGroupIds("[3]");
+        when(alertRuleMapper.selectEnabledBySource(AlertConstants.SOURCE_OFFLINE, BATCH)).thenReturn(List.of(rule));
+        when(deviceScopeService.toScope(any(), any(), any(), any()))
+                .thenReturn(RuleScope.of(AlertConstants.SCOPE_GROUP, null, List.of(3L), List.of()));
+        when(deviceScopeService.deviceIds(eq(USER_ID), any())).thenReturn(List.of(DEVICE_ID));
+        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, List.of(DEVICE_ID), 600, BATCH))
+                .thenReturn(List.of(device()));
+
+        service.sweep();
+
+        verify(alertEvaluationService).evaluateOffline(rule, device());
+    }
+
+    @Test
+    void sweep_should_skip_when_non_all_scope_resolves_no_device() {
+        AlertRule rule = offlineRule(600);
+        rule.setScopeType(AlertConstants.SCOPE_TAG);
+        rule.setTagIds("[9]");
+        when(alertRuleMapper.selectEnabledBySource(AlertConstants.SOURCE_OFFLINE, BATCH)).thenReturn(List.of(rule));
+        when(deviceScopeService.toScope(any(), any(), any(), any()))
+                .thenReturn(RuleScope.of(AlertConstants.SCOPE_TAG, null, List.of(), List.of(9L)));
+        when(deviceScopeService.deviceIds(eq(USER_ID), any())).thenReturn(List.of());
+
+        service.sweep();
+
+        // 非 ALL 档解析为空集表示作用域内无设备：不触发也不恢复
+        verify(deviceMapper, never()).findOfflineDevicesForAlert(any(), any(), anyInt(), anyInt());
+        verify(alertEvaluationService, never()).evaluateOffline(any(), any());
+        verify(alertEvaluationService, never()).recover(any(), any());
+    }
+
+    @Test
+    void sweep_should_recover_only_devices_in_scope() {
+        AlertRule rule = offlineRule(600);
+        rule.setScopeType(AlertConstants.SCOPE_GROUP);
+        rule.setGroupIds("[3]");
+        AlertRecord open = openRecord();
+        when(alertRuleMapper.selectEnabledBySource(AlertConstants.SOURCE_OFFLINE, BATCH)).thenReturn(List.of(rule));
+        when(deviceScopeService.toScope(any(), any(), any(), any()))
+                .thenReturn(RuleScope.of(AlertConstants.SCOPE_GROUP, null, List.of(3L), List.of()));
+        when(deviceScopeService.deviceIds(eq(USER_ID), any())).thenReturn(List.of(DEVICE_ID));
+        when(deviceMapper.findOfflineDevicesForAlert(USER_ID, List.of(DEVICE_ID), 600, BATCH)).thenReturn(List.of());
+        when(deviceMapper.findOnlineDevices(USER_ID)).thenReturn(List.of(device()));
+        when(alertRecordMapper.selectOpenByRuleAndDevices(RULE_ID, List.of(DEVICE_ID))).thenReturn(List.of(open));
+
+        service.sweep();
+
+        verify(alertEvaluationService).recover(open, device());
     }
 
     private Device device() {

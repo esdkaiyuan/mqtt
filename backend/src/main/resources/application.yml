@@ -8,7 +8,7 @@ spring:
   # 数据源配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/mqtt_cloud?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:mqtt_cloud}?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:root_password}
     hikari:
@@ -99,6 +99,19 @@ server:
 
 # 应用配置
 app:
+  # 健康检查阈值（T-30 E3）：超过即判 readiness DOWN，交由监控告警而非自动重启处理
+  health:
+    dead-letter-threshold: ${HEALTH_DEAD_LETTER_THRESHOLD:1000}
+    queue-depth-threshold: ${HEALTH_QUEUE_DEPTH_THRESHOLD:5000}
+  # 开放接口限流（T-30 E4）：仅作用于 /external/v1/**，按 API Key 固定窗口计数。
+  # 默认关闭——未显式开启时不限流，避免演示/迁移环境被 429 打断。
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:false}
+    window-seconds: ${RATE_LIMIT_WINDOW_SECONDS:60}
+    max-requests-per-window: ${RATE_LIMIT_MAX_REQUESTS:600}
+    key-prefix: "mqtt:ratelimit:apikey:"
+    # Redis 不可用时是否放行（true=可用性优先）
+    fail-open: ${RATE_LIMIT_FAIL_OPEN:true}
   jwt:
     secret: ${JWT_SECRET:TXlNU1RDbG91ZENsb3VkU2VjcmV0S2V5MjAyNVlvdXJTZWNyZXRrZXlGb3JIT1BERVI=}
     expiration: ${JWT_EXPIRATION:604800000}
@@ -345,6 +358,83 @@ app:
     max-payload-bytes: ${HTTP_INGEST_MAX_PAYLOAD_BYTES:65536}
     # Basic 认证失败时 WWW-Authenticate 头的 realm 值
     realm: ${HTTP_INGEST_REALM:mqtt-cloud-device}
+
+  # ── 认证方式扩展（T-25） ──
+  auth-extension:
+    x509:
+      # 是否启用 X.509 认证；false 时产品仅允许 SECRET 模式
+      enabled: ${AUTH_X509_ENABLED:false}
+      # CA 证书文件路径（PEM），仅本地文件读取，不入库
+      ca-cert-path: ${AUTH_X509_CA_CERT:}
+      # CA 私钥文件路径（PEM，PKCS#8 未加密），仅本地文件读取，不入库
+      ca-key-path: ${AUTH_X509_CA_KEY:}
+      # 签发证书的有效期天数
+      validity-days: ${AUTH_X509_VALIDITY_DAYS:365}
+    jwt:
+      # 是否启用 JWT 认证；false 时产品仅允许 SECRET 模式
+      enabled: ${AUTH_JWT_ENABLED:false}
+      # 设备令牌签名密钥，独立于控制台登录令牌密钥
+      secret: ${AUTH_JWT_SECRET:}
+      # 设备令牌有效期（秒）
+      ttl-seconds: ${AUTH_JWT_TTL_SECONDS:3600}
+
+  # ── 子设备与网关代理接入（T-26） ──
+  device-topology:
+    # 是否启用子设备拓扑；false 时拓扑端点返回 404，授权委托分支不生效
+    enabled: ${DEVICE_TOPOLOGY_ENABLED:true}
+    # 拓扑深度上限；低于 2 视为仅允许 DIRECT，不接受任何挂载
+    max-depth: ${DEVICE_TOPOLOGY_MAX_DEPTH:2}
+    # 单网关子设备数量上限
+    max-sub-devices-per-gateway: ${DEVICE_TOPOLOGY_MAX_SUB_DEVICES_PER_GATEWAY:200}
+
+  # ── 通知渠道扩展（T-27） ──
+  notification:
+    # 新增能力总开关；false 时渠道与升级端点返 404、站内信不再新增、邮件与短信不投递、
+    # 升级巡检不注册；站内信读取与已读保留，既有 Webhook 告警通知不受影响（现场回滚开关）
+    enabled: ${NOTIFICATION_ENABLED:true}
+    # 站内信通道开关
+    inapp-enabled: ${NOTIFICATION_INAPP_ENABLED:true}
+    # 邮件渠道开关；SMTP 参数取渠道行 config，未填时回退 spring.mail.*
+    email-enabled: ${NOTIFICATION_EMAIL_ENABLED:true}
+    # 短信渠道开关；走通用 HTTP 供应商，参数取渠道行 config
+    sms-enabled: ${NOTIFICATION_SMS_ENABLED:true}
+    # 单用户渠道数上限
+    max-channels-per-user: ${NOTIFICATION_MAX_CHANNELS_PER_USER:20}
+    # 单用户升级策略数上限
+    max-escalation-policies-per-user: ${NOTIFICATION_MAX_ESCALATION_POLICIES_PER_USER:20}
+    # 单条告警最大升级级数，达到后只刷新时间不再升级
+    max-escalation-level: ${NOTIFICATION_MAX_ESCALATION_LEVEL:3}
+    # 单用户站内信保留上限，超出时清理最旧已读条目；0 表示不清理
+    inapp-retention-per-user: ${NOTIFICATION_INAPP_RETENTION_PER_USER:500}
+    # 投递重试与留痕
+    delivery:
+      # 投递最大尝试次数，达到后置终态 FAILED 并停止重试
+      max-attempts: ${NOTIFICATION_DELIVERY_MAX_ATTEMPTS:3}
+      # 指数退避基数（秒），第 n 次重试顺延 backoffSeconds × 2^(n-1)
+      backoff-seconds: ${NOTIFICATION_DELIVERY_BACKOFF_SECONDS:60}
+      # 投递巡检间隔（毫秒），<=0 关闭（同时关闭保留清理）
+      sweep-interval-ms: ${NOTIFICATION_DELIVERY_SWEEP_INTERVAL_MS:60000}
+      # 单轮巡检处理上限
+      batch-size: ${NOTIFICATION_DELIVERY_BATCH_SIZE:200}
+      # 投递记录保留天数，0 表示不清理
+      retention-days: ${NOTIFICATION_DELIVERY_RETENTION_DAYS:30}
+      # 投递线程池核心 / 最大线程数与队列容量
+      executor-core-size: ${NOTIFICATION_DELIVERY_EXECUTOR_CORE_SIZE:2}
+      executor-max-size: ${NOTIFICATION_DELIVERY_EXECUTOR_MAX_SIZE:8}
+      executor-queue-capacity: ${NOTIFICATION_DELIVERY_EXECUTOR_QUEUE_CAPACITY:500}
+      # 单渠道投递超时（毫秒）
+      timeout-ms: ${NOTIFICATION_DELIVERY_TIMEOUT_MS:5000}
+    # 告警升级巡检
+    escalation:
+      # 升级巡检间隔（毫秒），<=0 关闭
+      sweep-interval-ms: ${NOTIFICATION_ESCALATION_SWEEP_INTERVAL_MS:60000}
+      # 单轮巡检处理上限
+      batch-size: ${NOTIFICATION_ESCALATION_BATCH_SIZE:200}
+
+  # ── 规则与告警作用域（T-28） ──
+  scope:
+    # 单条规则 / 告警作用域内分组或标签的数量上限，超出按 6268 / 6269 拒绝
+    max-targets: ${SCOPE_MAX_TARGETS:50}
 
 # 日志配置
 logging:

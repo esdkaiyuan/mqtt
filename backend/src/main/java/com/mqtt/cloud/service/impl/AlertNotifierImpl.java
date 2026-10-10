@@ -5,11 +5,10 @@ import com.mqtt.cloud.config.AlertProperties;
 import com.mqtt.cloud.entity.AlertRecord;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.service.AlertNotifier;
-import com.mqtt.cloud.service.WebhookDispatcher;
+import com.mqtt.cloud.service.NotificationDispatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -17,11 +16,12 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 告警通知实现（T-17 设计文档 §5.1 / §8.4）。
+ * 告警通知实现（T-17 设计文档 §5.1 / §8.4，T-27 设计文档 §8.1 改造）。
  * <p>
- * 载荷按设计文档 §5.1 契约组装为 JSON 文本后，交给 {@link WebhookDispatcher} 的信封
- * （{@code event/deviceKey/deviceName/deviceType/topic/status/payload/timestamp}）投递；
- * 时间统一格式化为 ISO-8601 本地时间字符串，避免依赖 Jackson 的日期配置。
+ * 对外契约不变（{@code notifyTriggered} / {@code notifyRecovered}），内部改为委托
+ * {@link NotificationDispatcher}：载荷仍按 T-17 契约组装为字段映射，站内信、内置 Webhook、
+ * 邮件与短信的投递由分发器统一组织。T-17 的 {@code notify-enabled} / {@code recover-notify-enabled}
+ * 开关仍在此处把关（关闭即返回，保持既有语义）。
  * 全部异常只记 WARN，绝不冒泡到评估链路。
  */
 @Slf4j
@@ -31,8 +31,7 @@ public class AlertNotifierImpl implements AlertNotifier {
 
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
-    private final WebhookDispatcher webhookDispatcher;
-    private final ObjectMapper objectMapper;
+    private final NotificationDispatcher notificationDispatcher;
     private final AlertProperties properties;
 
     @Override
@@ -94,10 +93,8 @@ public class AlertNotifierImpl implements AlertNotifier {
         }
     }
 
-    private void dispatch(String eventType, AlertRecord record, Device device, Map<String, Object> payload)
-            throws Exception {
-        String json = objectMapper.writeValueAsString(payload);
-        webhookDispatcher.dispatch(record.getDeviceId(), eventType, device, json);
+    private void dispatch(String eventType, AlertRecord record, Device device, Map<String, Object> payload) {
+        notificationDispatcher.dispatch(record.getUserId(), eventType, device, record, payload);
     }
 
     private static String format(LocalDateTime time) {

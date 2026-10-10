@@ -3,11 +3,13 @@ package com.mqtt.cloud.dto.request;
 import lombok.Data;
 import tools.jackson.databind.JsonNode;
 
+import java.util.List;
+
 /**
- * 规则创建 / 更新请求（T-19 设计文档 §7.1）。
+ * 规则创建 / 更新请求（T-19 设计文档 §7.1 / T-28 设计文档 §6）。
  * <p>
  * 字段均允许为空并在服务层集中校验：非法配置统一抛 {@code 6219}，非法动作类型抛 {@code 6220}，
- * 因此这里不做 Bean Validation 注解，避免校验错误码被全局处理器改写为 {@code 400}。
+ * 作用域非法抛 {@code 6269}，因此这里不做 Bean Validation 注解，避免校验错误码被全局处理器改写为 {@code 400}。
  * <ul>
  *   <li>{@code PROPERTY}：{@code identifier} / {@code operator} / {@code thresholdValue} 必填，{@code eventType} 必须为空</li>
  *   <li>{@code EVENT}：{@code identifier} 必填，{@code operator} / {@code thresholdValue} 必须为空，{@code eventType} 可选</li>
@@ -23,8 +25,17 @@ public class RuleRequest {
     /** 描述，可空，长度 ≤ 255。 */
     private String description;
 
-    /** 作用设备ID，可空表示全部设备；非空时必须属于当前用户。 */
+    /** 作用域档位：ALL / DEVICE / GROUP / TAG；为空时按 {@code deviceId} 是否为空推断。 */
+    private String scopeType;
+
+    /** 作用设备ID，{@code DEVICE} 档使用，其余档须为空；非空时必须属于当前用户。 */
     private Long deviceId;
+
+    /** {@code GROUP} 档分组 ID 列表（含所有后代分组），其余档须为空；每项须属于当前用户。 */
+    private List<Long> groupIds;
+
+    /** {@code TAG} 档标签 ID 列表，其余档须为空；每项须属于当前用户。 */
+    private List<Long> tagIds;
 
     /** 触发源：PROPERTY / EVENT，必填。 */
     private String sourceType;

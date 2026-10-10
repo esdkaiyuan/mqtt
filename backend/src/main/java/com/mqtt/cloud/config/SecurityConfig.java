@@ -2,6 +2,7 @@ package com.mqtt.cloud.config;
 
 import com.mqtt.cloud.common.security.RestSecurityExceptionHandler;
 import com.mqtt.cloud.filter.ApiKeyAuthFilter;
+import com.mqtt.cloud.filter.ApiKeyRateLimitFilter;
 import com.mqtt.cloud.filter.DeviceCredentialAuthFilter;
 import com.mqtt.cloud.filter.InternalTokenFilter;
 import com.mqtt.cloud.filter.JwtAuthenticationFilter;
@@ -9,6 +10,7 @@ import jakarta.servlet.DispatcherType;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -93,7 +95,8 @@ public class SecurityConfig {
                                                     JwtAuthenticationFilter jwtFilter,
                                                     ApiKeyAuthFilter apiKeyFilter,
                                                     InternalTokenFilter internalTokenFilter,
-                                                    DeviceCredentialAuthFilter deviceCredentialFilter) throws Exception {
+                                                    DeviceCredentialAuthFilter deviceCredentialFilter,
+                                                    ApiKeyRateLimitFilter rateLimitFilter) throws Exception {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
@@ -112,6 +115,9 @@ public class SecurityConfig {
                     .requestMatchers("/internal/**").permitAll()
                     // 设备上报：鉴权由 DeviceCredentialAuthFilter 负责，与 /internal/** 同构
                     .requestMatchers("/ingest/**").permitAll()
+                    // 设备激活（T-30）：设备侧在拿到网络前尚未持有可用凭据，
+                    // 只能凭激活码自助激活，故免登录；激活码本身即一次性凭据（长度 32 hex，128 位熵）
+                    .requestMatchers(HttpMethod.POST, "/device-registration/activate").permitAll()
                     .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
                     // 开放接口：必须携带合法 API Key（由 ApiKeyAuthFilter 注入 EXTERNAL 角色）
                     .requestMatchers("/external/v1/**").hasRole("EXTERNAL")
@@ -119,10 +125,25 @@ public class SecurityConfig {
                     .requestMatchers("/api-keys/**", "/webhooks/**").hasRole("ADMIN")
                     // 监控端点：health 与 prometheus 已在 PUBLIC_ENDPOINTS 放行，其余（info/metrics）仅 ADMIN
                     .requestMatchers("/actuator/**").hasRole("ADMIN")
+                    // 排障明细（T-30 E3）：/health 与 /health/ready 已在 PUBLIC_ENDPOINTS 放行，
+                    // 但 detail 含死信条数与队列深度等运维敏感数据，仅 ADMIN
+                    .requestMatchers("/health/detail").hasRole("ADMIN")
                     // 实时消息与统计分析：ADMIN / OPERATOR
                     .requestMatchers("/messages/**", "/analytics/**").hasAnyRole("ADMIN", "OPERATOR")
                     // OTA 固件包与升级任务（T-22）：ADMIN / OPERATOR
                     .requestMatchers("/ota/**").hasAnyRole("ADMIN", "OPERATOR")
+                    // 设备证书签发/吊销与设备令牌（T-25）：属产品管理动作，仅 ADMIN，不进入公开端点
+                    .requestMatchers("/devices/*/certificate", "/devices/*/certificate/revoke",
+                            "/devices/*/token").hasRole("ADMIN")
+                    // 设备拓扑（T-26）：任意登录用户可访问，归属与角色由控制器按 ownerId / ADMIN 裁决
+                    .requestMatchers("/devices/*/sub-devices", "/devices/*/sub-devices/*",
+                            "/devices/*/parent", "/devices/*/node-type").authenticated()
+                    // 站内信（T-27）：任意登录用户可访问，按 user_id 隔离；不进公开端点列表
+                    .requestMatchers("/notifications/**", "/notifications").authenticated()
+                    // 通知渠道配置（T-27）：任意登录用户可访问，按 user_id 隔离；回滚开关由控制器裁决
+                    .requestMatchers("/notification-channels/**", "/notification-channels").authenticated()
+                    // 告警升级策略（T-27）：任意登录用户可访问，按 user_id 隔离；回滚开关由控制器裁决
+                    .requestMatchers("/alert-escalations/**", "/alert-escalations").authenticated()
                     .anyRequest().authenticated()
             )
             .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)
@@ -132,6 +153,9 @@ public class SecurityConfig {
             .addFilterBefore(internalTokenFilter, JwtAuthenticationFilter.class)
             // 设备上报（T-24 P4）：以 JwtAuthenticationFilter 为锚点插入，必须先完成 jwtFilter 的注册
             .addFilterBefore(deviceCredentialFilter, JwtAuthenticationFilter.class)
+            // 开放接口限流（T-30 E4）：紧随 apiKeyFilter，先于 Security 授权决策执行，
+            // 使超限请求不必进入后续鉴权即可返回 429
+            .addFilterAfter(rateLimitFilter, ApiKeyAuthFilter.class)
             .formLogin(form -> form.disable())
             .httpBasic(basic -> basic.disable())
             .logout(logout -> logout.disable());

@@ -25,6 +25,7 @@ describe('router/routes 分区与兼容', () => {
       'Dashboard',
       'DeviceList',
       'DeviceGroups',
+      'DeviceBatchRegister',
       'DeviceDetail',
       'DeviceLog',
       'ProductList',
@@ -33,8 +34,10 @@ describe('router/routes 分区与兼容', () => {
       'HistoryQuery',
       'ApiKeyManagement',
       'WebhookManagement',
+      'NotificationChannels',
       'AlertList',
       'AlertRules',
+      'AlertEscalations',
       'RuleCenter',
       'SceneCenter',
       'BoardList',
@@ -107,6 +110,22 @@ describe('router/routes 分区与兼容', () => {
     expect(children.find((child) => child.name === 'FirmwareList').meta?.hidden).toBeFalsy()
     expect(children.find((child) => child.name === 'UpgradeTasks').meta?.hidden).toBeFalsy()
     expect(children.find((child) => child.name === 'UpgradeTaskDetail').meta?.hidden).toBe(true)
+  })
+
+  it('通知渠道与升级策略路由分别归入开发接入与告警分区', () => {
+    const children = byPath('/workbench').children
+    const expected = {
+      NotificationChannels: { path: 'access/notification-channels', group: 'access' },
+      AlertEscalations: { path: 'alerts/escalations', group: 'alert' }
+    }
+
+    for (const [name, { path, group }] of Object.entries(expected)) {
+      const route = children.find((child) => child.name === name)
+      expect(route, `缺少 T-27 路由 ${name}`).toBeTruthy()
+      expect(route.path).toBe(path)
+      expect(route.meta?.group).toBe(group)
+      expect(route.meta?.hidden).toBeFalsy()
+    }
   })
 
   it('文档站五章齐全且默认跳快速开始', () => {

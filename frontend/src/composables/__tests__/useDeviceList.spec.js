@@ -65,7 +65,9 @@ describe('composables/useDeviceList', () => {
       deviceType: undefined,
       status: undefined,
       groupId: undefined,
-      tagId: undefined
+      tagId: undefined,
+      nodeType: undefined,
+      parentId: undefined
     })
     expect(state.currentPage.value).toBe(1)
     expect(state.totalPages.value).toBe(10)
@@ -86,7 +88,9 @@ describe('composables/useDeviceList', () => {
       deviceType: undefined,
       status: undefined,
       groupId: undefined,
-      tagId: undefined
+      tagId: undefined,
+      nodeType: undefined,
+      parentId: undefined
     })
     expect(deviceStore.fetchDevices).toHaveBeenCalledTimes(2)
   })
@@ -113,6 +117,7 @@ describe('composables/useDeviceList', () => {
     state.filters.status = 'ONLINE'
     state.filters.groupId = 12
     state.filters.tagId = 34
+    state.filters.nodeType = 'SUB'
     state.handleSearch()
     await settle()
 
@@ -124,7 +129,9 @@ describe('composables/useDeviceList', () => {
       deviceType: 'SENSOR',
       status: 'ONLINE',
       groupId: 12,
-      tagId: 34
+      tagId: 34,
+      nodeType: 'SUB',
+      parentId: undefined
     })
   })
 
@@ -135,6 +142,7 @@ describe('composables/useDeviceList', () => {
     state.filters.deviceName = '温湿度'
     state.filters.groupId = 12
     state.filters.tagId = 34
+    state.filters.nodeType = 'GATEWAY'
     state.handleSearch()
     await settle()
 
@@ -144,6 +152,8 @@ describe('composables/useDeviceList', () => {
     expect(state.filters.deviceName).toBe('')
     expect(state.filters.groupId).toBeNull()
     expect(state.filters.tagId).toBeNull()
+    expect(state.filters.nodeType).toBe('')
+    expect(state.filters.parentId).toBeNull()
     expect(state.currentPage.value).toBe(1)
     expect(deviceStore.fetchDevices).toHaveBeenLastCalledWith({
       pageNum: 1,
@@ -152,7 +162,9 @@ describe('composables/useDeviceList', () => {
       deviceType: undefined,
       status: undefined,
       groupId: undefined,
-      tagId: undefined
+      tagId: undefined,
+      nodeType: undefined,
+      parentId: undefined
     })
   })
 
@@ -170,7 +182,9 @@ describe('composables/useDeviceList', () => {
       deviceType: undefined,
       status: 'ONLINE',
       groupId: undefined,
-      tagId: undefined
+      tagId: undefined,
+      nodeType: undefined,
+      parentId: undefined
     })
   })
 
@@ -190,7 +204,50 @@ describe('composables/useDeviceList', () => {
       deviceType: undefined,
       status: 'OFFLINE',
       groupId: undefined,
-      tagId: undefined
+      tagId: undefined,
+      nodeType: undefined,
+      parentId: undefined
+    })
+  })
+
+  it('路由 query 携带 nodeType / parentId 时按拓扑维度筛选', async () => {
+    await router.push({ path: '/', query: { nodeType: 'SUB', parentId: '88' } })
+    mountHarness()
+    await settle()
+
+    expect(state.filters.nodeType).toBe('SUB')
+    expect(state.filters.parentId).toBe('88')
+    expect(deviceStore.fetchDevices).toHaveBeenLastCalledWith({
+      pageNum: 1,
+      pageSize: 10,
+      deviceName: undefined,
+      deviceType: undefined,
+      status: undefined,
+      groupId: undefined,
+      tagId: undefined,
+      nodeType: 'SUB',
+      parentId: '88'
+    })
+  })
+
+  it('parentId 落为数字时保持原值透传', async () => {
+    mountHarness()
+    await settle()
+
+    state.filters.parentId = 88
+    state.handleSearch()
+    await settle()
+
+    expect(deviceStore.fetchDevices).toHaveBeenLastCalledWith({
+      pageNum: 1,
+      pageSize: 10,
+      deviceName: undefined,
+      deviceType: undefined,
+      status: undefined,
+      groupId: undefined,
+      tagId: undefined,
+      nodeType: undefined,
+      parentId: 88
     })
   })
 })

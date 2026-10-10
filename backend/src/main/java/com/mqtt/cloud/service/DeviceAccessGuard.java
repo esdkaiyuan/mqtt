@@ -64,6 +64,8 @@ public class DeviceAccessGuard {
             return null;
         }
         return new DeviceAuthCacheService.AuthMeta(
-                product.getId(), product.getStatus(), device.getEnabled(), device.getDeviceSecretHash());
+                product.getId(), device.getId(), product.getStatus(), device.getEnabled(),
+                product.getAuthMode(), device.getDeviceSecretHash(), product.getTopicPrefix(),
+                device.getNodeType(), device.getParentId());
     }
 }

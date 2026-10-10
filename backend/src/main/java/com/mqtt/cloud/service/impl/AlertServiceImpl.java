@@ -7,17 +7,24 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mqtt.cloud.common.AlertConstants;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.dto.request.AlertAssignRequest;
 import com.mqtt.cloud.dto.request.AlertQuery;
 import com.mqtt.cloud.entity.AlertRecord;
+import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.mapper.AlertRecordMapper;
 import com.mqtt.cloud.mapper.DeviceMapper;
+import com.mqtt.cloud.mapper.UserMapper;
 import com.mqtt.cloud.service.AlertNotifier;
 import com.mqtt.cloud.service.AlertService;
+import com.mqtt.cloud.service.NotificationDispatcher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 告警记录服务实现（T-17 设计文档 §10.1）。
@@ -31,13 +38,19 @@ public class AlertServiceImpl extends ServiceImpl<AlertRecordMapper, AlertRecord
 
     private static final int DEFAULT_PAGE_SIZE = 10;
     private static final int MAX_PAGE_SIZE = 100;
+    private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
     private final DeviceMapper deviceMapper;
+    private final UserMapper userMapper;
     private final AlertNotifier alertNotifier;
+    private final NotificationDispatcher notificationDispatcher;
 
-    public AlertServiceImpl(DeviceMapper deviceMapper, AlertNotifier alertNotifier) {
+    public AlertServiceImpl(DeviceMapper deviceMapper, UserMapper userMapper,
+                            AlertNotifier alertNotifier, NotificationDispatcher notificationDispatcher) {
         this.deviceMapper = deviceMapper;
+        this.userMapper = userMapper;
         this.alertNotifier = alertNotifier;
+        this.notificationDispatcher = notificationDispatcher;
     }
 
     @Override
@@ -108,6 +121,43 @@ public class AlertServiceImpl extends ServiceImpl<AlertRecordMapper, AlertRecord
         record.setStatus(AlertConstants.STATUS_RECOVERED);
         record.setRecoveredAt(now);
         alertNotifier.notifyRecovered(record, deviceMapper.selectById(record.getDeviceId()));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void assign(Long userId, Long id, AlertAssignRequest request) {
+        AlertRecord record = getOwned(userId, id);
+        Long assigneeId = request == null ? null : request.getAssigneeId();
+        if (assigneeId != null && userMapper.selectById(assigneeId) == null) {
+            throw new BusinessException(ResultCode.ALERT_ASSIGNEE_INVALID, "处理人不存在: " + assigneeId);
+        }
+        LocalDateTime now = LocalDateTime.now();
+        int rows = baseMapper.assign(record.getId(), userId, assigneeId, now);
+        if (rows == 0) {
+            throw new BusinessException(ResultCode.ALERT_NOT_FOUND);
+        }
+        record.setAssigneeId(assigneeId);
+        record.setUpdatedAt(now);
+        if (Boolean.TRUE.equals(request.getNotify())) {
+            notifyAssignee(record);
+        }
+    }
+
+    /** 指派通知：投递一次 {@code alert.escalated}，异常只记 WARN，不影响指派落库。 */
+    private void notifyAssignee(AlertRecord record) {
+        Device device = record.getDeviceId() == null ? null : deviceMapper.selectById(record.getDeviceId());
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("alertId", record.getId());
+        payload.put("ruleId", record.getRuleId());
+        payload.put("ruleName", record.getRuleName());
+        payload.put("sourceType", record.getSourceType());
+        payload.put("severity", record.getSeverity());
+        payload.put("title", record.getTitle());
+        payload.put("assigneeId", record.getAssigneeId());
+        payload.put("escalationLevel", record.getEscalationLevel());
+        payload.put("assignedAt", TIME_FORMATTER.format(LocalDateTime.now()));
+        notificationDispatcher.dispatch(record.getUserId(), AlertConstants.EVENT_ALERT_ESCALATED,
+                device, record, payload);
     }
 
     @Override

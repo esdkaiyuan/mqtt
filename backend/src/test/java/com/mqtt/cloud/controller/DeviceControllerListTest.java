@@ -129,6 +129,26 @@ class DeviceControllerListTest {
         assertThat(dto.getOwnerId()).isNull();
     }
 
+    @Test
+    void getDevices_should_pass_topology_filters_and_keep_fields_in_response() {
+        authenticate();
+        DeviceQueryDTO dto = new DeviceQueryDTO();
+        dto.setNodeType("SUB");
+        dto.setParentId(88L);
+        Device subDevice = new Device();
+        subDevice.setNodeType("SUB");
+        subDevice.setParentId(88L);
+        when(deviceService.getDevices(eq(USER_ID), any())).thenReturn(pageWith(subDevice));
+
+        IPage<Device> result = controller.getDevices(dto).getData();
+
+        assertThat(dto.getNodeType()).isEqualTo("SUB");
+        assertThat(dto.getParentId()).isEqualTo(88L);
+        assertThat(result.getRecords()).hasSize(1);
+        assertThat(result.getRecords().get(0).getNodeType()).isEqualTo("SUB");
+        assertThat(result.getRecords().get(0).getParentId()).isEqualTo(88L);
+    }
+
     private Page<Device> pageWith(Device... records) {
         Page<Device> page = new Page<>(1, 10);
         page.setRecords(List.of(records));

@@ -170,7 +170,15 @@ export const errorCodes = [
   { code: 500, message: '服务端错误', desc: '服务内部异常，请稍后重试或联系管理员' },
   { code: 6246, message: '设备凭据无效', desc: 'HTTP 上报 Basic 凭据缺失、格式错误、设备不存在/停用/禁用或密钥错误（HTTP 401）' },
   { code: 6247, message: 'messageType 不支持', desc: 'HTTP 上报 messageType 不在 data / heartbeat / lwt 白名单（HTTP 400）' },
-  { code: 6248, message: '上报载荷过大', desc: 'HTTP 上报请求体超过 max-payload-bytes 限制（HTTP 413）' }
+  { code: 6248, message: '上报载荷过大', desc: 'HTTP 上报请求体超过 max-payload-bytes 限制（HTTP 413）' },
+  { code: 4002, message: '超出调用频率限制', desc: '开放接口按 API Key 维度限流，默认 600 次/60 秒；响应带 Retry-After 头（HTTP 429）' },
+  { code: 5002, message: '死信记录不存在', desc: '重放/丢弃死信时 ID 不存在（HTTP 404）' },
+  { code: 5003, message: '死信已被处置', desc: '该死信已重放或已丢弃，终态不可覆盖；防止同一消息被反复重放造成数据翻倍（HTTP 409）' },
+  { code: 5004, message: '死信重放入队失败', desc: '摄取队列不可用（管线关闭或队列已满），死信已回退为 PENDING 可稍后重试（HTTP 503）' },
+  { code: 6270, message: '注册批次不存在', desc: '按批次号查询时不存在或不属于当前用户（HTTP 404）' },
+  { code: 6271, message: '批量注册数量非法', desc: '单批注册数量不在 1~1000 区间（HTTP 400）' },
+  { code: 6272, message: 'deviceKey 模板非法', desc: '前缀仅允许字母、数字、中划线、下划线，长度 1~48（HTTP 400）' },
+  { code: 6273, message: '激活码非法或已被使用', desc: '激活码不匹配，或已被消费（激活后置空，不可重复使用）（HTTP 400）' }
 ]
 
 export const webhookEvents = [
@@ -187,5 +195,10 @@ export const webhookEvents = [
     event: 'alert.recovered',
     desc: '告警恢复',
     payload: '{ alertId, ruleId, ruleName, sourceType, severity, title, triggerCount, recoveredAt }'
+  },
+  {
+    event: 'alert.escalated',
+    desc: '告警超时未确认触发升级（含手动指派时勾选「同时通知」）',
+    payload: '{ alertId, ruleId, ruleName, sourceType, severity, escalationLevel, assigneeId, title, escalatedAt }'
   }
 ]

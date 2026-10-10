@@ -12,12 +12,16 @@ import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.AlertEvaluationService.EventSample;
 import com.mqtt.cloud.service.AlertEvaluationService.PropertySample;
 import com.mqtt.cloud.service.AlertNotifier;
+import com.mqtt.cloud.service.DeviceScopeService;
+import com.mqtt.cloud.service.scope.DeviceMemberships;
+import com.mqtt.cloud.service.scope.RuleScope;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -51,6 +55,7 @@ class AlertEvaluationServiceImplTest {
     private AlertRecordMapper alertRecordMapper;
     private DeviceMapper deviceMapper;
     private AlertNotifier alertNotifier;
+    private DeviceScopeService deviceScopeService;
     private AlertProperties properties;
     private AlertEvaluationServiceImpl service;
 
@@ -60,9 +65,10 @@ class AlertEvaluationServiceImplTest {
         alertRecordMapper = mock(AlertRecordMapper.class);
         deviceMapper = mock(DeviceMapper.class);
         alertNotifier = mock(AlertNotifier.class);
+        deviceScopeService = mock(DeviceScopeService.class);
         properties = new AlertProperties();
         service = new AlertEvaluationServiceImpl(alertRuleMapper, alertRecordMapper, deviceMapper,
-                alertNotifier, properties);
+                alertNotifier, deviceScopeService, properties);
         when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device());
     }
 
@@ -223,6 +229,79 @@ class AlertEvaluationServiceImplTest {
         assertThatCode(() -> service.onProperties(DEVICE_ID, PRODUCT_ID,
                 List.of(new PropertySample("temperature", "86.5", RECEIVED_AT))))
                 .doesNotThrowAnyException();
+    }
+
+    // ---------- 作用域（T-28） ----------
+
+    @Test
+    void onProperties_should_trigger_when_group_scope_matches() {
+        AlertRule rule = thresholdRule(AlertConstants.OPERATOR_GT, "80");
+        rule.setScopeType(AlertConstants.SCOPE_GROUP);
+        rule.setGroupIds("[3]");
+        when(alertRuleMapper.selectEnabledForDevice(USER_ID, DEVICE_ID, AlertConstants.SOURCE_THRESHOLD))
+                .thenReturn(List.of(rule));
+        when(deviceScopeService.toScope(any(), any(), any(), any()))
+                .thenReturn(RuleScope.of(AlertConstants.SCOPE_GROUP, null, List.of(3L), List.of()));
+        when(deviceScopeService.memberships(USER_ID, DEVICE_ID))
+                .thenReturn(new DeviceMemberships(Set.of(3L), Set.of()));
+        when(alertRecordMapper.selectOpenByRuleAndDevice(RULE_ID, DEVICE_ID)).thenReturn(null);
+
+        service.onProperties(DEVICE_ID, PRODUCT_ID,
+                List.of(new PropertySample("temperature", "86.5", RECEIVED_AT)));
+
+        verify(alertRecordMapper).insert(any(AlertRecord.class));
+    }
+
+    @Test
+    void onProperties_should_skip_when_group_scope_not_matched() {
+        AlertRule rule = thresholdRule(AlertConstants.OPERATOR_GT, "80");
+        rule.setScopeType(AlertConstants.SCOPE_GROUP);
+        rule.setGroupIds("[3]");
+        when(alertRuleMapper.selectEnabledForDevice(USER_ID, DEVICE_ID, AlertConstants.SOURCE_THRESHOLD))
+                .thenReturn(List.of(rule));
+        when(deviceScopeService.toScope(any(), any(), any(), any()))
+                .thenReturn(RuleScope.of(AlertConstants.SCOPE_GROUP, null, List.of(3L), List.of()));
+        when(deviceScopeService.memberships(USER_ID, DEVICE_ID))
+                .thenReturn(new DeviceMemberships(Set.of(5L), Set.of()));
+
+        service.onProperties(DEVICE_ID, PRODUCT_ID,
+                List.of(new PropertySample("temperature", "86.5", RECEIVED_AT)));
+
+        verify(alertRecordMapper, never()).insert(any(AlertRecord.class));
+        verify(alertNotifier, never()).notifyTriggered(any(), any());
+    }
+
+    @Test
+    void onEvents_should_trigger_when_tag_scope_matches() {
+        AlertRule rule = eventRule();
+        rule.setScopeType(AlertConstants.SCOPE_TAG);
+        rule.setTagIds("[9]");
+        when(alertRuleMapper.selectEnabledForDevice(USER_ID, DEVICE_ID, AlertConstants.SOURCE_EVENT))
+                .thenReturn(List.of(rule));
+        when(deviceScopeService.toScope(any(), any(), any(), any()))
+                .thenReturn(RuleScope.of(AlertConstants.SCOPE_TAG, null, List.of(), List.of(9L)));
+        when(deviceScopeService.memberships(USER_ID, DEVICE_ID))
+                .thenReturn(new DeviceMemberships(Set.of(), Set.of(9L)));
+        when(alertRecordMapper.selectOpenByRuleAndDevice(RULE_ID, DEVICE_ID)).thenReturn(null);
+
+        service.onEvents(DEVICE_ID, List.of(new EventSample("fall", "alert", "{}", RECEIVED_AT)));
+
+        verify(alertRecordMapper).insert(any(AlertRecord.class));
+    }
+
+    @Test
+    void onProperties_should_not_resolve_memberships_for_all_or_device_scope() {
+        AlertRule rule = thresholdRule(AlertConstants.OPERATOR_GT, "80");
+        when(alertRuleMapper.selectEnabledForDevice(USER_ID, DEVICE_ID, AlertConstants.SOURCE_THRESHOLD))
+                .thenReturn(List.of(rule));
+        when(alertRecordMapper.selectOpenByRuleAndDevice(RULE_ID, DEVICE_ID)).thenReturn(null);
+
+        service.onProperties(DEVICE_ID, PRODUCT_ID,
+                List.of(new PropertySample("temperature", "86.5", RECEIVED_AT)));
+
+        verify(deviceScopeService, never()).memberships(any(), any());
+        verify(deviceScopeService, never()).toScope(any(), any(), any(), any());
+        verify(alertRecordMapper).insert(any(AlertRecord.class));
     }
 
     // ---------- 事件 ----------

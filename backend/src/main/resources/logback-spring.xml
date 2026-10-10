@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  日志配置（T-30 · E1）。
+
+  改造前本项目无 logback 配置、无 MDC、无 traceId，且落盘只靠 Docker json-file
+  （20m x 5 = 100MB，容器重建即丢）。本次补三件事：
+
+  1. 控制台输出带 traceId（由 TraceIdFilter 放入 MDC），使一次请求的日志可串联
+  2. 全量日志落盘到 LOG_DIR，按天 + 按大小滚动，保留 14 天（容器内为命名卷）
+  3. prod 同时输出 JSON（供 Loki/ELK 索引）与可读文本（供人工 tail）
+
+  为什么不用 logstash-logback-encoder：引入该依赖会新增第三方 jar 与传递依赖，
+  而当前需求只是「结构化 + 可检索」，手写 PatternLayout 即可满足，避免供应链扩张。
+
+  结构约定：appender 全部在顶层定义一次，只在 springProfile 内切换 root 的appender-ref。
+  同一 appender 若在多个 profile 内重复定义且 file 相同，logback 的FileCollisionAnalyser
+  会判定冲突并跳过初始化（曾导致 ApplicationContext 加载失败）。
+-->
+<configuration>
+
+    <springProperty scope="context" name="APP_NAME" source="spring.application.name" defaultValue="mqtt-cloud-backend"/>
+    <springProperty scope="context" name="LOG_DIR" source="logging.file.path" defaultValue="logs"/>
+    <springProperty scope="context" name="LOG_MAX_HISTORY" source="logging.file.max-history" defaultValue="14"/>
+    <springProperty scope="context" name="LOG_TOTAL_SIZE_CAP" source="logging.file.total-size-cap" defaultValue="2GB"/>
+    <springProperty scope="context" name="LOG_MAX_FILE_SIZE" source="logging.file.max-size" defaultValue="100MB"/>
+
+    <property name="CONSOLE_PATTERN"
+              value="%d{yyyy-MM-dd HH:mm:ss.SSS} %highlight(%-5level) [%thread] [%X{traceId:-}] %cyan(%logger{40}) - %msg%n"/>
+
+    <!-- 可读文本：本地排障直接 tail，不必先过 jq -->
+    <appender name="TEXT_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}.log</file>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] [%X{traceId:-}] %logger{40} - %msg%n</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/${APP_NAME}.%d{yyyy-MM-dd}.%i.log.gz</fileNamePattern>
+            <maxFileSize>${LOG_MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${LOG_MAX_HISTORY}</maxHistory>
+            <totalSizeCap>${LOG_TOTAL_SIZE_CAP}</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <!-- 单行 JSON：字段化输出，供日志系统直接索引 -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${LOG_DIR}/${APP_NAME}.json</file>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>{"timestamp":"%d{yyyy-MM-dd'T'HH:mm:ss.SSS}","level":"%level","traceId":"%X{traceId:-}","thread":"%thread","logger":"%logger{40}","message":"%replace(%msg){'"','\\"'}"}%n</pattern>
+        </encoder>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${LOG_DIR}/${APP_NAME}.%d{yyyy-MM-dd}.%i.json.gz</fileNamePattern>
+            <maxFileSize>${LOG_MAX_FILE_SIZE}</maxFileSize>
+            <maxHistory>${LOG_MAX_HISTORY}</maxHistory>
+            <totalSizeCap>${LOG_TOTAL_SIZE_CAP}</totalSizeCap>
+        </rollingPolicy>
+    </appender>
+
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>${CONSOLE_PATTERN}</pattern>
+        </encoder>
+    </appender>
+
+    <!-- 本地开发：只打控制台，不落文件，避免污染开发机 -->
+    <springProfile name="dev,test">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!-- 生产：控制台 + 文本 + JSON 三路输出 -->
+    <springProfile name="prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="TEXT_FILE"/>
+            <appender-ref ref="JSON_FILE"/>
+        </root>
+    </springProfile>
+
+    <!--
+      兜底：未显式指定 profile 时（容器里 SPRING_PROFILES_ACTIVE 默认 prod，
+      但本地裸跑 java -jar 时可能为空）按 prod 处理，保证日志不落空。
+      表达式中 & 必须写成&amp;；三者都不在时才命中。
+    -->
+    <springProfile name="!dev&amp;!test&amp;!prod">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="TEXT_FILE"/>
+            <appender-ref ref="JSON_FILE"/>
+        </root>
+    </springProfile>
+
+</configuration>

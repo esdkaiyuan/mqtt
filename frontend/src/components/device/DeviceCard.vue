@@ -13,6 +13,12 @@
       <div class="device-info">
         <h3 class="device-name">{{ device.deviceName }}</h3>
         <span :class="['device-type-tag', device.deviceType]">{{ formatDeviceType(device.deviceType) }}</span>
+        <span
+          v-if="showNodeTypeBadge"
+          :class="['node-type-badge', device.nodeType?.toLowerCase()]"
+        >
+          {{ formatNodeType(device.nodeType) }}
+        </span>
       </div>
       <span :class="['status-badge', device.status?.toLowerCase()]">
         {{ formatStatus(device.status) }}
@@ -27,6 +33,10 @@
       <div class="device-detail-row">
         <span class="detail-label">Topic</span>
         <span class="detail-value topic-text">{{ device.topic }}</span>
+      </div>
+      <div v-if="device.nodeType" class="device-detail-row">
+        <span class="detail-label">节点类型</span>
+        <span class="detail-value">{{ formatNodeType(device.nodeType) }}</span>
       </div>
       <div v-if="device.description" class="device-detail-row">
         <span class="detail-label">描述</span>
@@ -87,6 +97,9 @@ const emit = defineEmits(['view', 'edit', 'delete', 'toggle-select'])
 const hasGroups = computed(() => (props.device.groups?.length ?? 0) > 0)
 const hasTags = computed(() => (props.device.tags?.length ?? 0) > 0)
 
+/** 网关与子设备在卡片头部额外给出徽标，便于在混合网格中一眼分辨层级。 */
+const showNodeTypeBadge = computed(() => ['GATEWAY', 'SUB'].includes(props.device.nodeType))
+
 /** 标签 chip 绑定标签色：有 color 时以文字 / 边框着色，无 color 时用默认样式。 */
 function tagStyle(tag) {
   return tag.color ? { color: tag.color, borderColor: tag.color } : {}
@@ -104,6 +117,11 @@ function formatStatus(status) {
 function formatDeviceType(type) {
   const map = { 'sensor': '传感器', 'gateway': '网关', 'actuator': '执行器' }
   return map[type] || type
+}
+
+function formatNodeType(nodeType) {
+  const map = { DIRECT: '普通设备', GATEWAY: '网关', SUB: '子设备' }
+  return map[nodeType] || nodeType
 }
 </script>
 
@@ -201,6 +219,26 @@ function formatDeviceType(type) {
 .device-type-tag.actuator {
   background: var(--color-warning-light);
   color: var(--color-warning);
+}
+
+.node-type-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+}
+
+.node-type-badge.gateway {
+  background: var(--color-success-light);
+  color: var(--color-success);
+}
+
+.node-type-badge.sub {
+  background: var(--color-bg);
+  color: var(--color-text-regular);
+  border: 1px dashed var(--color-border);
 }
 
 .device-card-body {

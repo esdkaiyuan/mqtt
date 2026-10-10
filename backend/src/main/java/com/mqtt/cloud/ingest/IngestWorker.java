@@ -1,7 +1,9 @@
 package com.mqtt.cloud.ingest;
 
+import com.mqtt.cloud.common.logging.TraceIdFilter;
 import com.mqtt.cloud.service.IngestDeadLetterService;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -105,8 +107,27 @@ public class IngestWorker {
     private void persist(List<IngestRecord> batch) {
         int maxAttempts = Math.max(1, properties.getMaxAttempts());
         int attempt = 0;
+        // T-30 E1：把本批次的 traceId 放入 MDC，使落库与下游 fan-out 的日志可串联。
+        // 一个批次可能含多条不同来源的消息，取首条的 traceId 作为批次标识：
+        // 批次内各条消息的 payload 与 deviceKey 已由 IngestRecord 自身携带，
+        // 这里的目的是让「这一批为什么进死信」能按 traceId 反查到原始请求。
+        String traceId = batch.isEmpty() ? null : batch.get(0).traceId();
+        if (traceId != null && !traceId.isBlank()) {
+            MDC.put(TraceIdFilter.TRACE_ID, traceId);
+        }
+        try {
+            doPersist(batch, maxAttempts, new int[]{0});
+        } finally {
+            if (traceId != null) {
+                MDC.remove(TraceIdFilter.TRACE_ID);
+            }
+        }
+    }
+
+    private void doPersist(List<IngestRecord> batch, int maxAttempts, int[] attemptHolder) {
         while (true) {
             long startNanos = System.nanoTime();
+            int attempt = ++attemptHolder[0];
             try {
                 List<ResolvedEvent> events = persistenceService.persist(batch);
                 metrics.persistDuration().record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
@@ -116,7 +137,6 @@ public class IngestWorker {
                 dispatcher.dispatch(events);
                 return;
             } catch (Exception e) {
-                attempt++;
                 if (attempt >= maxAttempts) {
                     metrics.batchFailures().increment();
                     log.error("批量落库重试耗尽，整批转入死信: size={}, attempts={}", batch.size(), attempt, e);

@@ -64,4 +64,35 @@ public interface AlertRecordMapper extends BaseMapper<AlertRecord> {
      * 绕过全局逻辑删除过滤，从而能看到 {@code deleted=1} 的规则行。
      */
     List<AlertRecord> selectOpenByDeletedRule(@Param("limit") int limit);
+
+    /**
+     * 取升级候选告警（T-27 设计文档 §5.1）：未确认（{@code status='TRIGGERED'}）且
+     * 升级基准时间已越过阈值。基准时间取「{@code last_escalated_at} 为空时用
+     * {@code first_triggered_at}，否则用 {@code last_escalated_at}」。
+     *
+     * @param userId   归属用户
+     * @param severity 策略适用级别；{@code ALL} 表示不限级别
+     * @param threshold 基准时间上限（早于等于此值即到期）
+     * @param limit    单轮上限
+     */
+    List<AlertRecord> selectEscalationCandidates(@Param("userId") Long userId,
+                                                 @Param("severity") String severity,
+                                                 @Param("threshold") LocalDateTime threshold,
+                                                 @Param("limit") int limit);
+
+    /**
+     * 升级条件更新（T-27 设计文档 §5.2）：仅当记录当前级别等于 {@code currentLevel} 时生效，
+     * 返回受影响行数供多副本并发去重（0 表示已被并发升级，跳过）。{@code assigneeId} 为空时保持原处理人。
+     */
+    int escalate(@Param("id") Long id,
+                 @Param("currentLevel") int currentLevel,
+                 @Param("newLevel") int newLevel,
+                 @Param("assigneeId") Long assigneeId,
+                 @Param("escalatedAt") LocalDateTime escalatedAt);
+
+    /** 手动指派 / 解除指派（T-27 设计文档 §5.3）；{@code assigneeId} 为空即解除指派。 */
+    int assign(@Param("id") Long id,
+               @Param("userId") Long userId,
+               @Param("assigneeId") Long assigneeId,
+               @Param("updatedAt") LocalDateTime updatedAt);
 }

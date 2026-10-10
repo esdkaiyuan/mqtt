@@ -16,6 +16,16 @@
           <el-option label="执行器" value="actuator" />
         </el-select>
       </el-form-item>
+      <el-form-item v-if="parentGateway" label="所属网关">
+        <div class="parent-gateway">
+          <span class="parent-gateway-name">{{ parentGateway.deviceName }}</span>
+          <span class="parent-gateway-key">{{ parentGateway.deviceKey }}</span>
+          <el-button link type="primary" @click="emit('view-gateway', parentGateway.id)">
+            查看网关
+          </el-button>
+        </div>
+        <p class="form-hint">挂载关系在网关详情页变更，需先解绑再重新挂载</p>
+      </el-form-item>
       <el-form-item label="MQTT Topic">
         <el-input v-model="form.topic" />
       </el-form-item>
@@ -35,10 +45,11 @@ import { reactive, watch } from 'vue'
 
 const props = defineProps({
   device: { type: Object, default: null },
+  parentGateway: { type: Object, default: null },
   loading: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['submit'])
+const emit = defineEmits(['submit', 'view-gateway'])
 
 const visible = defineModel('visible', { type: Boolean })
 
@@ -73,5 +84,29 @@ function handleSubmit() {
 
 .dialog-form :deep(.el-select) {
   width: 100%;
+}
+
+.parent-gateway {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+}
+
+.parent-gateway-name {
+  color: var(--color-text-primary);
+}
+
+.parent-gateway-key {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.form-hint {
+  width: 100%;
+  margin-top: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
 }
 </style>

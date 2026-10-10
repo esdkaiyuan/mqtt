@@ -84,6 +84,27 @@ public class Device {
     @TableField("enabled")
     private Integer enabled;
 
+    /** 拓扑角色：DIRECT=普通设备，GATEWAY=网关，SUB=子设备（T-26） */
+    @TableField("node_type")
+    private String nodeType;
+
+    /** 父网关ID，仅 nodeType=SUB 时非空。updateStrategy=ALWAYS 保证「解绑」时能显式写入 NULL。 */
+    @TableField(value = "parent_id", updateStrategy = FieldStrategy.ALWAYS)
+    private Long parentId;
+
+    /** 设备激活码（T-30）；NULL 表示未走激活流程，注册即可用。敏感字段，不对外序列化 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @TableField(value = "activate_code", updateStrategy = FieldStrategy.ALWAYS)
+    private String activateCode;
+
+    /** 激活时间（T-30）；NULL 表示未激活 */
+    @TableField("activated_at")
+    private LocalDateTime activatedAt;
+
+    /** 来源注册批次ID（T-30）；单设备创建时为 NULL */
+    @TableField("batch_id")
+    private Long batchId;
+
     // 以下字段用于DTO映射，不映射到数据库
     @TableField(exist = false)
     private String ownerUsername;

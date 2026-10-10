@@ -10,6 +10,7 @@ import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.util.AfterCommit;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
+import com.mqtt.cloud.dto.request.CreateSubDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
@@ -21,6 +22,7 @@ import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceStatusHistoryService;
+import com.mqtt.cloud.service.DeviceTopologyService;
 import com.mqtt.cloud.service.EmqxClientKicker;
 import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     private final ProductService productService;
     private final DeviceAuthCacheService authCacheService;
     private final EmqxClientKicker emqxClientKicker;
+    private final DeviceTopologyService deviceTopologyService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -87,6 +90,56 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public DeviceCreatedDTO createSubDevice(Long gatewayId, CreateSubDeviceDTO dto) {
+        Device gateway = this.baseMapper.findActiveById(gatewayId);
+        if (gateway == null) {
+            throw new BusinessException(ResultCode.DEVICE_PARENT_NOT_FOUND);
+        }
+        // 产品随网关给定：子设备与网关同产品为硬约束，请求体不携带 productId
+        Product product = productService.requireById(gateway.getProductId());
+
+        // deviceKey 唯一性收敛到产品维度，与 createDevice 保持同一约束
+        LambdaQueryWrapper<Device> keyWrapper = new LambdaQueryWrapper<>();
+        keyWrapper.eq(Device::getProductId, product.getId())
+                  .eq(Device::getDeviceKey, dto.getDeviceKey())
+                  .eq(Device::getDeleted, 0);
+        if (this.count(keyWrapper) > 0) {
+            throw new BusinessException(ResultCode.DEVICE_KEY_EXISTS);
+        }
+
+        Device device = new Device();
+        device.setProductId(product.getId());
+        device.setDeviceName(dto.getDeviceName());
+        device.setDeviceKey(dto.getDeviceKey());
+        device.setDeviceType(dto.getDeviceType());
+        device.setTopic(dto.getTopic());
+        device.setDescription(dto.getDescription());
+        // 归属跟随网关而非当前登录用户：跨账号子设备会破坏网关代连的授权边界
+        device.setOwnerId(gateway.getOwnerId());
+        device.setStatus(DeviceStatusValue.INACTIVE);
+        device.setLastSeen(null);
+        device.setEnabled(1);
+        device.setDeleted(0);
+
+        this.save(device);
+
+        // 父设备合法性、同产品、层级与数量上限统一交给 attach 裁决，两条入口共用同一写路径
+        deviceTopologyService.attach(gatewayId, device.getId());
+
+        // 挂载通过后再签发凭据：与设备创建同事务，任一步失败整体回滚，不留半成品
+        String plaintext = deviceCredentialService.issueSecret(device.getId());
+
+        DeviceCreatedDTO response = new DeviceCreatedDTO();
+        response.setId(device.getId());
+        response.setDeviceKey(device.getDeviceKey());
+        response.setProductKey(product.getProductKey());
+        response.setUsername(deviceSecretService.buildUsername(product.getProductKey(), device.getDeviceKey()));
+        response.setDeviceSecret(plaintext);
+        return response;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public Device updateDevice(Long deviceId, UpdateDeviceDTO dto) {
         Device device = this.getById(deviceId);
         if (device == null || Boolean.TRUE.equals(device.getDeleted())) {
@@ -108,6 +161,10 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         Device device = this.getById(deviceId);
         if (device == null || Boolean.TRUE.equals(device.getDeleted())) {
             throw new BusinessException(ResultCode.DEVICE_NOT_FOUND);
+        }
+        // 网关名下仍有子设备时禁止删除：孤儿子设备会保留已失效的 parent_id，破坏代连授权
+        if (this.baseMapper.countByParentId(deviceId) > 0L) {
+            throw new BusinessException(ResultCode.DEVICE_HAS_SUBDEVICES);
         }
         // 显式 SQL 更新，确保 deleted 标记落库（MyBatis-Plus 逻辑删除对 updateById 有额外语义）
         LambdaUpdateWrapper<Device> wrapper = new LambdaUpdateWrapper<>();

@@ -94,6 +94,23 @@ public class AlertRecord {
     @TableField("recovered_at")
     private LocalDateTime recoveredAt;
 
+    /**
+     * 处理人用户ID，NULL 表示未指派（T-27）。
+     * <p>
+     * 更新策略固定 {@link FieldStrategy#ALWAYS}：解除指派需把该列显式置空，
+     * 若沿用默认 {@code NOT_NULL} 策略，null 值会被 MP 跳过而无法解除。
+     */
+    @TableField(value = "assignee_id", updateStrategy = FieldStrategy.ALWAYS)
+    private Long assigneeId;
+
+    /** 已升级次数，0 表示未升级（T-27） */
+    @TableField("escalation_level")
+    private Integer escalationLevel;
+
+    /** 最近升级时间，作为下一级升级的判定基准（T-27） */
+    @TableField("last_escalated_at")
+    private LocalDateTime lastEscalatedAt;
+
     /** 创建时间 */
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

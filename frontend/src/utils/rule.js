@@ -103,3 +103,59 @@ export function formatDateTime(value) {
   if (!value) return '—'
   return new Date(value).toLocaleString('zh-CN')
 }
+
+/**
+ * 规则表单的动作组装与作用域切档清理（T-29 从 RuleEditor 抽出）。
+ *
+ * 规则表单存的是**扁平动作字段**（`targetIdentifier` / `topic` / `url` …），没有 `actionConfig`。
+ * 因此「扁平字段 → `actionConfig`」的组装必须唯一：提交体（`buildPayload`）与画布节点摘要
+ * 共用这一份，否则摘要与提交体两处会漂移。
+ */
+
+/** 解析 JSON 对象文本；空文本返回 null，非法 JSON / 非对象抛错（与表单校验口径一致）。 */
+function parseJsonObjectOrNull(text, label) {
+  if (!text || !text.trim()) return null
+  let parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error(`${label}必须是合法 JSON`)
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${label}必须是 JSON 对象`)
+  }
+  return parsed
+}
+
+/** 扁平动作字段 → `actionConfig`；按 `form.actionType` 只读当前类型对应字段。 */
+export function buildRuleActionConfig(form) {
+  switch (form.actionType) {
+    case 'UPDATE_PROPERTY':
+      return { identifier: form.targetIdentifier.trim(), value: String(form.targetValue).trim() }
+    case 'SEND_COMMAND': {
+      const config = { commandType: form.commandType, identifier: form.targetIdentifier.trim() }
+      const params = parseJsonObjectOrNull(form.commandParams, '命令参数')
+      if (params) config.params = params
+      return config
+    }
+    case 'FORWARD_MQTT': {
+      const config = { topic: form.topic.trim(), qos: form.qos }
+      if (form.payloadTemplate.trim()) config.payloadTemplate = form.payloadTemplate
+      return config
+    }
+    default: {
+      const config = { url: form.url.trim(), method: form.method }
+      const headers = parseJsonObjectOrNull(form.headers, '请求头')
+      if (headers) config.headers = headers
+      if (form.payloadTemplate.trim()) config.payloadTemplate = form.payloadTemplate
+      return config
+    }
+  }
+}
+
+/** 切档时清掉非当前档位的字段，避免提交体出现档位与字段不一致。 */
+export function normalizeRuleScope(form) {
+  if (form.scopeType !== 'DEVICE') form.deviceId = null
+  if (form.scopeType !== 'GROUP') form.groupIds = []
+  if (form.scopeType !== 'TAG') form.tagIds = []
+}

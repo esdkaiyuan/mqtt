@@ -6,7 +6,7 @@
     <sql id="ruleColumns">
         id, user_id, name, description, device_id, source_type, identifier, operator,
         threshold_value, event_type, action_type, action_config, cooldown_seconds,
-        last_triggered_at, enabled, created_at, updated_at, deleted
+        last_triggered_at, enabled, scope_type, group_ids, tag_ids, created_at, updated_at, deleted
     </sql>
 
     <!-- 规则缓存加载：某用户启用规则 -->

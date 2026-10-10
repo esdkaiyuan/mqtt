@@ -10,6 +10,10 @@ import com.mqtt.cloud.mapper.AlertRuleMapper;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.AlertNotifier;
+import com.mqtt.cloud.service.DeviceScopeService;
+import com.mqtt.cloud.service.scope.DeviceMemberships;
+import com.mqtt.cloud.service.scope.RuleScope;
+import com.mqtt.cloud.service.scope.ScopeMatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,6 +21,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -35,6 +40,7 @@ public class AlertEvaluationServiceImpl implements AlertEvaluationService {
     private final AlertRecordMapper alertRecordMapper;
     private final DeviceMapper deviceMapper;
     private final AlertNotifier alertNotifier;
+    private final DeviceScopeService deviceScopeService;
     private final AlertProperties properties;
 
     @Override
@@ -47,8 +53,9 @@ public class AlertEvaluationServiceImpl implements AlertEvaluationService {
             if (device == null) {
                 return;
             }
-            List<AlertRule> rules = alertRuleMapper.selectEnabledForDevice(
-                    device.getOwnerId(), deviceId, AlertConstants.SOURCE_THRESHOLD);
+            List<AlertRule> rules = filterInScope(alertRuleMapper.selectEnabledForDevice(
+                    device.getOwnerId(), deviceId, AlertConstants.SOURCE_THRESHOLD),
+                    device.getOwnerId(), deviceId);
             for (AlertRule rule : rules) {
                 for (PropertySample sample : samples) {
                     if (!matchesIdentifier(rule.getIdentifier(), sample.identifier())) {
@@ -72,8 +79,9 @@ public class AlertEvaluationServiceImpl implements AlertEvaluationService {
             if (device == null) {
                 return;
             }
-            List<AlertRule> rules = alertRuleMapper.selectEnabledForDevice(
-                    device.getOwnerId(), deviceId, AlertConstants.SOURCE_EVENT);
+            List<AlertRule> rules = filterInScope(alertRuleMapper.selectEnabledForDevice(
+                    device.getOwnerId(), deviceId, AlertConstants.SOURCE_EVENT),
+                    device.getOwnerId(), deviceId);
             for (AlertRule rule : rules) {
                 for (EventSample sample : samples) {
                     if (!matchesIdentifier(rule.getIdentifier(), sample.identifier())) {
@@ -89,6 +97,37 @@ public class AlertEvaluationServiceImpl implements AlertEvaluationService {
         } catch (Exception e) {
             log.warn("事件告警评估异常，跳过: deviceId={}", deviceId, e);
         }
+    }
+
+    /**
+     * 作用域二次过滤（T-28 设计文档 §7.2）：SQL 已精确保证 {@code ALL} / {@code DEVICE} 档，
+     * 此处仅对 {@code GROUP} / {@code TAG} 档用 {@code ScopeMatcher} + 设备隶属过滤；
+     * 隶属集合按需解析一次（无分组 / 标签档规则时不查库）。
+     */
+    private List<AlertRule> filterInScope(List<AlertRule> rules, Long userId, Long deviceId) {
+        if (rules == null || rules.isEmpty()) {
+            return List.of();
+        }
+        List<AlertRule> result = new ArrayList<>(rules.size());
+        DeviceMemberships memberships = null;
+        for (AlertRule rule : rules) {
+            if (needsMembership(rule.getScopeType())) {
+                if (memberships == null) {
+                    memberships = deviceScopeService.memberships(userId, deviceId);
+                }
+                RuleScope scope = deviceScopeService.toScope(
+                        rule.getScopeType(), rule.getDeviceId(), rule.getGroupIds(), rule.getTagIds());
+                if (!ScopeMatcher.matches(scope, deviceId, memberships)) {
+                    continue;
+                }
+            }
+            result.add(rule);
+        }
+        return result;
+    }
+
+    private static boolean needsMembership(String scopeType) {
+        return AlertConstants.SCOPE_GROUP.equals(scopeType) || AlertConstants.SCOPE_TAG.equals(scopeType);
     }
 
     @Override

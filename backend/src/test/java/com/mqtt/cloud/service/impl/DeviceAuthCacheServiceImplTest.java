@@ -58,24 +58,31 @@ class DeviceAuthCacheServiceImplTest {
     void put_should_serialize_meta_with_ttl() throws Exception {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         DeviceAuthCacheService.AuthMeta meta =
-                new DeviceAuthCacheService.AuthMeta(1L, "ENABLED", 1, "$2a$hash");
+                new DeviceAuthCacheService.AuthMeta(1L, 1L, "ENABLED", 1, "SECRET", "$2a$hash",
+                        "device/{deviceKey}", "GATEWAY", 7L);
 
         service.put("esp32-fall", "sensor-01", meta);
 
         ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
         verify(valueOperations).set(eq(KEY), json.capture(), eq(Duration.ofSeconds(60)));
-        assertThat(objectMapper.readValue(json.getValue(), DeviceAuthCacheService.AuthMeta.class))
-                .isEqualTo(meta);
+        // 往返须完整保留九字段，新增的 nodeType/parentId 是委托判定的拓扑快照，不可在序列化时丢失
+        DeviceAuthCacheService.AuthMeta restored =
+                objectMapper.readValue(json.getValue(), DeviceAuthCacheService.AuthMeta.class);
+        assertThat(restored).isEqualTo(meta);
+        assertThat(restored.nodeType()).isEqualTo("GATEWAY");
+        assertThat(restored.parentId()).isEqualTo(7L);
     }
 
     @Test
     void get_should_deserialize_hit() throws Exception {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(KEY)).thenReturn(
-                objectMapper.writeValueAsString(new DeviceAuthCacheService.AuthMeta(1L, "ENABLED", 1, "$2a$hash")));
+                objectMapper.writeValueAsString(new DeviceAuthCacheService.AuthMeta(1L, 1L, "ENABLED", 1, "SECRET",
+                        "$2a$hash", "device/{deviceKey}", "SUB", 3L)));
 
         assertThat(service.get("esp32-fall", "sensor-01"))
-                .isEqualTo(new DeviceAuthCacheService.AuthMeta(1L, "ENABLED", 1, "$2a$hash"));
+                .isEqualTo(new DeviceAuthCacheService.AuthMeta(1L, 1L, "ENABLED", 1, "SECRET", "$2a$hash",
+                        "device/{deviceKey}", "SUB", 3L));
     }
 
     @Test

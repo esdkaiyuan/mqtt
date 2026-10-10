@@ -109,4 +109,32 @@ describe('components/device/DeviceCard', () => {
     expect(wrapper.emitted('edit')[0][0]).toEqual(DEVICE)
     expect(wrapper.emitted('delete')[0][0]).toEqual(DEVICE)
   })
+
+  it('网关节点展示节点类型徽标与详情项', () => {
+    const wrapper = mountCard({ device: { ...DEVICE, nodeType: 'GATEWAY' } })
+
+    expect(wrapper.find('.node-type-badge').text()).toBe('网关')
+    expect(wrapper.findAll('.detail-label').map((item) => item.text())).toContain('节点类型')
+  })
+
+  it('子设备节点展示子设备徽标', () => {
+    const wrapper = mountCard({ device: { ...DEVICE, nodeType: 'SUB' } })
+
+    expect(wrapper.find('.node-type-badge').text()).toBe('子设备')
+    expect(wrapper.find('.node-type-badge').classes()).toContain('sub')
+  })
+
+  it('普通设备不出徽标但仍在详情项标注节点类型', () => {
+    const wrapper = mountCard({ device: { ...DEVICE, nodeType: 'DIRECT' } })
+
+    expect(wrapper.find('.node-type-badge').exists()).toBe(false)
+    expect(wrapper.text()).toContain('普通设备')
+  })
+
+  it('缺少节点类型字段时不渲染节点类型区域', () => {
+    const wrapper = mountCard()
+
+    expect(wrapper.find('.node-type-badge').exists()).toBe(false)
+    expect(wrapper.findAll('.detail-label').map((item) => item.text())).not.toContain('节点类型')
+  })
 })

@@ -6,7 +6,9 @@ import com.mqtt.cloud.mqtt.MqttMessageHandler;
 import com.mqtt.cloud.mqtt.MqttProperties;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.MessageService;
+import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.RealtimeStreamService;
+import com.mqtt.cloud.service.TopicPrefixResolver;
 import com.mqtt.cloud.service.WebhookDispatcher;
 import com.mqtt.cloud.service.impl.HttpIngestServiceImpl;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
@@ -74,7 +76,9 @@ class HttpIngestEquivalenceTest {
                 mock(WebhookDispatcher.class),
                 mock(RealtimeStreamService.class),
                 pipeline,
-                new IngestProperties());
+                new IngestProperties(),
+                mock(ProductService.class),
+                new TopicPrefixResolver());
 
         MqttMessage message = new MqttMessage(payload.getBytes(StandardCharsets.UTF_8));
         message.setQos(qos);
@@ -105,9 +109,12 @@ class HttpIngestEquivalenceTest {
 
         String[] fields = {"deviceKey", "topic", "messageType", "payload", "qos"};
         assertThat(http)
-                .as("除 receivedAt 外五字段应逐字段相等")
+                // receivedAt 与 traceId 按设计本就不同：时间戳各自取，traceId 来源不同
+                // （HTTP 取请求 traceId，MQTT 由 deviceKey + 时间戳派生），
+                // 不影响业务字段的等价性，故一并忽略
+                .as("除 receivedAt / traceId 外五字段应逐字段相等")
                 .usingRecursiveComparison()
-                .ignoringFields("receivedAt")
+                .ignoringFields("receivedAt", "traceId")
                 .isEqualTo(mqtt);
 
         // 显式逐字段断言，失败时字段名可见

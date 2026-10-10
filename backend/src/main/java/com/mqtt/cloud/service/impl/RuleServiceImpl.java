@@ -15,10 +15,13 @@ import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.RuleDefinition;
 import com.mqtt.cloud.mapper.RuleDefinitionMapper;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.DeviceScopeService;
 import com.mqtt.cloud.service.RuleEvaluationService;
 import com.mqtt.cloud.service.RuleService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
+import com.mqtt.cloud.service.scope.RuleScope;
+import com.mqtt.cloud.util.ScopeJson;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,9 +35,10 @@ import java.util.Map;
 /**
  * 消息规则服务实现（T-19 设计文档 §7 / §10.1）。
  * <p>
- * 校验集中在本类：非法配置统一抛 {@code 6219}，非法动作类型抛 {@code 6220}，越权设备抛 {@code 2003}，
- * 规则数超上限抛 {@code 6222}。设备归属复用 {@link DeviceService#getDeviceById(Long)}
- * （不存在抛 {@code 2002}，非本人抛 {@code 2003}）。写入后主动失效本副本规则缓存。
+ * 校验集中在本类：非法配置统一抛 {@code 6219}，非法动作类型抛 {@code 6220}，作用域非法抛 {@code 6269}，
+ * 越权设备抛 {@code 2003}，规则数超上限抛 {@code 6222}。设备归属复用 {@link DeviceService#getDeviceById(Long)}
+ * （不存在抛 {@code 2002}，非本人抛 {@code 2003}）；分组 / 标签归属与作用域数量上限交由
+ * {@link DeviceScopeService#validateAndNormalize}（越权 {@code 403}）。写入后主动失效本副本规则缓存。
  * <p>
  * {@code actionConfig} 在请求 / 响应中为对象，本类负责与库中 {@code TEXT} 的序列化 / 反序列化；
  * 序列化失败按 {@code 6219} 拒绝，不落库。校验**不查询物模型**（保存时设备可能未定），
@@ -48,21 +52,27 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
     private static final int MAX_PAGE_SIZE = 100;
 
     private final DeviceService deviceService;
+    private final DeviceScopeService deviceScopeService;
     private final ThingModelService thingModelService;
     private final RuleEvaluationService ruleEvaluationService;
     private final RuleProperties properties;
     private final ObjectMapper objectMapper;
+    private final ScopeJson scopeJson;
 
     public RuleServiceImpl(DeviceService deviceService,
+                           DeviceScopeService deviceScopeService,
                            ThingModelService thingModelService,
                            RuleEvaluationService ruleEvaluationService,
                            RuleProperties properties,
-                           ObjectMapper objectMapper) {
+                           ObjectMapper objectMapper,
+                           ScopeJson scopeJson) {
         this.deviceService = deviceService;
+        this.deviceScopeService = deviceScopeService;
         this.thingModelService = thingModelService;
         this.ruleEvaluationService = ruleEvaluationService;
         this.properties = properties;
         this.objectMapper = objectMapper;
+        this.scopeJson = scopeJson;
     }
 
     @Override
@@ -76,7 +86,7 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         IPage<RuleDefinition> result = baseMapper.pageByUser(new Page<>(pageNum, pageSize), userId,
                 normalizeUpper(effective.getSourceType()), normalizeUpper(effective.getActionType()),
                 effective.getEnabled(), trimToNull(effective.getKeyword()));
-        result.getRecords().forEach(this::populateActionView);
+        result.getRecords().forEach(this::populateView);
         return result;
     }
 
@@ -92,7 +102,7 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         applyAndValidate(rule, request, userId, null);
         save(rule);
         ruleEvaluationService.evictCache(userId);
-        populateActionView(rule);
+        populateView(rule);
         return rule;
     }
 
@@ -103,7 +113,7 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         applyAndValidate(rule, request, userId, id);
         updateById(rule);
         ruleEvaluationService.evictCache(userId);
-        populateActionView(rule);
+        populateView(rule);
         return rule;
     }
 
@@ -136,7 +146,7 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         if (!userId.equals(rule.getUserId())) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
-        populateActionView(rule);
+        populateView(rule);
         return rule;
     }
 
@@ -244,8 +254,12 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
             throw new BusinessException(ResultCode.RULE_ACTION_UNSUPPORTED, "不支持的动作类型 " + actionType);
         }
 
-        Long deviceId = request.getDeviceId();
-        if (deviceId != null) {
+        RuleScope scope = deviceScopeService.validateAndNormalize(userId,
+                RuleScope.of(request.getScopeType(), request.getDeviceId(),
+                        request.getGroupIds(), request.getTagIds()),
+                ResultCode.RULE_SCOPE_INVALID);
+        Long deviceId = scope.deviceId();
+        if (RuleConstants.SCOPE_DEVICE.equals(scope.scopeType())) {
             Device device = deviceService.getDeviceById(deviceId);
             if (!userId.equals(device.getOwnerId())) {
                 throw new BusinessException(ResultCode.DEVICE_NOT_OWNED);
@@ -298,7 +312,10 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
 
         rule.setName(name);
         rule.setDescription(description);
+        rule.setScopeType(scope.scopeType());
         rule.setDeviceId(deviceId);
+        rule.setGroupIds(scopeJson.write(scope.groupIds()));
+        rule.setTagIds(scopeJson.write(scope.tagIds()));
         rule.setSourceType(sourceType);
         rule.setIdentifier(identifier);
         rule.setOperator(operator);
@@ -463,9 +480,11 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         };
     }
 
-    /** 把库中 JSON 文本解析为对象写入瞬态字段，供返回前端；解析失败按 {@code null} 处理。 */
-    private void populateActionView(RuleDefinition rule) {
+    /** 装配返回前端的瞬态视图：动作配置对象与作用域 ID 数组；解析失败按空值降级。 */
+    private void populateView(RuleDefinition rule) {
         rule.setActionConfigView(readActionConfig(rule));
+        rule.setGroupIdsView(scopeJson.toIdList(rule.getGroupIds()));
+        rule.setTagIdsView(scopeJson.toIdList(rule.getTagIds()));
     }
 
     private JsonNode readActionConfig(RuleDefinition rule) {

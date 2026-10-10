@@ -10,22 +10,28 @@ import com.mqtt.cloud.dto.response.RuleTestResult;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.RuleDefinition;
 import com.mqtt.cloud.mapper.RuleDefinitionMapper;
+import com.mqtt.cloud.service.DeviceScopeService;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.RuleEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
+import com.mqtt.cloud.service.scope.RuleScope;
+import com.mqtt.cloud.util.ScopeJson;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -48,21 +54,36 @@ class RuleServiceImplTest {
 
     private RuleDefinitionMapper ruleDefinitionMapper;
     private DeviceService deviceService;
+    private DeviceScopeService deviceScopeService;
     private ThingModelService thingModelService;
     private RuleEvaluationService ruleEvaluationService;
     private RuleProperties properties;
+    private ScopeJson scopeJson;
     private RuleServiceImpl service;
 
     @BeforeEach
     void setUp() {
         ruleDefinitionMapper = mock(RuleDefinitionMapper.class);
         deviceService = mock(DeviceService.class);
+        deviceScopeService = mock(DeviceScopeService.class);
         thingModelService = mock(ThingModelService.class);
         ruleEvaluationService = mock(RuleEvaluationService.class);
         properties = new RuleProperties();
-        service = new RuleServiceImpl(deviceService, thingModelService, ruleEvaluationService,
-                properties, new ObjectMapper());
+        scopeJson = new ScopeJson(new ObjectMapper());
+        service = new RuleServiceImpl(deviceService, deviceScopeService, thingModelService,
+                ruleEvaluationService, properties, new ObjectMapper(), scopeJson);
         ReflectionTestUtils.setField(service, "baseMapper", ruleDefinitionMapper);
+        // 作用域校验以纯函数桩替代，只保留「档位推断」语义，避免单测引入分组 / 标签服务
+        when(deviceScopeService.validateAndNormalize(any(), any(), any()))
+                .thenAnswer(invocation -> normalize(invocation.getArgument(1)));
+    }
+
+    /** 与 {@code DeviceScopeServiceImpl.inferType} 同口径：档位空则按 deviceId 推断。 */
+    private static RuleScope normalize(RuleScope scope) {
+        String type = scope.scopeType() == null
+                ? (scope.deviceId() == null ? RuleConstants.SCOPE_ALL : RuleConstants.SCOPE_DEVICE)
+                : scope.scopeType();
+        return RuleScope.of(type, scope.deviceId(), scope.groupIds(), scope.tagIds());
     }
 
     // ---------- 创建校验 ----------
@@ -106,6 +127,44 @@ class RuleServiceImplTest {
         when(deviceService.getDeviceById(DEVICE_ID)).thenReturn(device(999L));
 
         assertCode(() -> service.create(USER_ID, request), ResultCode.DEVICE_NOT_OWNED);
+    }
+
+    @Test
+    void create_should_infer_device_scope_from_device_id() {
+        RuleRequest request = propertyRequest();
+        request.setDeviceId(DEVICE_ID);
+        when(deviceService.getDeviceById(DEVICE_ID)).thenReturn(device(USER_ID));
+
+        RuleDefinition created = service.create(USER_ID, request);
+
+        assertThat(created.getScopeType()).isEqualTo(RuleConstants.SCOPE_DEVICE);
+        assertThat(created.getDeviceId()).isEqualTo(DEVICE_ID);
+        assertThat(created.getGroupIds()).isNull();
+        assertThat(created.getTagIds()).isNull();
+    }
+
+    @Test
+    void create_should_persist_group_scope_ids_deduplicated() {
+        RuleRequest request = propertyRequest();
+        request.setScopeType(RuleConstants.SCOPE_GROUP);
+        request.setGroupIds(List.of(3L, 5L, 3L));
+
+        RuleDefinition created = service.create(USER_ID, request);
+
+        assertThat(created.getScopeType()).isEqualTo(RuleConstants.SCOPE_GROUP);
+        assertThat(created.getDeviceId()).isNull();
+        assertThat(created.getGroupIds()).isEqualTo("[3,5]");
+        assertThat(created.getGroupIdsView()).containsExactly(3L, 5L);
+    }
+
+    @Test
+    void create_should_reject_invalid_scope_with_6269() {
+        doThrow(new BusinessException(ResultCode.RULE_SCOPE_INVALID, "分组档要求且仅要求 groupIds"))
+                .when(deviceScopeService).validateAndNormalize(any(), any(), eq(ResultCode.RULE_SCOPE_INVALID));
+        RuleRequest request = propertyRequest();
+        request.setScopeType(RuleConstants.SCOPE_GROUP);
+
+        assertCode(() -> service.create(USER_ID, request), ResultCode.RULE_SCOPE_INVALID);
     }
 
     @Test

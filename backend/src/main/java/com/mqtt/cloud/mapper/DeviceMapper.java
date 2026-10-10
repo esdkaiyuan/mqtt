@@ -41,17 +41,34 @@ public interface DeviceMapper extends BaseMapper<Device> {
     List<Device> findTimeoutDevices(@Param("timeoutMinutes") int timeoutMinutes);
 
     /**
-     * 离线告警巡检：取作用域内 {@code status='OFFLINE'} 且离线时长已达阈值的设备（T-17 设计文档 §8.3）。
+     * 离线告警巡检：取作用域内 {@code status='OFFLINE'} 且离线时长已达阈值的设备（T-17 §8.3 / T-28 §7.3）。
      *
      * @param userId         可空，非空时限定归属用户
-     * @param deviceId       可空，非空时限定单台设备（规则作用域）
+     * @param deviceIds      作用域设备集合；<b>空集表示不限设备</b>（{@code ALL} 档，等价于既有全量语义），
+     *                       非空时按 {@code id IN (...)} 限定（{@code DEVICE} / {@code GROUP} / {@code TAG} 档）
      * @param offlineSeconds 离线持续阈值（秒），0 表示状态一变 OFFLINE 即满足
      * @param limit          单轮上限
      */
     List<Device> findOfflineDevicesForAlert(@Param("userId") Long userId,
-                                            @Param("deviceId") Long deviceId,
+                                            @Param("deviceIds") Collection<Long> deviceIds,
                                             @Param("offlineSeconds") int offlineSeconds,
                                             @Param("limit") int limit);
 
     IPage<Device> pageQuery(Page<Device> page, @Param("dto") DeviceQueryDTO dto, @Param("ownerId") Long ownerId);
+
+    /**
+     * 按主键取「存在且未删除」的设备（T-26 拓扑校验）。
+     * <p>
+     * {@code BaseMapper#selectById} 不过滤 {@code deleted}，而拓扑校验要求父设备未删除，
+     * 故此处显式带 {@code deleted = 0}；不取密钥哈希等敏感列。
+     */
+    Device findActiveById(@Param("id") Long id);
+
+    /** 按父网关分页列子设备（{@code parent_id = 网关 id} 且未删除），支持名称/类型/状态过滤。 */
+    IPage<Device> findByParentId(Page<Device> page,
+                                 @Param("parentId") Long parentId,
+                                 @Param("dto") DeviceQueryDTO dto);
+
+    /** 统计该设备名下的子设备数（未删除），供数量上限与降级校验使用。 */
+    long countByParentId(@Param("parentId") Long parentId);
 }

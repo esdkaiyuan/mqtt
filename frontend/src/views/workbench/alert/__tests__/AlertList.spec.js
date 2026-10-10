@@ -31,7 +31,9 @@ const hooks = vi.hoisted(() => ({
   acknowledging: null,
   ackAlert: null,
   recovering: null,
-  recoverAlert: null
+  recoverAlert: null,
+  assigning: null,
+  assignAlert: null
 }))
 
 vi.mock('@/composables/useAlerts', async () => {
@@ -45,6 +47,7 @@ vi.mock('@/composables/useAlerts', async () => {
   hooks.loading = ref(false)
   hooks.acknowledging = ref(false)
   hooks.recovering = ref(false)
+  hooks.assigning = ref(false)
   hooks.setStatus = vi.fn()
   hooks.setOpenOnly = vi.fn()
   hooks.setFilter = vi.fn()
@@ -54,6 +57,7 @@ vi.mock('@/composables/useAlerts', async () => {
   hooks.refresh = vi.fn()
   hooks.ackAlert = vi.fn(() => Promise.resolve())
   hooks.recoverAlert = vi.fn(() => Promise.resolve())
+  hooks.assignAlert = vi.fn(() => Promise.resolve())
   return {
     useAlertListQuery: () => ({
       filters: hooks.filters,
@@ -72,7 +76,8 @@ vi.mock('@/composables/useAlerts', async () => {
       refresh: hooks.refresh
     }),
     useAckAlertMutation: () => ({ acknowledging: hooks.acknowledging, ackAlert: hooks.ackAlert }),
-    useRecoverAlertMutation: () => ({ recovering: hooks.recovering, recoverAlert: hooks.recoverAlert })
+    useRecoverAlertMutation: () => ({ recovering: hooks.recovering, recoverAlert: hooks.recoverAlert }),
+    useAssignAlertMutation: () => ({ assigning: hooks.assigning, assignAlert: hooks.assignAlert })
   }
 })
 

@@ -26,6 +26,24 @@ public class Product {
     @TableField("auth_mode")
     private String authMode;
 
+    /**
+     * 接入协议（T-30）：MQTT / HTTP / MODBUS / OPC_UA / GATEWAY_MQTT。
+     * <p>
+     * NULL 视为 {@code MQTT}，存量产品行为不变。这是平台唯一的「设备怎么连上来」抽象维度，
+     * 路线 A（边缘驱动）与路线 B（平台侧主站）共用此字段。
+     */
+    @TableField("protocol_type")
+    private String protocolType;
+
+    /** 平台侧驱动标识（T-30路线 B：Modbus 主站等）；MQTT/HTTP 产品恒为 NULL */
+    @TableField("driver_id")
+    private String driverId;
+
+    /** 驱动配置 JSON：点表默认值、轮询周期、连接参数等 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @TableField("driver_config")
+    private String driverConfig;
+
     @TableField("topic_prefix")
     private String topicPrefix;
 

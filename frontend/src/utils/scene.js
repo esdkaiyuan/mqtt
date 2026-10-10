@@ -210,3 +210,110 @@ export function parseJsonObject(text, label = 'JSON') {
     return { error: `${label} 不是合法 JSON` }
   }
 }
+
+/**
+ * 条件项 / 步骤 / 目标的构造与归一化（T-29 从 SceneConditionEditor / SceneStepEditor 抽出）。
+ *
+ * 表单视图与画布视图共用这一份口径，避免缺省值与联动清理两处漂移。
+ * `createStep` 与 `normalizeStep` 原依赖组件 `props.timerSource`，抽到纯模块后
+ * 把 `timerSource` 提升为显式入参（TIMER 触发源下无触发设备，目标锁 FIXED）。
+ */
+
+/** 条件项缺省形状；deviceId 为空表示作用于触发设备。 */
+export function createCondition() {
+  return { deviceId: null, identifier: '', operator: 'GT', threshold: '' }
+}
+
+/** 步骤目标维度缺省形状（四个维度互斥，只允许一个非空）。 */
+export function createTargetConfig() {
+  return { deviceIds: [], productIds: [], groupIds: [], tagIds: [] }
+}
+
+/** 各动作类型的 action_config 缺省形状（场景设计文档 §5.3）。 */
+export function createActionConfig(actionType) {
+  switch (actionType) {
+    case 'SEND_COMMAND':
+      return { commandType: 'property_set', identifier: '', params: '' }
+    case 'FORWARD_MQTT':
+      return { topic: '', qos: 1, payloadTemplate: '' }
+    case 'FORWARD_HTTP':
+      return { url: '', method: 'POST', headers: '', payloadTemplate: '' }
+    case 'UPDATE_PROPERTY':
+    default:
+      return { identifier: '', value: '' }
+  }
+}
+
+/** 步骤缺省形状。timerSource 为真时目标默认 FIXED（无触发设备可作用）。 */
+export function createStep(timerSource = false) {
+  return {
+    seq: 0,
+    delaySeconds: 0,
+    actionType: 'UPDATE_PROPERTY',
+    targetType: timerSource ? 'FIXED' : 'TRIGGER',
+    targetMode: 'device',
+    targetConfig: createTargetConfig(),
+    actionConfig: createActionConfig('UPDATE_PROPERTY'),
+    enabled: true
+  }
+}
+
+/** 编辑既有场景时，按已选中的维度推断目标模式。 */
+export function resolveTargetMode(config) {
+  if (!config) return 'device'
+  if (config.productIds?.length) return 'product'
+  if (config.groupIds?.length) return 'group'
+  if (config.tagIds?.length) return 'tag'
+  return 'device'
+}
+
+/** 修正步骤的目标类型与 target_config，保证与触发源 / 动作类型约束一致。 */
+export function normalizeStep(step, timerSource = false) {
+  if (isForwardAction(step.actionType)) {
+    step.targetType = 'TRIGGER'
+    step.targetConfig = null
+    return
+  }
+  if (!step.targetConfig || typeof step.targetConfig !== 'object') {
+    step.targetConfig = createTargetConfig()
+  }
+  if (timerSource) {
+    step.targetType = 'FIXED'
+  }
+  if (!step.targetMode) {
+    step.targetMode = resolveTargetMode(step.targetConfig)
+  }
+}
+
+/**
+ * 切换触发方式时清理其他源专属字段（场景设计文档 §7.2）。
+ *
+ * 表单视图的 `handleTriggerTypeChange` 与画布触发节点的属性面板共用这一份口径，
+ * 避免两处联动清理漂移（T-29 全局约束）。
+ */
+export function normalizeTriggerSource(form) {
+  if (!form) return
+  if (form.triggerType === 'TIMER') {
+    form.triggerDeviceId = null
+    form.triggerIdentifier = ''
+    form.triggerOperator = null
+    form.triggerThreshold = ''
+    form.thresholdEnabled = false
+    form.triggerEventType = ''
+  } else {
+    form.timerCron = ''
+    if (form.triggerType === 'EVENT') {
+      form.triggerOperator = null
+      form.triggerThreshold = ''
+      form.thresholdEnabled = false
+    }
+  }
+}
+
+/** 步骤序号归一化为 1..N 连续，避免删除 / 移动后出现空洞（场景设计文档 §7.4）。 */
+export function withNormalizedSeq(items) {
+  return items.map((step, index) => {
+    step.seq = index + 1
+    return step
+  })
+}

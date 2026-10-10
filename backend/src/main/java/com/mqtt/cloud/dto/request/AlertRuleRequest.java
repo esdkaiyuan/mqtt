@@ -2,10 +2,12 @@ package com.mqtt.cloud.dto.request;
 
 import lombok.Data;
 
+import java.util.List;
+
 /**
- * 告警规则创建 / 更新请求（T-17 设计文档 §7.1）。
+ * 告警规则创建 / 更新请求（T-17 设计文档 §7.1 / T-28 设计文档 §6）。
  * <p>
- * 字段均允许为空并在服务层集中校验：非法配置统一抛 {@code 6208}，
+ * 字段均允许为空并在服务层集中校验：非法配置统一抛 {@code 6208}，作用域非法抛 {@code 6268}，
  * 因此这里不做 Bean Validation 注解，避免校验错误码被全局处理器改写为 {@code 400}。
  * <ul>
  *   <li>{@code THRESHOLD}：{@code identifier} / {@code operator} / {@code thresholdValue} 必填</li>
@@ -25,8 +27,17 @@ public class AlertRuleRequest {
     /** 级别：INFO / WARNING / CRITICAL，缺省 WARNING。 */
     private String severity;
 
-    /** 作用设备ID，可空表示全部设备；非空时必须属于当前用户。 */
+    /** 作用域档位：ALL / DEVICE / GROUP / TAG；为空时按 {@code deviceId} 是否为空推断。 */
+    private String scopeType;
+
+    /** 作用设备ID，{@code DEVICE} 档使用，其余档须为空；非空时必须属于当前用户。 */
     private Long deviceId;
+
+    /** {@code GROUP} 档分组 ID 列表（含所有后代分组），其余档须为空；每项须属于当前用户。 */
+    private List<Long> groupIds;
+
+    /** {@code TAG} 档标签 ID 列表，其余档须为空；每项须属于当前用户。 */
+    private List<Long> tagIds;
 
     /** 属性 / 事件标识符，THRESHOLD / EVENT 必填，长度 ≤ 64。 */
     private String identifier;

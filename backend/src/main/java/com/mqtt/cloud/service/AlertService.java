@@ -2,6 +2,7 @@ package com.mqtt.cloud.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.spring.service.IService;
+import com.mqtt.cloud.dto.request.AlertAssignRequest;
 import com.mqtt.cloud.dto.request.AlertQuery;
 import com.mqtt.cloud.entity.AlertRecord;
 
@@ -27,6 +28,14 @@ public interface AlertService extends IService<AlertRecord> {
 
     /** 人工恢复：仅活动告警可恢复，否则抛 {@code 6210}；成功后发 {@code alert.recovered} 通知。 */
     void recover(Long userId, Long id);
+
+    /**
+     * 手动指派 / 解除指派处理人（T-27 设计文档 §5.3）。
+     * <p>
+     * 不存在抛 {@code 6209}，越权抛 {@code 403}，处理人非法抛 {@code 6267}；
+     * {@code notify=true} 时投递一次 {@code alert.escalated}。
+     */
+    void assign(Long userId, Long id, AlertAssignRequest request);
 
     /** 未读数：本人全部活动告警数（{@code status <> 'RECOVERED'}）。 */
     long unreadCount(Long userId);

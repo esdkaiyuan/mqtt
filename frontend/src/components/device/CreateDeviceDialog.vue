@@ -37,6 +37,17 @@
           <el-option label="执行器" value="actuator" />
         </el-select>
       </el-form-item>
+      <el-form-item v-if="gateways.length > 0" label="父网关">
+        <el-select v-model="form.parentGatewayId" placeholder="不挂载则留空" clearable>
+          <el-option
+            v-for="gateway in gateways"
+            :key="gateway.id"
+            :label="`${gateway.deviceName}（${gateway.deviceKey}）`"
+            :value="gateway.id"
+          />
+        </el-select>
+        <p class="form-hint">当前产品下的网关，选中后该设备将作为子设备挂载其下</p>
+      </el-form-item>
       <el-form-item label="MQTT Topic" required>
         <el-input v-model="form.topic" placeholder="如 device/sensor-001/data" />
       </el-form-item>
@@ -62,15 +73,17 @@ import { reactive, watch } from 'vue'
 defineProps({
   products: { type: Array, default: () => [] },
   productsLoading: { type: Boolean, default: false },
+  gateways: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['submit'])
+const emit = defineEmits(['submit', 'product-change'])
 
 const visible = defineModel('visible', { type: Boolean })
 
 const EMPTY_FORM = {
   productId: '',
+  parentGatewayId: '',
   deviceName: '',
   deviceKey: '',
   deviceType: '',
@@ -84,6 +97,15 @@ const form = reactive({ ...EMPTY_FORM })
 watch(visible, (open) => {
   if (open) Object.assign(form, EMPTY_FORM)
 })
+
+// 父网关候选随所属产品变化，切换产品即清空已选，并由外部重新拉取候选
+watch(
+  () => form.productId,
+  (productId) => {
+    form.parentGatewayId = ''
+    if (productId) emit('product-change', productId)
+  }
+)
 
 function handleSubmit() {
   if (!form.productId || !form.deviceName || !form.deviceKey || !form.deviceType || !form.topic) {

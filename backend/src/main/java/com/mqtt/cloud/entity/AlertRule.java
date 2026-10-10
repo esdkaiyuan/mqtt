@@ -1,10 +1,13 @@
 package com.mqtt.cloud.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 告警规则实体（T-17 设计文档 §6）。
@@ -81,4 +84,28 @@ public class AlertRule {
     /** 逻辑删除标记（0=未删除，1=已删除） */
     @TableField("deleted")
     private Integer deleted;
+
+    /** 作用域档位：ALL / DEVICE / GROUP / TAG（T-28） */
+    @TableField("scope_type")
+    private String scopeType;
+
+    /** GROUP 档分组 ID JSON 数组文本，其余档为 NULL；响应中由 {@link #groupIdsView} 以 ID 数组暴露 */
+    @TableField("group_ids")
+    @JsonIgnore
+    private String groupIds;
+
+    /** TAG 档标签 ID JSON 数组文本，其余档为 NULL；响应中由 {@link #tagIdsView} 以 ID 数组暴露 */
+    @TableField("tag_ids")
+    @JsonIgnore
+    private String tagIds;
+
+    /** 返回给前端的已解析分组 ID 数组；非持久化字段（T-28 设计文档 §4.2），JSON 键名为 {@code groupIds} */
+    @TableField(exist = false)
+    @JsonProperty("groupIds")
+    private List<Long> groupIdsView;
+
+    /** 返回给前端的已解析标签 ID 数组；非持久化字段（T-28 设计文档 §4.2），JSON 键名为 {@code tagIds} */
+    @TableField(exist = false)
+    @JsonProperty("tagIds")
+    private List<Long> tagIdsView;
 }

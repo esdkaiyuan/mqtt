@@ -2,11 +2,16 @@
   <el-drawer
     :model-value="modelValue"
     :title="editingId ? '编辑消息规则' : '新建消息规则'"
-    size="560px"
+    :size="drawerSize"
     :close-on-click-modal="false"
     @update:model-value="(value) => emit('update:modelValue', value)"
   >
-    <el-form label-position="top" class="rule-form" @submit.prevent>
+    <el-radio-group v-model="viewMode" size="small" class="rule-editor__view-toggle" aria-label="规则编辑视图">
+      <el-radio-button value="form">表单</el-radio-button>
+      <el-radio-button value="canvas">画布</el-radio-button>
+    </el-radio-group>
+
+    <el-form v-if="viewMode === 'form'" label-position="top" class="rule-form" @submit.prevent>
       <div class="form-section-title">① 基础信息</div>
       <el-form-item label="规则名称" required>
         <el-input v-model="form.name" maxlength="64" placeholder="如：高温联动降温" />
@@ -20,14 +25,40 @@
           placeholder="可选，说明规则的用途"
         />
       </el-form-item>
-      <el-form-item label="作用设备">
-        <el-select v-model="form.deviceId" clearable placeholder="全部设备" style="width: 100%">
+      <el-form-item label="作用范围" required>
+        <el-select v-model="form.scopeType" style="width: 100%" @change="handleScopeTypeChange">
+          <el-option
+            v-for="option in SCOPE_TYPE_OPTIONS"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+      </el-form-item>
+
+      <el-form-item v-if="form.scopeType === 'DEVICE'" label="作用设备" required>
+        <el-select v-model="form.deviceId" clearable filterable placeholder="选择设备" style="width: 100%">
           <el-option
             v-for="device in devices"
             :key="device.id"
             :label="device.deviceName || device.deviceKey"
             :value="device.id"
           />
+        </el-select>
+      </el-form-item>
+
+      <template v-else-if="form.scopeType === 'GROUP'">
+        <el-form-item label="作用分组" required>
+          <el-select v-model="form.groupIds" multiple filterable clearable placeholder="选择分组" style="width: 100%">
+            <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
+          </el-select>
+          <p class="form-hint">按分组作用时，含子分组的设备一并生效</p>
+        </el-form-item>
+      </template>
+
+      <el-form-item v-else-if="form.scopeType === 'TAG'" label="作用标签" required>
+        <el-select v-model="form.tagIds" multiple filterable clearable placeholder="选择标签" style="width: 100%">
+          <el-option v-for="tag in tags" :key="tag.id" :label="tag.name" :value="tag.id" />
         </el-select>
       </el-form-item>
 
@@ -182,6 +213,39 @@
       </el-form-item>
     </el-form>
 
+    <div v-else class="rule-editor__canvas-view">
+      <el-form label-position="top" class="rule-editor__canvas-meta" @submit.prevent>
+        <el-form-item label="规则名称" required>
+          <el-input v-model="form.name" maxlength="64" placeholder="如：高温联动降温" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="form.description" type="textarea" :rows="2" maxlength="255" placeholder="可选，说明规则的用途" />
+        </el-form-item>
+        <div class="form-row">
+          <el-form-item label="冷却窗口（秒）">
+            <el-input-number
+              v-model="form.cooldownSeconds"
+              :min="0"
+              :max="86400"
+              controls-position="right"
+              style="width: 100%"
+            />
+          </el-form-item>
+          <el-form-item label="启用">
+            <el-switch v-model="form.enabled" :active-value="1" :inactive-value="0" />
+          </el-form-item>
+        </div>
+      </el-form>
+      <RuleOrchestrationView
+        ref="canvasViewRef"
+        class="rule-orchestration-view"
+        :form="form"
+        :devices="devices"
+        :groups="groups"
+        :tags="tags"
+      />
+    </div>
+
     <template #footer>
       <el-button @click="emit('update:modelValue', false)">取消</el-button>
       <el-button :disabled="!editingId" @click="openTestDialog">
@@ -251,18 +315,24 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import SvgIcon from '@/components/Icon.vue'
 import { deviceApi } from '@/api/device'
 import { unwrapResult } from '@/utils/result'
 import { useRuleMutations, useRuleTestMutation } from '@/composables/useRules'
+import { useDeviceGroupListQuery, useTagListQuery } from '@/composables/useDeviceGroups'
+import { SCOPE_TYPE_OPTIONS, resolveScopeType } from '@/utils/scope'
 import {
   SOURCE_TYPE_OPTIONS,
   ACTION_TYPE_OPTIONS,
   OPERATOR_OPTIONS,
-  EVENT_TYPE_OPTIONS
+  EVENT_TYPE_OPTIONS,
+  buildRuleActionConfig,
+  normalizeRuleScope
 } from '@/utils/rule'
+
+const RuleOrchestrationView = defineAsyncComponent(() => import('./RuleOrchestrationView.vue'))
 
 const props = defineProps({
   modelValue: {
@@ -281,9 +351,14 @@ const NUMERIC_OPERATORS = new Set(['GT', 'GTE', 'LT', 'LTE'])
 
 const { saving, createRule, updateRule } = useRuleMutations()
 const { testing, testRule } = useRuleTestMutation()
+const { groups } = useDeviceGroupListQuery()
+const { tags } = useTagListQuery()
 
 const devices = ref([])
 const editingId = computed(() => props.rule?.id ?? null)
+const viewMode = ref('form')
+const canvasViewRef = ref(null)
+const drawerSize = computed(() => (viewMode.value === 'canvas' ? 'min(880px, 92vw)' : '560px'))
 
 const testVisible = ref(false)
 const testResult = ref(null)
@@ -293,7 +368,10 @@ function emptyForm() {
   return {
     name: '',
     description: '',
+    scopeType: 'ALL',
     deviceId: null,
+    groupIds: [],
+    tagIds: [],
     sourceType: 'PROPERTY',
     identifier: '',
     operator: 'GT',
@@ -317,6 +395,33 @@ function emptyForm() {
 
 const form = reactive(emptyForm())
 
+/** 切档时清掉非当前档位的字段（口径抽到 utils/rule.js，与画布作用域面板共用）。 */
+function handleScopeTypeChange() {
+  normalizeRuleScope(form)
+}
+
+/** 规则实体 → 表单作用域字段；档位缺省按 deviceId 推断，兼容未带 scopeType 的存量行。 */
+function scopeFromRule(rule) {
+  const scopeType = resolveScopeType(rule)
+  return {
+    scopeType,
+    deviceId: scopeType === 'DEVICE' ? (rule.deviceId ?? null) : null,
+    groupIds: scopeType === 'GROUP' ? [...(rule.groupIds || [])] : [],
+    tagIds: scopeType === 'TAG' ? [...(rule.tagIds || [])] : []
+  }
+}
+
+/** 表单作用域字段 → 提交体，仅保留当前档位对应的字段。 */
+function buildScopePayload() {
+  const scopeType = form.scopeType || 'ALL'
+  return {
+    scopeType,
+    deviceId: scopeType === 'DEVICE' ? (form.deviceId ?? null) : null,
+    groupIds: scopeType === 'GROUP' ? [...form.groupIds] : [],
+    tagIds: scopeType === 'TAG' ? [...form.tagIds] : []
+  }
+}
+
 /** 把规则实体回填到表单，actionConfig 按动作类型拆分到各自字段。 */
 function fillForm(rule) {
   Object.assign(form, emptyForm())
@@ -325,7 +430,7 @@ function fillForm(rule) {
   Object.assign(form, {
     name: rule.name || '',
     description: rule.description || '',
-    deviceId: rule.deviceId ?? null,
+    ...scopeFromRule(rule),
     sourceType: rule.sourceType || 'PROPERTY',
     identifier: rule.identifier || '',
     operator: rule.operator || 'GT',
@@ -359,28 +464,18 @@ watch(
   ([visible]) => {
     if (visible) {
       fillForm(props.rule)
+      viewMode.value = 'form'
       testResult.value = null
     }
   },
   { immediate: true }
 )
 
-function parseJsonObject(text, label) {
-  if (!text || !text.trim()) return null
-  let parsed
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    throw new Error(`${label}必须是合法 JSON`)
-  }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${label}必须是 JSON 对象`)
-  }
-  return parsed
-}
-
 function validateForm() {
   if (!form.name.trim()) return '请填写规则名称'
+  if (form.scopeType === 'DEVICE' && !form.deviceId) return '请选择作用设备'
+  if (form.scopeType === 'GROUP' && form.groupIds.length === 0) return '请选择至少一个作用分组'
+  if (form.scopeType === 'TAG' && form.tagIds.length === 0) return '请选择至少一个作用标签'
   if (!form.identifier.trim()) {
     return form.sourceType === 'EVENT' ? '请填写事件标识符' : '请填写属性标识符'
   }
@@ -414,40 +509,15 @@ function validateForm() {
   return ''
 }
 
-function buildActionConfig() {
-  switch (form.actionType) {
-    case 'UPDATE_PROPERTY':
-      return { identifier: form.targetIdentifier.trim(), value: String(form.targetValue).trim() }
-    case 'SEND_COMMAND': {
-      const config = { commandType: form.commandType, identifier: form.targetIdentifier.trim() }
-      const params = parseJsonObject(form.commandParams, '命令参数')
-      if (params) config.params = params
-      return config
-    }
-    case 'FORWARD_MQTT': {
-      const config = { topic: form.topic.trim(), qos: form.qos }
-      if (form.payloadTemplate.trim()) config.payloadTemplate = form.payloadTemplate
-      return config
-    }
-    default: {
-      const config = { url: form.url.trim(), method: form.method }
-      const headers = parseJsonObject(form.headers, '请求头')
-      if (headers) config.headers = headers
-      if (form.payloadTemplate.trim()) config.payloadTemplate = form.payloadTemplate
-      return config
-    }
-  }
-}
-
 function buildPayload() {
   const payload = {
     name: form.name.trim(),
     description: form.description.trim() || null,
-    deviceId: form.deviceId ?? null,
+    ...buildScopePayload(),
     sourceType: form.sourceType,
     identifier: form.identifier.trim(),
     actionType: form.actionType,
-    actionConfig: buildActionConfig(),
+    actionConfig: buildRuleActionConfig(form),
     cooldownSeconds: form.cooldownSeconds ?? 0,
     enabled: form.enabled
   }
@@ -466,6 +536,7 @@ function buildPayload() {
 async function handleSubmit() {
   const error = validateForm()
   if (error) {
+    if (viewMode.value === 'canvas') canvasViewRef.value?.focusError?.(error)
     ElMessage.warning(error)
     return
   }
@@ -532,6 +603,34 @@ onMounted(loadDevices)
 </script>
 
 <style scoped>
+.rule-editor__view-toggle {
+  margin-bottom: var(--spacing-md);
+}
+
+.rule-editor__canvas-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.rule-editor__canvas-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: var(--spacing-md);
+}
+
+.rule-editor__canvas-meta :deep(.el-form-item) {
+  margin-bottom: var(--spacing-sm);
+}
+
+.rule-editor__canvas-meta :deep(.el-form-item:nth-child(2)) {
+  grid-column: 1 / -1;
+}
+
+.rule-editor__canvas-view :deep(.rule-orchestration-view) {
+  min-height: 480px;
+}
+
 .form-section-title {
   margin: var(--spacing-md) 0 var(--spacing-sm);
   padding-left: var(--spacing-sm);

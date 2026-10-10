@@ -3,12 +3,15 @@ package com.mqtt.cloud.mqtt;
 import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.ingest.IngestPipeline;
 import com.mqtt.cloud.ingest.IngestProperties;
 import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.MessageService;
+import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.RealtimeStreamService;
+import com.mqtt.cloud.service.TopicPrefixResolver;
 import com.mqtt.cloud.service.WebhookDispatcher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +25,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -39,8 +43,22 @@ public class MqttMessageHandler implements MqttCallback {
     private static final String TOPIC_DATA = "data";
     private static final String TOPIC_HEARTBEAT = "heartbeat";
     private static final String TOPIC_LWT = "lwt";
+    /** 命令回执：设备对下行命令的应答。 */
+    private static final String TOPIC_REPLY = "reply";
     /** T-22：设备 OTA 升级进度回传（{@code device/{key}/ota}）。 */
     private static final String TOPIC_OTA = "ota";
+
+    /** 各消息类型的订阅 QoS，与产品模板无关，故在循环外固定。 */
+    private static final Map<String, Integer> MESSAGE_TYPE_QOS = Map.of(
+            TOPIC_DATA, 1,
+            TOPIC_HEARTBEAT, 0,
+            TOPIC_LWT, 1,
+            TOPIC_REPLY, 1,
+            TOPIC_OTA, 1);
+
+    /** 订阅顺序：与 MESSAGE_TYPE_QOS 的取值集合一致，保证生成的过滤器次序稳定。 */
+    private static final List<String> MESSAGE_TYPES =
+            List.of(TOPIC_DATA, TOPIC_HEARTBEAT, TOPIC_LWT, TOPIC_REPLY, TOPIC_OTA);
 
     private static final String EVENT_DATA = "device.data";
     private static final String EVENT_HEARTBEAT = "device.heartbeat";
@@ -56,6 +74,8 @@ public class MqttMessageHandler implements MqttCallback {
     private final RealtimeStreamService realtimeStreamService;
     private final IngestPipeline ingestPipeline;
     private final IngestProperties ingestProperties;
+    private final ProductService productService;
+    private final TopicPrefixResolver topicPrefixResolver;
 
     private final AtomicBoolean legacyPathWarned = new AtomicBoolean(false);
 
@@ -65,18 +85,26 @@ public class MqttMessageHandler implements MqttCallback {
      * 订阅使用 EMQX 共享订阅（{@code $share/{group}/{filter}}）：多副本部署时同一组内的副本
      * 分摊消息，避免每条上行被所有副本重复落库。单副本同样可用（组内仅一个成员），行为一致。
      * 共享订阅逻辑全在 Broker 侧，MQTT 3.1.1 客户端只需改写订阅主题，无需 MQTT 5。
+     * <p>
+     * 过滤器按产品主题模板逐个生成（T-25 §8.4）：产品模板中的 {@code {productKey}} 代入产品键、
+     * {@code {deviceKey}} 代入 {@code +}，默认模板 {@code device/{deviceKey}} 生成结果与既有
+     * {@code device/+/...} 逐条一致。只取启用中的产品，停用产品的主题不再被订阅。
      */
     @EventListener(ApplicationReadyEvent.class)
     public void subscribe() {
         String group = mqttProperties.getSharedSubscriptionGroup();
         Map<String, Integer> topics = new LinkedHashMap<>();
-        topics.put("$share/" + group + "/device/+/data", 1);
-        topics.put("$share/" + group + "/device/+/heartbeat", 0);
-        topics.put("$share/" + group + "/device/+/lwt", 1);
-        // 命令回执：设备对下行命令的应答，落库后由 IngestDispatcher 旁路更新命令状态
-        topics.put("$share/" + group + "/device/+/reply", 1);
-        // OTA 升级进度回传（T-22）：落库后由 IngestDispatcher 第 6 路旁路推进记录状态机
-        topics.put("$share/" + group + "/device/+/ota", 1);
+        for (Product product : productService.listEnabled()) {
+            String prefix = topicPrefixResolver.resolveForSubscription(
+                    product.getTopicPrefix(), product.getProductKey());
+            String share = "$share/" + group + "/" + prefix;
+            for (String messageType : MESSAGE_TYPES) {
+                topics.put(share + messageType, MESSAGE_TYPE_QOS.get(messageType));
+            }
+        }
+        if (topics.isEmpty()) {
+            log.warn("没有启用中的产品，未生成任何共享订阅");
+        }
         mqttClientManager.register(this, topics);
     }
 
@@ -89,8 +117,10 @@ public class MqttMessageHandler implements MqttCallback {
             return;
         }
 
+        // T-30 E1：MQTT 无上游 traceId，按 deviceKey + 时间戳派生一个可读且可反查的标识
+        String traceId = "mqtt-" + parts[1] + "-" + System.currentTimeMillis();
         IngestRecord record = new IngestRecord(
-                parts[1], topic, parts[2], payload, mqttMessage.getQos(), LocalDateTime.now());
+                parts[1], topic, parts[2], payload, mqttMessage.getQos(), LocalDateTime.now(), traceId);
 
         if (!ingestProperties.isEnabled()) {
             legacySyncHandle(record);

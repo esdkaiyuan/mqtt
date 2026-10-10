@@ -98,4 +98,38 @@
         LIMIT #{limit}
     </select>
 
+    <!-- 升级候选：未确认且基准时间（last_escalated_at 优先，否则 first_triggered_at）已越过阈值 -->
+    <select id="selectEscalationCandidates" resultType="com.mqtt.cloud.entity.AlertRecord">
+        SELECT *
+        FROM alert_record
+        WHERE user_id = #{userId}
+          AND status = 'TRIGGERED'
+        <if test="severity != null and severity != 'ALL'">
+            AND severity = #{severity}
+        </if>
+          AND COALESCE(last_escalated_at, first_triggered_at) &lt;= #{threshold,jdbcType=TIMESTAMP}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 升级：条件更新（WHERE escalation_level = 当前级）保证多副本同一级只升级一次；assignee 为空保持原值 -->
+    <update id="escalate">
+        UPDATE alert_record
+        SET escalation_level = #{newLevel},
+            last_escalated_at = #{escalatedAt,jdbcType=TIMESTAMP},
+            assignee_id = COALESCE(#{assigneeId,jdbcType=BIGINT}, assignee_id),
+            updated_at = #{escalatedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND escalation_level = #{currentLevel}
+    </update>
+
+    <!-- 手动指派 / 解除指派：仅本人记录可操作；assigneeId 为空即解除 -->
+    <update id="assign">
+        UPDATE alert_record
+        SET assignee_id = #{assigneeId,jdbcType=BIGINT},
+            updated_at = #{updatedAt,jdbcType=TIMESTAMP}
+        WHERE id = #{id}
+          AND user_id = #{userId}
+    </update>
+
 </mapper>

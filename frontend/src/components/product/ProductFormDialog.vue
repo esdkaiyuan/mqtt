@@ -19,6 +19,19 @@
       <el-form-item label="产品名称" required>
         <el-input v-model="form.productName" placeholder="展示名称，如 环境传感器" />
       </el-form-item>
+      <el-form-item label="认证方式" required>
+        <el-select v-model="form.authMode" class="auth-mode-select">
+          <el-option
+            v-for="option in AUTH_MODE_OPTIONS"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+        <p v-if="form.authMode !== 'SECRET'" class="form-hint form-hint--warn">
+          切换认证方式后，存量设备需重新刷机并写入新凭据；原有一机一密凭据仍保留但不再参与认证
+        </p>
+      </el-form-item>
       <el-form-item label="主题前缀">
         <el-input v-model="form.topicPrefix" placeholder="默认 device/{deviceKey}" />
       </el-form-item>
@@ -60,8 +73,16 @@ const EMPTY_FORM = {
   productName: '',
   description: '',
   topicPrefix: '',
-  payloadFormat: ''
+  payloadFormat: '',
+  authMode: 'SECRET'
 }
+
+// 与后端 AuthModeValue 枚举对齐；SECRET 为一机一密，缺省值
+const AUTH_MODE_OPTIONS = [
+  { value: 'SECRET', label: '一机一密' },
+  { value: 'X509', label: 'X.509 证书' },
+  { value: 'JWT', label: 'JWT 令牌' }
+]
 
 const form = reactive({ ...EMPTY_FORM })
 
@@ -77,7 +98,8 @@ watch(visible, (open) => {
       productName: props.product.productName || '',
       description: props.product.description || '',
       topicPrefix: props.product.topicPrefix || '',
-      payloadFormat: props.product.payloadFormat || ''
+      payloadFormat: props.product.payloadFormat || '',
+      authMode: props.product.authMode || 'SECRET'
     })
   }
 })
@@ -101,5 +123,13 @@ function handleSubmit() {
   margin-top: var(--spacing-xs);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+}
+
+.auth-mode-select {
+  width: 100%;
+}
+
+.form-hint--warn {
+  color: var(--color-warning);
 }
 </style>

@@ -27,6 +27,14 @@
         <el-option label="离线" value="OFFLINE" />
         <el-option label="未激活" value="INACTIVE" />
       </el-select>
+      <el-select v-model="filters.nodeType" placeholder="全部节点类型" clearable class="filter-item">
+        <el-option
+          v-for="(label, value) in NODE_TYPE_LABELS"
+          :key="value"
+          :label="label"
+          :value="value"
+        />
+      </el-select>
       <el-tree-select
         v-model="filters.groupId"
         :data="groupTree"
@@ -46,6 +54,11 @@
         <el-button type="primary" @click="handleSearch">查询</el-button>
         <el-button @click="handleReset">重置</el-button>
       </div>
+    </div>
+
+    <div v-if="filters.parentId" class="topology-hint">
+      <span class="topology-hint__text">已按网关过滤：仅显示该网关下的子设备</span>
+      <el-button link type="primary" size="small" @click="clearParentFilter">查看全部设备</el-button>
     </div>
 
     <div v-if="selectedCount > 0" class="batch-bar">
@@ -109,15 +122,20 @@
       v-model:visible="showCreateDialog"
       :products="products"
       :products-loading="productsLoading"
+      :gateways="gateways"
+      :gateways-loading="gatewaysLoading"
       :loading="createLoading"
+      @product-change="handleProductChange"
       @submit="handleCreate"
     />
 
     <EditDeviceDialog
       v-model:visible="showEditDialog"
       :device="editingDevice"
+      :parent-gateway="parentGateway"
       :loading="editLoading"
       @submit="handleEdit"
+      @view-gateway="viewGateway"
     />
 
     <CredentialDialog
@@ -161,6 +179,7 @@ import BatchCommandDialog from '@/components/device/BatchCommandDialog.vue'
 import BatchAssignDialog from '@/components/device/BatchAssignDialog.vue'
 import BatchResultDrawer from '@/components/device/BatchResultDrawer.vue'
 import { useDeviceList } from '@/composables/useDeviceList'
+import { NODE_TYPE_LABELS } from '@/composables/useDeviceTopology'
 import { useDeviceCrud } from '@/composables/useDeviceCrud'
 import { useDeviceGroupTreeQuery, useDeviceGroupListQuery, useTagListQuery } from '@/composables/useDeviceGroups'
 import { useDeviceBatch } from '@/composables/useDeviceBatch'
@@ -187,6 +206,9 @@ const {
   createLoading,
   products,
   productsLoading,
+  gateways,
+  gatewaysLoading,
+  handleProductChange,
   openCreateDialog,
   createDevice,
   showCredentialDialog,
@@ -194,6 +216,7 @@ const {
   showEditDialog,
   editLoading,
   editingDevice,
+  parentGateway,
   openEditDialog,
   updateDevice,
   deleteDevice
@@ -239,6 +262,15 @@ async function handleEdit(form) {
 
 function viewDevice(device) {
   router.push(`/workbench/devices/${device.id}`)
+}
+
+function viewGateway(gatewayId) {
+  router.push(`/workbench/devices/${gatewayId}`)
+}
+
+function clearParentFilter() {
+  filters.parentId = null
+  handleSearch()
 }
 
 /* ---------- 批量操作 ---------- */
@@ -327,6 +359,22 @@ async function handleAssign(targetId) {
   display: flex;
   gap: var(--spacing-sm);
   margin-left: auto;
+}
+
+.topology-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--grid-gutter);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--border-radius);
+}
+
+.topology-hint__text {
+  color: var(--color-primary);
+  font-weight: 600;
 }
 
 .batch-bar {

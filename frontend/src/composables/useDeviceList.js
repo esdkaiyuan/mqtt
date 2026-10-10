@@ -21,7 +21,9 @@ export function useDeviceList() {
     deviceType: '',
     status: '',
     groupId: null,
-    tagId: null
+    tagId: null,
+    nodeType: '',
+    parentId: null
   })
 
   const currentPage = ref(1)
@@ -40,7 +42,9 @@ export function useDeviceList() {
       deviceType: filters.deviceType || undefined,
       status: filters.status || undefined,
       groupId: filters.groupId ?? undefined,
-      tagId: filters.tagId ?? undefined
+      tagId: filters.tagId ?? undefined,
+      nodeType: filters.nodeType || undefined,
+      parentId: filters.parentId ?? undefined
     })
   }
 
@@ -54,6 +58,8 @@ export function useDeviceList() {
     filters.status = ''
     filters.groupId = null
     filters.tagId = null
+    filters.nodeType = ''
+    filters.parentId = null
     loadDevices(1)
   }
 
@@ -64,9 +70,11 @@ export function useDeviceList() {
   }
 
   function syncFromQuery() {
-    const { keyword, status } = route.query
+    const { keyword, status, nodeType, parentId } = route.query
     filters.deviceName = typeof keyword === 'string' ? keyword : ''
     filters.status = typeof status === 'string' ? status : ''
+    filters.nodeType = typeof nodeType === 'string' ? nodeType : ''
+    filters.parentId = typeof parentId === 'string' ? parentId : null
   }
 
   onMounted(() => {

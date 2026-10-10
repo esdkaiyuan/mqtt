@@ -9,29 +9,35 @@ import com.mqtt.cloud.dto.request.AlertRuleRequest;
 import com.mqtt.cloud.entity.AlertRule;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.mapper.AlertRuleMapper;
+import com.mqtt.cloud.service.DeviceScopeService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.scope.RuleScope;
+import com.mqtt.cloud.util.ScopeJson;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 告警规则服务单测（T-17 实施计划 P7）。
+ * 告警规则服务单测（T-17 实施计划 P7 / T-28 实施计划 P4）。
  * <p>
- * 覆盖三类来源的配置校验（非法统一 {@code 6208}）、设备归属校验（{@code 2003}）、
- * 详情归属（不存在 {@code 6207} / 越权 {@code 403}）与列表过滤。
+ * 覆盖三类来源的配置校验（非法统一 {@code 6208}）、作用域校验（非法 {@code 6268}）、
+ * 设备归属校验（{@code 2003}）、详情归属（不存在 {@code 6207} / 越权 {@code 403}）与列表过滤。
  */
 @ExtendWith(MockitoExtension.class)
 class AlertRuleServiceImplTest {
@@ -44,15 +50,29 @@ class AlertRuleServiceImplTest {
     @Mock
     private DeviceService deviceService;
 
-    @InjectMocks
+    @Mock
+    private DeviceScopeService deviceScopeService;
+
     private AlertRuleServiceImpl service;
 
     @BeforeEach
     void setUp() {
         // LambdaQueryWrapper 需要实体的 TableInfo；纯单测无 MyBatis 上下文，手动初始化
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AlertRule.class);
-        // AlertRuleServiceImpl 用显式构造器（DeviceService），Mockito 不再做字段注入，需手动装配 baseMapper
+        // AlertRuleServiceImpl 用显式构造器，Mockito 不再做字段注入，需手动装配依赖与 baseMapper
+        service = new AlertRuleServiceImpl(deviceService, deviceScopeService, new ScopeJson(new ObjectMapper()));
         ReflectionTestUtils.setField(service, "baseMapper", alertRuleMapper);
+        // 作用域校验以纯函数桩替代，只保留「档位推断」语义，避免单测引入分组 / 标签服务
+        lenient().when(deviceScopeService.validateAndNormalize(any(), any(), any()))
+                .thenAnswer(invocation -> normalize(invocation.getArgument(1)));
+    }
+
+    /** 与 {@code DeviceScopeServiceImpl.inferType} 同口径：档位空则按 deviceId 推断。 */
+    private static RuleScope normalize(RuleScope scope) {
+        String type = scope.scopeType() == null
+                ? (scope.deviceId() == null ? AlertConstants.SCOPE_ALL : AlertConstants.SCOPE_DEVICE)
+                : scope.scopeType();
+        return RuleScope.of(type, scope.deviceId(), scope.groupIds(), scope.tagIds());
     }
 
     @Test
@@ -108,6 +128,45 @@ class AlertRuleServiceImplTest {
         assertThat(created.getOperator()).isEqualTo(AlertConstants.OPERATOR_GT);
         assertThat(created.getEnabled()).isEqualTo(1);
         verify(alertRuleMapper).insert(any(AlertRule.class));
+    }
+
+    @Test
+    void create_should_persist_tag_scope_ids() {
+        AlertRuleRequest request = thresholdRequest();
+        request.setScopeType(AlertConstants.SCOPE_TAG);
+        request.setTagIds(List.of(7L, 9L));
+
+        AlertRule created = service.create(USER_ID, request);
+
+        assertThat(created.getScopeType()).isEqualTo(AlertConstants.SCOPE_TAG);
+        assertThat(created.getDeviceId()).isNull();
+        assertThat(created.getTagIds()).isEqualTo("[7,9]");
+        assertThat(created.getTagIdsView()).containsExactly(7L, 9L);
+    }
+
+    @Test
+    void create_should_reject_invalid_scope_with_6268() {
+        doThrow(new BusinessException(ResultCode.ALERT_RULE_SCOPE_INVALID, "分组档要求且仅要求 groupIds"))
+                .when(deviceScopeService).validateAndNormalize(any(), any(), eq(ResultCode.ALERT_RULE_SCOPE_INVALID));
+        AlertRuleRequest request = thresholdRequest();
+        request.setScopeType(AlertConstants.SCOPE_GROUP);
+
+        assertCode(() -> service.create(USER_ID, request), ResultCode.ALERT_RULE_SCOPE_INVALID);
+    }
+
+    @Test
+    void list_should_expose_scope_ids_view() {
+        AlertRule rule = new AlertRule();
+        rule.setId(5L);
+        rule.setUserId(USER_ID);
+        rule.setScopeType(AlertConstants.SCOPE_GROUP);
+        rule.setGroupIds("[3,5]");
+        when(alertRuleMapper.selectList(any())).thenReturn(List.of(rule));
+
+        List<AlertRule> result = service.list(USER_ID, null, null);
+
+        assertThat(result.get(0).getGroupIdsView()).containsExactly(3L, 5L);
+        assertThat(result.get(0).getTagIdsView()).isEmpty();
     }
 
     @Test

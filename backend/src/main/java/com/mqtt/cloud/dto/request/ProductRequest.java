@@ -17,6 +17,13 @@ public class ProductRequest {
 
     private String description;
 
+    /**
+     * 认证方式，取值 {@code SECRET} / {@code X509} / {@code JWT}，可空且空值回落 {@code SECRET}。
+     * 取值集合以 {@link com.mqtt.cloud.common.constant.AuthModeValue} 为准，
+     * 校验落在服务层，避免在此注解内硬编码字符串。
+     */
+    private String authMode;
+
     private String topicPrefix;
 
     private String payloadFormat;

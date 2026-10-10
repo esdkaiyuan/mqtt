@@ -80,6 +80,11 @@ api -X DELETE "$EMQX_API/authentication/password_based:http" >/dev/null 2>&1 || 
 api -X DELETE "$EMQX_API/authorization/sources/http" >/dev/null 2>&1 || true
 
 echo "配置 HTTP 认证..."
+# 请求体占位符与后端 AuthRequest 字段名严格对齐：
+# - username/password/clientid 为 CONNECT 报文原值；JWT 模式下 password 位承载设备令牌。
+# - cert_subject / cert_common_name 由 EMQX 从客户端证书提取，仅在 TLS 双向认证连接下非空，
+#   非 TLS 连接缺失或为空串，后端按可空处理。X.509 分支以 cert_common_name 判定设备归属。
+# 占位符用引号包裹，避免被外层 shell 展开（后端取名依赖下划线，非 EMQX 的驼峰序列化）。
 api -X POST "$EMQX_API/authentication" \
   -H 'Content-Type: application/json' \
   -d "{
@@ -91,7 +96,9 @@ api -X POST "$EMQX_API/authentication" \
         \"body\": {
           \"username\": \"\${username}\",
           \"password\": \"\${password}\",
-          \"clientid\": \"\${clientid}\"
+          \"clientid\": \"\${clientid}\",
+          \"cert_subject\": \"\${cert_subject}\",
+          \"cert_common_name\": \"\${cert_common_name}\"
         }
       }"
 

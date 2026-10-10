@@ -25,6 +25,10 @@ class DeviceMapperColumnsTest {
     private static final List<String> AUTH_REQUIRED_COLUMNS =
             List.of("product_id", "enabled", "device_secret_hash");
 
+    /** 拓扑两列：授权元数据（AuthMeta）判定委托收发、以及按父列子设备都依赖它们。 */
+    private static final List<String> TOPOLOGY_COLUMNS =
+            List.of("node_type", "parent_id");
+
     @Test
     void findByDeviceKey_must_select_columns_required_by_auth_loading() throws Exception {
         List<String> columns = selectColumnsOf("findByDeviceKey");
@@ -32,6 +36,30 @@ class DeviceMapperColumnsTest {
         assertThat(columns)
                 .as("findByDeviceKey 必须选出认证回源所需列，否则认证恒失败")
                 .containsAll(AUTH_REQUIRED_COLUMNS);
+    }
+
+    @Test
+    void findByDeviceKey_must_select_topology_columns() throws Exception {
+        assertThat(selectColumnsOf("findByDeviceKey"))
+                .as("findByDeviceKey 必须选出拓扑两列，否则 AuthMeta 的 nodeType/parentId 恒为空，委托判定恒失败")
+                .containsAll(TOPOLOGY_COLUMNS);
+    }
+
+    @Test
+    void findByParentId_must_select_topology_columns() throws Exception {
+        assertThat(stripTableAliases(selectColumnsOf("findByParentId")))
+                .as("findByParentId 必须选出拓扑两列，否则子设备列表无法回显角色与父网关")
+                .containsAll(TOPOLOGY_COLUMNS);
+    }
+
+    /** 去掉 {@code d.} 之类表别名前缀，使带别名的查询列可与裸列名同一口径比对。 */
+    private List<String> stripTableAliases(List<String> columns) {
+        List<String> stripped = new ArrayList<>();
+        for (String column : columns) {
+            int dot = column.lastIndexOf('.');
+            stripped.add(dot < 0 ? column : column.substring(dot + 1));
+        }
+        return stripped;
     }
 
     private List<String> selectColumnsOf(String statementId) throws Exception {

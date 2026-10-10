@@ -4,17 +4,18 @@ import com.mqtt.cloud.common.AlertConstants;
 import com.mqtt.cloud.config.AlertProperties;
 import com.mqtt.cloud.entity.AlertRecord;
 import com.mqtt.cloud.entity.Device;
-import com.mqtt.cloud.service.WebhookDispatcher;
+import com.mqtt.cloud.service.NotificationDispatcher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -22,23 +23,25 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
- * 告警通知器单测（T-17 实施计划 P7）。
+ * 告警通知器单测（T-17 实施计划 P7，T-27 P2 改造后更新）。
  * <p>
- * 覆盖触发 / 恢复两个事件的载荷组装与投递、开关关闭不投递、设备缺失不投递、投递异常只 WARN。
+ * 对外契约不变：覆盖触发 / 恢复两个事件的载荷组装与委派、开关关闭不投递、设备缺失不投递、
+ * 投递异常只 WARN。内部改为委派 {@link NotificationDispatcher}，载荷字段与 T-17 一致。
  */
 class AlertNotifierImplTest {
 
     private static final Long DEVICE_ID = 100L;
+    private static final Long USER_ID = 1L;
 
-    private WebhookDispatcher webhookDispatcher;
+    private NotificationDispatcher dispatcher;
     private AlertProperties properties;
     private AlertNotifierImpl notifier;
 
     @BeforeEach
     void setUp() {
-        webhookDispatcher = mock(WebhookDispatcher.class);
+        dispatcher = mock(NotificationDispatcher.class);
         properties = new AlertProperties();
-        notifier = new AlertNotifierImpl(webhookDispatcher, new ObjectMapper(), properties);
+        notifier = new AlertNotifierImpl(dispatcher, properties);
     }
 
     @Test
@@ -47,18 +50,19 @@ class AlertNotifierImplTest {
 
         notifier.notifyTriggered(record, device());
 
-        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
-        verify(webhookDispatcher).dispatch(eq(DEVICE_ID), eq(AlertConstants.EVENT_ALERT_TRIGGERED), eq(device()),
-                payloadCaptor.capture());
-        assertThat(payloadCaptor.getValue())
-                .contains("\"alertId\":12")
-                .contains("\"ruleName\":\"高温告警\"")
-                .contains("\"sourceType\":\"THRESHOLD\"")
-                .contains("\"severity\":\"CRITICAL\"")
-                .contains("\"identifier\":\"temperature\"")
-                .contains("\"title\":\"温度超过 80\"")
-                .contains("\"triggerValue\":\"86.5\"")
-                .contains("\"triggerCount\":1");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(dispatcher).dispatch(eq(USER_ID), eq(AlertConstants.EVENT_ALERT_TRIGGERED), eq(device()),
+                eq(record), payloadCaptor.capture());
+        Map<String, Object> payload = payloadCaptor.getValue();
+        assertThat(payload).containsEntry("alertId", 12L)
+                .containsEntry("ruleName", "高温告警")
+                .containsEntry("sourceType", "THRESHOLD")
+                .containsEntry("severity", "CRITICAL")
+                .containsEntry("identifier", "temperature")
+                .containsEntry("title", "温度超过 80")
+                .containsEntry("triggerValue", "86.5")
+                .containsEntry("triggerCount", 1);
     }
 
     @Test
@@ -67,20 +71,20 @@ class AlertNotifierImplTest {
 
         notifier.notifyTriggered(triggeredRecord(), device());
 
-        verifyNoInteractions(webhookDispatcher);
+        verifyNoInteractions(dispatcher);
     }
 
     @Test
     void notifyTriggered_should_skip_when_device_missing() {
         notifier.notifyTriggered(triggeredRecord(), null);
 
-        verifyNoInteractions(webhookDispatcher);
+        verifyNoInteractions(dispatcher);
     }
 
     @Test
     void notifyTriggered_should_swallow_dispatch_failure() {
-        doThrow(new RuntimeException("webhook down"))
-                .when(webhookDispatcher).dispatch(any(Long.class), any(), any(), any());
+        doThrow(new RuntimeException("notification down"))
+                .when(dispatcher).dispatch(any(), any(), any(), any(), anyMap());
 
         assertThatCode(() -> notifier.notifyTriggered(triggeredRecord(), device()))
                 .doesNotThrowAnyException();
@@ -94,13 +98,14 @@ class AlertNotifierImplTest {
 
         notifier.notifyRecovered(record, device());
 
-        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
-        verify(webhookDispatcher).dispatch(eq(DEVICE_ID), eq(AlertConstants.EVENT_ALERT_RECOVERED), eq(device()),
-                payloadCaptor.capture());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> payloadCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(dispatcher).dispatch(eq(USER_ID), eq(AlertConstants.EVENT_ALERT_RECOVERED), eq(device()),
+                eq(record), payloadCaptor.capture());
         assertThat(payloadCaptor.getValue())
-                .contains("\"alertId\":12")
-                .contains("\"title\":\"温度超过 80\"")
-                .contains("\"recoveredAt\":\"2026-10-02T12:30:00\"");
+                .containsEntry("alertId", 12L)
+                .containsEntry("title", "温度超过 80")
+                .containsEntry("recoveredAt", "2026-10-02T12:30:00");
     }
 
     @Test
@@ -109,13 +114,13 @@ class AlertNotifierImplTest {
 
         notifier.notifyRecovered(triggeredRecord(), device());
 
-        verifyNoInteractions(webhookDispatcher);
+        verifyNoInteractions(dispatcher);
     }
 
     private AlertRecord triggeredRecord() {
         AlertRecord record = new AlertRecord();
         record.setId(12L);
-        record.setUserId(1L);
+        record.setUserId(USER_ID);
         record.setDeviceId(DEVICE_ID);
         record.setDeviceKey("dev-1");
         record.setRuleId(3L);
