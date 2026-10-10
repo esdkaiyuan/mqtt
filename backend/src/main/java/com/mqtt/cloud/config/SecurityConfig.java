@@ -144,6 +144,10 @@ public class SecurityConfig {
                     .requestMatchers("/notification-channels/**", "/notification-channels").authenticated()
                     // 告警升级策略（T-27）：任意登录用户可访问，按 user_id 隔离；回滚开关由控制器裁决
                     .requestMatchers("/alert-escalations/**", "/alert-escalations").authenticated()
+                    // 设备点位表（T-31 P2）：任意登录用户可访问，
+                    // 归属与 ADMIN 特权由控制器按 currentUserIdOrNull 裁决
+                    // （ADMIN 传 null 跳过归属校验，见 DevicePointTableController）
+                    .requestMatchers("/devices/*/points", "/devices/*/points/*").authenticated()
                     .anyRequest().authenticated()
             )
             .addFilterBefore(apiKeyFilter, UsernamePasswordAuthenticationFilter.class)

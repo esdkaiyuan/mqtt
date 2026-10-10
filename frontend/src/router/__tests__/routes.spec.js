@@ -27,6 +27,7 @@ describe('router/routes 分区与兼容', () => {
       'DeviceGroups',
       'DeviceBatchRegister',
       'DeviceDetail',
+      'DevicePointTable',
       'DeviceLog',
       'ProductList',
       'ProductThingModel',
@@ -51,7 +52,8 @@ describe('router/routes 分区与兼容', () => {
     expect(groups).toEqual(new Set(['monitor', 'access', 'alert', 'fleet', 'automation']))
 
     // 设备详情 / 设备日志 / 物模型 / 看板详情 / 升级详情不在导航中展示
-    for (const name of ['DeviceDetail', 'DeviceLog', 'ProductThingModel', 'BoardDetail', 'UpgradeTaskDetail']) {
+    for (const name of ['DeviceDetail', 'DeviceLog', 'DevicePointTable',
+      'ProductThingModel', 'BoardDetail', 'UpgradeTaskDetail']) {
       const hidden = children.find((child) => child.name === name)
       expect(hidden.meta?.hidden).toBe(true)
     }

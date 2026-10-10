@@ -103,6 +103,13 @@ export const routes = [
         meta: { title: '设备详情', hidden: true, group: 'monitor' }
       },
       {
+        // 设备点位表（T-31 P2），入口在设备详情页，不在导航中展示
+        path: 'devices/:id/points',
+        name: 'DevicePointTable',
+        component: () => import('@/views/workbench/device/DevicePointTable.vue'),
+        meta: { title: '点位表', hidden: true, group: 'monitor' }
+      },
+      {
         // 设备统一日志时间线（T-20），入口在设备详情页，不在导航中展示
         path: 'devices/:id/logs',
         name: 'DeviceLog',

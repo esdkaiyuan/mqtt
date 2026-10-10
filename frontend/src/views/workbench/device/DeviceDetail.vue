@@ -11,6 +11,16 @@
         </div>
       </template>
       <template #actions>
+        <!--
+          点位表入口（T-31 P2）。
+          不做「仅 Modbus 设备可见」的条件渲染：设备详情接口当前不返回产品的 protocolType，
+          接入方法要么改动既有出参（影响前端其他消费方），要么额外发一次产品查询。
+          点位表本身对 MQTT 直连设备是空表（无点位即无内容），展示成本低于引入判断逻辑。
+        -->
+        <el-button @click="goPoints">
+          <svg-icon name="list" :size="14" />
+          点位表
+        </el-button>
         <el-button @click="goLogs">
           <svg-icon name="history" :size="14" />
           设备日志
@@ -381,6 +391,11 @@ function goBack() {
 // 设备统一日志时间线（T-20）
 function goLogs() {
   router.push(`/workbench/devices/${route.params.id}/logs`)
+}
+
+// 设备点位表（T-31 P2）
+function goPoints() {
+  router.push(`/workbench/devices/${route.params.id}/points`)
 }
 
 function editDevice() {
