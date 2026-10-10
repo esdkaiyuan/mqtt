@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.DevicePointRunMapper">
+
+    <!--
+      批量落采集日志：一次设备轮询产出的全部点位结果一次提交。
+      不做去重 —— 同一点位多次采集本身就是要保留的历史轨迹，去重会掩盖采集频率异常。
+      collected_at 显式写入而非用默认值：调度线程的采集时刻比入库时刻更接近真实值，
+      在点位规模大、批量写入排队时两者可能相差明显。
+    -->
+    <insert id="insertBatch">
+        INSERT INTO device_point_run
+        (point_id, device_id, status, raw_value, value, error_message, collected_at)
+        VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (#{r.pointId}, #{r.deviceId}, #{r.status},
+             #{r.rawValue}, #{r.value}, #{r.errorMessage},
+             #{r.collectedAt,jdbcType=TIMESTAMP})
+        </foreach>
+    </insert>
+
+    <!--
+      保留期清理：点位表是本平台中写入频率最高的表之一（每个点位每周期一行），
+      若不清理，表增长会直接吃掉现场采集的可用存储。按 configured 保留期批量删除。
+    -->
+    <delete id="deleteBefore">
+        DELETE FROM device_point_run WHERE collected_at &lt; #{cutoff,jdbcType=TIMESTAMP}
+    </delete>
+
+</mapper>

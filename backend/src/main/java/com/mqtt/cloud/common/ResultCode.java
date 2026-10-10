@@ -141,6 +141,18 @@ public enum ResultCode {
     DEVICE_ACTIVATE_CODE_INVALID(6273, "设备激活码非法或已被使用", HttpStatus.BAD_REQUEST),
     DEVICE_ACTIVATE_CODE_EXPIRED(6274, "设备激活码已过期", HttpStatus.BAD_REQUEST),
 
+    // ── T-31 · 点位表 ──
+    POINT_KEY_DUPLICATED(6280, "点位标识在该设备下已存在", HttpStatus.BAD_REQUEST),
+    POINT_EXECUTOR_MIXED(6281, "同一设备下的点位执行方必须一致（EDGE 与 PLATFORM 不可混用）", HttpStatus.BAD_REQUEST),
+    POINT_EXECUTOR_UNSUPPORTED(6282, "点位执行方非法（仅支持 EDGE / PLATFORM）", HttpStatus.BAD_REQUEST),
+    POINT_TYPE_UNSUPPORTED(6283, "点位类型非法", HttpStatus.BAD_REQUEST),
+    POINT_ADDRESS_REQUIRED(6284, "寄存器类点位必须填写地址", HttpStatus.BAD_REQUEST),
+    POINT_ADDRESS_INVALID(6285, "点位地址非法（寄存器号须为非负整数）", HttpStatus.BAD_REQUEST),
+    POINT_INTERVAL_INVALID(6286, "采集周期非法", HttpStatus.BAD_REQUEST),
+    POINT_SCALE_INVALID(6287, "换算系数非法（scale 不可为 0，offset 为偏移量）", HttpStatus.BAD_REQUEST),
+    POINT_DATA_TYPE_INVALID(6288, "点位数据类型非法", HttpStatus.BAD_REQUEST),
+    POINT_BATCH_EMPTY(6289, "点位批量保存内容为空", HttpStatus.BAD_REQUEST),
+
     // ── T-30 · 限流 ──
     /** 开放接口按 API Key 维度限流。文档（apiEndpoints.js）早已宣称 429，此处补齐后端实现。 */
     RATE_LIMIT_EXCEEDED(4002, "超出密钥的调用频率限制", HttpStatus.TOO_MANY_REQUESTS),

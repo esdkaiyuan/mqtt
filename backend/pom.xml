@@ -32,6 +32,13 @@
         <loadtest.excludedGroups>loadtest</loadtest.excludedGroups>
         <!-- 证书签发（T-25）：bcpkix 依赖 bcprov / bcutil，同版本号一并锁定 -->
         <bouncycastle.version>1.78.1</bouncycastle.version>
+        <!-- Modbus 主站协议栈（T-31 路线B）：平台侧作为主站轮询采集 Modbus TCP 设备。
+             选型说明：原版 com.infiniteautomation:modbus4j 已不在 Maven Central，
+             需额外配置第三方仓库 maven.mangoautomation.net 才能拉取，会削弱 CI 可重现性。
+             故采用社区 Fork com.ghgande:j2mod —— API 与包名兼容（com.serotonin.modbus4j）、
+             代码质量更优、且发布在 Maven Central 上（2.25.4 / 2026-09 更新）。
+             本项目只做 Modbus TCP，故排除串口（jSerialComm）依赖。 -->
+        <modbus4j.version>3.4.0</modbus4j.version>
     </properties>
 
     <dependencies>
@@ -110,6 +117,24 @@
             <groupId>org.eclipse.paho</groupId>
             <artifactId>org.eclipse.paho.client.mqttv3</artifactId>
             <version>1.2.5</version>
+        </dependency>
+
+        <!-- Modbus 主站（T-31 路线B）。仅 Modbus TCP，排除串口依赖：
+             jSerialComm 是原生库（含各平台 dll/so），打进容器只会增大体积与攻击面。 -->
+        <dependency>
+            <groupId>com.ghgande</groupId>
+            <artifactId>j2mod</artifactId>
+            <version>${modbus4j.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>com.fazecast</groupId>
+                    <artifactId>jSerialComm</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>junit</groupId>
+                    <artifactId>junit</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>

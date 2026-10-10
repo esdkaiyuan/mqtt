@@ -51,6 +51,22 @@ class ResultCodeEnumTest {
     }
 
     @Test
+    void point_table_codes_must_exist_with_designed_http_status() {
+        // T-31 点位表。除「点位不存在」外的全部为 BAD_REQUEST：
+        // 点表配置属管理面输入错误，返回 400 才能让前端与调用方区分「配置写错」与「服务异常」
+        assertCode(6280, ResultCode.POINT_KEY_DUPLICATED, HttpStatus.BAD_REQUEST);
+        assertCode(6281, ResultCode.POINT_EXECUTOR_MIXED, HttpStatus.BAD_REQUEST);
+        assertCode(6282, ResultCode.POINT_EXECUTOR_UNSUPPORTED, HttpStatus.BAD_REQUEST);
+        assertCode(6283, ResultCode.POINT_TYPE_UNSUPPORTED, HttpStatus.BAD_REQUEST);
+        assertCode(6284, ResultCode.POINT_ADDRESS_REQUIRED, HttpStatus.BAD_REQUEST);
+        assertCode(6285, ResultCode.POINT_ADDRESS_INVALID, HttpStatus.BAD_REQUEST);
+        assertCode(6286, ResultCode.POINT_INTERVAL_INVALID, HttpStatus.BAD_REQUEST);
+        assertCode(6287, ResultCode.POINT_SCALE_INVALID, HttpStatus.BAD_REQUEST);
+        assertCode(6288, ResultCode.POINT_DATA_TYPE_INVALID, HttpStatus.BAD_REQUEST);
+        assertCode(6289, ResultCode.POINT_BATCH_EMPTY, HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void codes_must_be_unique() {
         Map<Integer, Long> counts = Arrays.stream(ResultCode.values())
                 .collect(Collectors.groupingBy(ResultCode::getCode, Collectors.counting()));

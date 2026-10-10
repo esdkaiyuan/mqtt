@@ -67,4 +67,23 @@ class LayeringRulesTest {
     static final ArchRule 服务接口包不得直接依赖Mapper =
             noClasses().that().resideInAPackage("com.mqtt.cloud.service")
                     .should().dependOnClassesThat().resideInAPackage("..mapper..");
+
+    /**
+     * 采集扩展包不得直接依赖 Mapper（T-31）。
+     * <p>
+     * {@code com.mqtt.cloud.collect} 承载采集 SPI（{@code PointCollector}）与数据载体，
+     * <b>刻意不在上面分层规则的任何 layer 里</b>，而 {@code layeredArchitecture} 默认
+     * {@code consideringOnlyDependenciesInLayers()} 会把 layer 之外的类完全忽略 ——
+     * 也就是说这条路径<b>没有规则约束</b>，采集实现类可以直接操作数据库。
+     * <p>
+     * 那为什么还要堵？因为采集层一旦能写库，「采集结果经 {@code IngestPipeline} 统一入库」
+     * 这条架构约定就形同虚设：直写 mapper 会跳过解析链路的告警 / 规则 / 场景 / 历史五条旁路，
+     * 且这类回退通常以"图省事直连"的方式发生，事后极难发现。
+     * <p>
+     * 持久化统一收敛在 {@code service} 层，采集层只负责产出 {@code PointValue}。
+     */
+    @ArchTest
+    static final ArchRule 采集扩展包不得直接依赖Mapper =
+            noClasses().that().resideInAPackage("com.mqtt.cloud.collect")
+                    .should().dependOnClassesThat().resideInAPackage("..mapper..");
 }
