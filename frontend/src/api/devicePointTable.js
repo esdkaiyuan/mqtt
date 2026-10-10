@@ -15,7 +15,15 @@ export const devicePointTableApi = {
   savePoints: (deviceId, points) => api.post(`/devices/${deviceId}/points`, points),
 
   /** 删除点位（连带清理该点位的采集日志） */
-  deletePoint: (deviceId, pointId) => api.delete(`/devices/${deviceId}/points/${pointId}`)
+  deletePoint: (deviceId, pointId) => api.delete(`/devices/${deviceId}/points/${pointId}`),
+
+  /**
+   * 下发点表到边缘网关（T-31 P3，路线 A）。
+   *
+   * 返回的 status 为 'QUEUED' 表示设备当前离线、已入队待补发，配置尚未送达；
+   * 调用方须据此提示「将在设备上线后自动生效」而非「下发成功」。
+   */
+  dispatch: (deviceId) => api.post(`/devices/${deviceId}/points/dispatch`)
 }
 
 /** 执行方可选值。空串表示不筛选。 */

@@ -288,6 +288,91 @@ class DeviceCommandServiceImplTest {
         verify(commandMapper, never()).insert(any(DeviceCommandRecord.class));
     }
 
+    // ---------- T-31 P3：点表下发的可排队语义 ----------
+
+    /**
+     * 点表下发是保留服务，未声明物模型也应放行，且下行 method 为 {@code thing.service.point_table_dispatch}。
+     * <p>
+     * 同时验证 {@code source=POINT_TABLE} 落库 —— 点表下发与普通服务调用混排在命令历史里，
+     * 全靠这一列区分。
+     */
+    @Test
+    void invoke_point_table_dispatch_should_publish_as_reserved_service() throws Exception {
+        DeviceCommandRecord result = service.invoke(pointTableDispatch("{\"deviceId\":100,\"version\":7}"));
+
+        assertThat(result.getStatus()).isEqualTo("SENT");
+        assertThat(result.getIdentifier()).isEqualTo(DeviceCommandService.SERVICE_POINT_TABLE_DISPATCH);
+        assertThat(result.getSource()).isEqualTo(DeviceCommandService.SOURCE_POINT_TABLE);
+
+        ArgumentCaptor<String> payload = ArgumentCaptor.forClass(String.class);
+        verify(mqttClientManager).publish(anyString(), payload.capture(), eq(1));
+        JsonNode body = new ObjectMapper().readTree(payload.getValue());
+        assertThat(body.get("method").asText()).isEqualTo("thing.service.point_table_dispatch");
+        assertThat(body.get("params").get("version").asLong()).isEqualTo(7L);
+    }
+
+    /** 点表下发设备离线时应入队而非报错 —— 配置同步晚到不影响正确性（区别于 OTA 的立即失败）。 */
+    @Test
+    void invoke_point_table_dispatch_offline_should_enqueue_and_not_publish() throws Exception {
+        when(deviceService.getById(DEVICE_ID)).thenReturn(offlineDevice());
+
+        DeviceCommandRecord result = service.invoke(pointTableDispatch("{\"deviceId\":100,\"version\":1}"));
+
+        assertThat(result.getStatus()).isEqualTo("QUEUED");
+        assertThat(result.getNextAttemptAt()).isNotNull();
+        verify(mqttClientManager, never()).publish(anyString(), anyString(), anyInt());
+    }
+
+    /** 点表下发发布异常同样转队列退避，不抛 4001（否则运维会误以为下发失败而反复重试）。 */
+    @Test
+    void invoke_point_table_dispatch_publish_failure_should_enqueue_without_throwing() throws Exception {
+        doThrow(new IllegalStateException("broker down"))
+                .when(mqttClientManager).publish(anyString(), anyString(), anyInt());
+
+        DeviceCommandRecord result = service.invoke(pointTableDispatch("{\"deviceId\":100,\"version\":2}"));
+
+        assertThat(result.getStatus()).isEqualTo("QUEUED");
+        verify(commandMapper).markQueued(anyString(), any(LocalDateTime.class), anyString());
+    }
+
+    /**
+     * OTA 不在可排队白名单：发布异常仍应立即失败（回归 T-22 语义）。
+     * <p>
+     * 这条断言守的是一个真实决策差异 —— OTA 入队会让运维看到「下发成功」而设备其实没收到。
+     */
+    @Test
+    void invoke_ota_publish_failure_should_still_fail_and_throw() throws Exception {
+        doThrow(new IllegalStateException("broker down"))
+                .when(mqttClientManager).publish(anyString(), anyString(), anyInt());
+
+        DeviceCommandService.CommandInvoke command = new DeviceCommandService.CommandInvoke(
+                DEVICE_ID, PRODUCT_ID, "service", DeviceCommandService.SERVICE_OTA_UPGRADE,
+                "{\"url\":\"http://localhost/fw.bin\"}", "async",
+                DeviceCommandService.SOURCE_OTA, 1L);
+
+        assertCode(ResultCode.MQTT_PUBLISH_FAILED, command);
+    }
+
+    /** OTA 设备离线时同样不入队：照常发布，由补投巡检处理失败（回归 T-22 语义）。 */
+    @Test
+    void invoke_ota_offline_should_not_enqueue() throws Exception {
+        when(deviceService.getById(DEVICE_ID)).thenReturn(offlineDevice());
+
+        DeviceCommandRecord result = service.invoke(new DeviceCommandService.CommandInvoke(
+                DEVICE_ID, PRODUCT_ID, "service", DeviceCommandService.SERVICE_OTA_UPGRADE,
+                "{\"url\":\"http://localhost/fw.bin\"}", "async",
+                DeviceCommandService.SOURCE_OTA, 1L));
+
+        assertThat(result.getStatus()).isEqualTo("SENT");
+        verify(commandMapper, never()).markQueued(anyString(), any(LocalDateTime.class), any());
+    }
+
+    private DeviceCommandService.CommandInvoke pointTableDispatch(String paramsJson) {
+        return new DeviceCommandService.CommandInvoke(DEVICE_ID, PRODUCT_ID, "service",
+                DeviceCommandService.SERVICE_POINT_TABLE_DISPATCH, paramsJson, "async",
+                DeviceCommandService.SOURCE_POINT_TABLE, 1L);
+    }
+
     // ---------- T-16：属性设置离线入队 ----------
 
     @Test

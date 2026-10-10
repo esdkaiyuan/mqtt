@@ -1,5 +1,16 @@
-import { describe, it, expect } from 'vitest'
-import {
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+const post = vi.fn()
+vi.mock('../axios', () => ({
+  default: {
+    get: vi.fn(),
+    post: (...args) => post(...args),
+    delete: vi.fn()
+  }
+}))
+
+const {
+  devicePointTableApi,
   isRegisterType,
   createEmptyPoint,
   parsePointsJson,
@@ -7,7 +18,9 @@ import {
   EXECUTOR_OPTIONS,
   POINT_TYPE_OPTIONS,
   DATA_TYPE_OPTIONS
-} from '../devicePointTable'
+} = await import('../devicePointTable')
+
+beforeEach(() => post.mockReset())
 
 /**
  * 点位表 API 层纯函数用例（T-31 P2）。
@@ -134,6 +147,19 @@ describe('devicePointTable helpers', () => {
       expect(points[0].pointKey).toBe('temp')
       expect(points[0].scale).toBe(0.1)
       expect(points[0].unit).toBe('℃')
+    })
+  })
+
+  describe('下发接口', () => {
+    /**
+     * 路径多一级 `/dispatch`，写错成 `/points/{id}/dispatch` 之类不会有任何编译期提示，
+     * 只能靠这里守住 —— 前端页面点「下发到网关」时才发现 404 的排查成本很高。
+     */
+    it('下发走 POST 且路径为点位表路径下的 dispatch', () => {
+      devicePointTableApi.dispatch(100)
+
+      expect(post).toHaveBeenCalledTimes(1)
+      expect(post).toHaveBeenCalledWith('/devices/100/points/dispatch')
     })
   })
 

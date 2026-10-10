@@ -152,6 +152,9 @@ public enum ResultCode {
     POINT_SCALE_INVALID(6287, "换算系数非法（scale 不可为 0，offset 为偏移量）", HttpStatus.BAD_REQUEST),
     POINT_DATA_TYPE_INVALID(6288, "点位数据类型非法", HttpStatus.BAD_REQUEST),
     POINT_BATCH_EMPTY(6289, "点位批量保存内容为空", HttpStatus.BAD_REQUEST),
+    POINT_DISPATCH_NOT_EDGE(6290, "仅边缘执行方（EDGE）的点表可下发；PLATFORM 点表由平台自行采集，无需下发", HttpStatus.BAD_REQUEST),
+    POINT_DISPATCH_NO_POINTS(6291, "该设备没有启用中的边缘点位可下发", HttpStatus.BAD_REQUEST),
+    POINT_DISPATCH_DEVICE_INVALID(6292, "设备不可下发点表（不存在 / 已禁用 / 接入协议不支持边缘驱动）", HttpStatus.BAD_REQUEST),
 
     // ── T-30 · 限流 ──
     /** 开放接口按 API Key 维度限流。文档（apiEndpoints.js）早已宣称 429，此处补齐后端实现。 */

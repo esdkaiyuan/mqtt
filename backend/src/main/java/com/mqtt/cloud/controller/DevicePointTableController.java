@@ -3,8 +3,10 @@ package com.mqtt.cloud.controller;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.security.SecurityUtils;
 import com.mqtt.cloud.dto.request.PointTableUpsertRequest;
+import com.mqtt.cloud.dto.response.PointDispatchResultDTO;
 import com.mqtt.cloud.dto.response.PointTableDTO;
 import com.mqtt.cloud.service.DevicePointTableService;
+import com.mqtt.cloud.service.PointTableDispatchService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -37,9 +39,12 @@ import java.util.List;
 public class DevicePointTableController {
 
     private final DevicePointTableService pointTableService;
+    private final PointTableDispatchService dispatchService;
 
-    public DevicePointTableController(DevicePointTableService pointTableService) {
+    public DevicePointTableController(DevicePointTableService pointTableService,
+                                      PointTableDispatchService dispatchService) {
         this.pointTableService = pointTableService;
+        this.dispatchService = dispatchService;
     }
 
     @Operation(summary = "查询设备点位表",
@@ -80,6 +85,25 @@ public class DevicePointTableController {
             @Parameter(description = "点位ID") @PathVariable Long pointId) {
         pointTableService.deletePoint(currentUserIdOrNull(), deviceId, pointId);
         return Result.success();
+    }
+
+    /**
+     * 下发点表到边缘网关（T-31 P3，路线 A）。
+     * <p>
+     * 返回的 {@code status} 为 {@code QUEUED} 表示<b>设备当前离线、已入队待补发</b>，
+     * 配置尚未送达；此时不应提示「下发成功」，应提示「将在设备上线后自动生效」。
+     */
+    @Operation(summary = "下发点表到边缘网关",
+            description = "把该设备启用中的 EDGE 点表推送给边缘网关，走既有下行通道，"
+                    + "不新开 topic。仅 GATEWAY_MQTT 类产品可下发（protocol_type 为空的存量网关同样放行）；"
+                    + "PLATFORM 点表由平台自行采集，下发无意义，直接拒绝（6290）；"
+                    + "无启用点位时拒绝下发（6291）——空点表在边缘侧语义是「清空所有点位」。"
+                    + "设备离线时不报错，改为入队，设备上线后自动补发")
+    @PostMapping("/dispatch")
+    @PreAuthorize("hasRole('ADMIN') or isAuthenticated()")
+    public Result<PointDispatchResultDTO> dispatch(
+            @Parameter(description = "设备ID") @PathVariable Long deviceId) {
+        return Result.success(dispatchService.dispatch(currentUserIdOrNull(), deviceId));
     }
 
     /**

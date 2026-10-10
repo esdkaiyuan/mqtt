@@ -7,6 +7,13 @@
       <template #actions>
         <el-button @click="openImport">批量导入</el-button>
         <el-button @click="handleExportTemplate">导出模板</el-button>
+        <el-button
+          v-if="isEdgeTable"
+          :loading="dispatching"
+          @click="handleDispatch"
+        >
+          下发到网关
+        </el-button>
         <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
       </template>
     </PageHeader>
@@ -170,6 +177,7 @@ const deviceId = computed(() => route.params.id)
 
 const loading = ref(false)
 const saving = ref(false)
+const dispatching = ref(false)
 const points = ref([])
 /** 已从服务端删除、待保存时生效的点位 ID */
 const removedRows = ref([])
@@ -199,6 +207,7 @@ async function load() {
       newPointExecutor.value = existing
       tableExecutor.value = existing
     }
+    snapshotLoaded()
   } catch (e) {
     ElMessage.error(e?.message || '点位表加载失败')
   } finally {
@@ -259,6 +268,70 @@ async function handleSave() {
   } finally {
     saving.value = false
   }
+}
+
+/** 点表执行方为 EDGE 时才允许下发（PLATFORM 由平台自行采集，下发无意义） */
+const isEdgeTable = computed(
+  () => points.value.length > 0 && points.value.every((p) => p.executor === 'EDGE')
+)
+
+/**
+ * 最近一次从服务端取回（或保存成功）的表格快照，用于判断「是否有未保存改动」。
+ * <p>
+ * 只做「有没有改动」这一个判断，不做逐字段 diff —— 下发前的提醒只需知道改动存在与否，
+ * 做细了反而会在用户批量微调时反复弹窗。
+ */
+const lastLoadedSnapshot = ref('[]')
+
+function snapshotLoaded() {
+  lastLoadedSnapshot.value = JSON.stringify(points.value.map((p) => ({ ...p })))
+}
+
+/**
+ * 下发点表到边缘网关。
+ *
+ * 有未保存的改动时先要求保存：下发的是服务端已存的点表，
+ * 直接下发会让用户以为表格里的新配置已经送到网关，实际送的是旧版本 —— 这类误判很难现场发现。
+ */
+async function handleDispatch() {
+  if (hasUnsavedChanges()) {
+    try {
+      await ElMessageBox.confirm(
+        '当前表格有未保存的改动，下发的将是服务端已保存的点表。是否先保存？',
+        '点表下发',
+        { confirmButtonText: '去保存', cancelButtonText: '直接下发已保存版本', type: 'warning' }
+      )
+      await handleSave()
+    } catch {
+      // 用户选择「直接下发已保存版本」，按其意图继续
+    }
+    if (hasUnsavedChanges()) {
+      ElMessage.warning('请先保存点表再下发')
+      return
+    }
+  }
+
+  dispatching.value = true
+  try {
+    const res = await devicePointTableApi.dispatch(deviceId.value)
+    const data = res?.data || {}
+    // QUEUED 表示设备离线、已入队待补发，配置尚未送达 —— 提示必须区分这两种情况
+    if (data.status === 'QUEUED') {
+      ElMessage.warning(`网关当前离线，点表已排队（版本 ${data.version}），上线后自动生效`)
+    } else {
+      ElMessage.success(`点表已下发（版本 ${data.version}，${data.pointCount} 个点位）`)
+    }
+  } catch (e) {
+    ElMessage.error(e?.message || '点表下发失败')
+  } finally {
+    dispatching.value = false
+  }
+}
+
+function hasUnsavedChanges() {
+  return (
+    JSON.stringify(points.value.map((p) => ({ ...p }))) !== JSON.stringify(lastLoadedSnapshot.value)
+  )
 }
 
 /**

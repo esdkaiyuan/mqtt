@@ -42,6 +42,18 @@ public interface DeviceCommandService {
      */
     String SERVICE_OTA_UPGRADE = "ota_upgrade";
 
+    /**
+     * 平台保留服务（T-31 P3）：点表下发（路线 A）。
+     * <p>
+     * 与 OTA 同为「平台自己定义载荷、不要求产品物模型声明」的保留服务。之所以复用本通道
+     * 而非新开 topic，是因为回执幂等、离线入队补发、超时巡检三项能力都能直接继承 ——
+     * 自建通道意味着这三样都要重写一遍，且极易在重写中丢掉幂等语义。
+     */
+    String SERVICE_POINT_TABLE_DISPATCH = "point_table_dispatch";
+
+    /** 来源：点表下发（T-31 P3）。 */
+    String SOURCE_POINT_TABLE = "POINT_TABLE";
+
     /** 可下发能力：供前端生成动态表单；无物模型时 {@code version=0} 且两个集合为空。 */
     CommandCapability getCapability(Long productId);
 

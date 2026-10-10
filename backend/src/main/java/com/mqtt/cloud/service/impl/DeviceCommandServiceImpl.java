@@ -78,7 +78,20 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
      * <p>
      * 已显式限定为常量白名单，不放开任意服务。
      */
-    private static final Set<String> RESERVED_SERVICES = Set.of(DeviceCommandService.SERVICE_OTA_UPGRADE);
+    private static final Set<String> RESERVED_SERVICES = Set.of(DeviceCommandService.SERVICE_OTA_UPGRADE,
+            DeviceCommandService.SERVICE_POINT_TABLE_DISPATCH);
+
+    /**
+     * 允许「设备离线时不发布、改为入队」的保留服务（T-31 P3）。
+     * <p>
+     * <b>刻意不包含 OTA</b>：OTA 下发失败应当立即失败并由补投巡检重投，入队会让运维看到
+     * 「下发成功」而设备其实没收到，掩盖问题。点表下发则相反 —— 它是幂等的配置同步，
+     * 设备晚一点拿到不影响正确性，排队比失败更符合使用者的预期。
+     * <p>
+     * 属性设置（{@code property_set}）不在此集合内，它有独立的入队分支（同时要写影子 desired）。
+     */
+    private static final Set<String> QUEUEABLE_SERVICES = Set.of(DeviceCommandService.SERVICE_POINT_TABLE_DISPATCH);
+
 
     private final DeviceService deviceService;
     private final ProductService productService;
@@ -131,6 +144,10 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
                 enqueue(record, LocalDateTime.now());
                 return record;
             }
+        } else if (isQueueableService(commandType, command.identifier()) && !isDeliverable(device)) {
+            // T-31 P3：点表下发是幂等配置同步，设备离线时入队而非报错（语义见 QUEUEABLE_SERVICES 注释）。
+            enqueue(record, LocalDateTime.now());
+            return record;
         }
 
         publish(record, device, commandType, params);
@@ -189,13 +206,14 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
         try {
             mqttClientManager.publish(topic, payload, PUBLISH_QOS);
         } catch (Exception e) {
-            if (TYPE_PROPERTY_SET.equals(commandType)) {
-                // T-16 §9.1：属性设置的发布异常转为入队退避（不抛错），发布恢复后由补发链路接管。
+            if (TYPE_PROPERTY_SET.equals(commandType) || isQueueableService(commandType, record.getIdentifier())) {
+                // T-16 §9.1 / T-31 P3：可排队命令的发布异常转为入队退避（不抛错），发布恢复后由补发链路接管。
                 LocalDateTime nextAttemptAt = now.plusNanos(backoffMillis(1) * 1_000_000L);
                 commandMapper.markQueued(record.getCommandId(), nextAttemptAt, truncate("发布失败: " + e.getMessage()));
                 record.setStatus(STATUS_QUEUED);
                 record.setNextAttemptAt(nextAttemptAt);
-                log.warn("属性设置发布失败，转入离线补发队列: commandId={}, topic={}", record.getCommandId(), topic, e);
+                log.warn("命令发布失败，转入离线补发队列: commandId={}, topic={}, type={}",
+                        record.getCommandId(), topic, commandType, e);
                 return;
             }
             commandMapper.markFailed(record.getCommandId(), truncate("发布失败: " + e.getMessage()), now);
@@ -465,6 +483,11 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
         return TYPE_SERVICE.equals(commandType)
                 && identifier != null
                 && RESERVED_SERVICES.contains(identifier);
+    }
+
+    /** 是否为「设备离线可入队」的保留服务（T-31 P3）。 */
+    private boolean isQueueableService(String commandType, String identifier) {
+        return TYPE_SERVICE.equals(commandType) && identifier != null && QUEUEABLE_SERVICES.contains(identifier);
     }
 
     private void validateService(ThingModelDefinition definition, String identifier, JsonNode params) {
