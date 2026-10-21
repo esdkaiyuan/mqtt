@@ -2,18 +2,29 @@ package com.mqtt.cloud.service.impl;
 
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.constant.GroupPermission;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.dto.request.DeviceGroupMemberRequest;
 import com.mqtt.cloud.dto.request.DeviceGroupRequest;
+import com.mqtt.cloud.dto.request.DeviceQueryDTO;
+import com.mqtt.cloud.dto.response.DeviceGroupMemberVO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceGroup;
+import com.mqtt.cloud.entity.DeviceGroupMember;
+import com.mqtt.cloud.entity.User;
 import com.mqtt.cloud.mapper.DeviceGroupMapper;
+import com.mqtt.cloud.mapper.DeviceGroupMemberMapper;
 import com.mqtt.cloud.mapper.DeviceGroupRelationMapper;
+import com.mqtt.cloud.mapper.UserMapper;
+import com.mqtt.cloud.service.DeviceAccessService;
 import com.mqtt.cloud.service.DeviceService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -52,6 +63,15 @@ class DeviceGroupServiceImplTest {
     @Mock
     private DeviceService deviceService;
 
+    @Mock
+    private DeviceGroupMemberMapper memberMapper;
+
+    @Mock
+    private UserMapper userMapper;
+
+    @Mock
+    private DeviceAccessService deviceAccessService;
+
     @InjectMocks
     private DeviceGroupServiceImpl service;
 
@@ -64,8 +84,7 @@ class DeviceGroupServiceImplTest {
     }
 
     @Test
-    void create_should_save_root_group_with_appended_sort_order() {
-        when(groupMapper.selectByUser(USER_ID)).thenReturn(List.of());
+    void create_should_save_root_group_with_appended_sort_order() {        when(groupMapper.selectByUser(USER_ID)).thenReturn(List.of());
         when(groupMapper.countByUserAndName(anyLong(), any(), anyString(), any())).thenReturn(0);
         when(groupMapper.selectMaxSortOrder(anyLong(), any())).thenReturn(null);
 
@@ -263,6 +282,143 @@ class DeviceGroupServiceImplTest {
         service.addDevices(USER_ID, 1L, List.of());
 
         verify(groupRelationMapper, never()).insertIgnoreBatch(any(), anyLong(), any());
+    }
+
+    // ---------- T-48 分组成员共享 ----------
+
+    @Test
+    void getAccessible_should_reject_unknown_or_unshared_group() {
+        when(deviceAccessService.resolveGroup(USER_ID, 5L))
+                .thenReturn(new DeviceAccessService.GroupAccess(null, GroupPermission.NONE));
+        assertCode(() -> service.getAccessible(USER_ID, 5L), ResultCode.DEVICE_GROUP_NOT_FOUND);
+
+        DeviceGroup group = group(5L, null);
+        group.setUserId(999L);
+        when(deviceAccessService.resolveGroup(USER_ID, 6L))
+                .thenReturn(new DeviceAccessService.GroupAccess(group, GroupPermission.NONE));
+        assertCode(() -> service.getAccessible(USER_ID, 6L), ResultCode.DEVICE_GROUP_ACCESS_DENIED);
+    }
+
+    @Test
+    void addMember_should_insert_view_member() {
+        when(groupMapper.selectById(1L)).thenReturn(group(1L, null));
+        when(userMapper.selectOne(any())).thenReturn(user(20L, "member", "ACTIVE"));
+        when(memberMapper.selectOne(any())).thenReturn(null);
+
+        DeviceGroupMemberVO result = service.addMember(USER_ID, 1L, memberRequest("member", "view"));
+
+        assertThat(result.getUsername()).isEqualTo("member");
+        assertThat(result.getPermission()).isEqualTo(GroupPermission.VIEW);
+        ArgumentCaptor<DeviceGroupMember> captor = ArgumentCaptor.forClass(DeviceGroupMember.class);
+        verify(memberMapper).insert(captor.capture());
+        assertThat(captor.getValue().getUserId()).isEqualTo(20L);
+        assertThat(captor.getValue().getGroupId()).isEqualTo(1L);
+    }
+
+    @Test
+    void addMember_should_reject_self_or_owner() {
+        when(groupMapper.selectById(1L)).thenReturn(group(1L, null));
+        when(userMapper.selectOne(any())).thenReturn(user(USER_ID, "owner", "ACTIVE"));
+
+        assertCode(() -> service.addMember(USER_ID, 1L, memberRequest("owner", "VIEW")),
+                ResultCode.DEVICE_GROUP_MEMBER_INVALID);
+    }
+
+    @Test
+    void addMember_should_update_existing_permission() {
+        when(groupMapper.selectById(1L)).thenReturn(group(1L, null));
+        when(userMapper.selectOne(any())).thenReturn(user(20L, "member", "ACTIVE"));
+        DeviceGroupMember existing = member(20L, GroupPermission.VIEW);
+        when(memberMapper.selectOne(any())).thenReturn(existing);
+
+        DeviceGroupMemberVO result = service.addMember(USER_ID, 1L, memberRequest("member", "OPERATE"));
+
+        assertThat(result.getPermission()).isEqualTo(GroupPermission.OPERATE);
+        verify(memberMapper).updateById(existing);
+        verify(memberMapper, never()).insert(any(DeviceGroupMember.class));
+    }
+
+    @Test
+    void listMembers_should_return_username_and_email() {
+        when(groupMapper.selectById(1L)).thenReturn(group(1L, null));
+        when(memberMapper.selectList(any())).thenReturn(List.of(member(20L, GroupPermission.OPERATE)));
+        when(userMapper.selectBatchIds(any())).thenReturn(List.of(user(20L, "member", "ACTIVE")));
+
+        List<DeviceGroupMemberVO> members = service.listMembers(USER_ID, 1L);
+
+        assertThat(members).hasSize(1);
+        assertThat(members.get(0).getUsername()).isEqualTo("member");
+        assertThat(members.get(0).getPermission()).isEqualTo(GroupPermission.OPERATE);
+    }
+
+    @Test
+    void updateMember_should_change_permission() {
+        when(groupMapper.selectById(1L)).thenReturn(group(1L, null));
+        DeviceGroupMember member = member(20L, GroupPermission.VIEW);
+        when(memberMapper.selectById(9L)).thenReturn(member);
+        when(userMapper.selectById(20L)).thenReturn(user(20L, "member", "ACTIVE"));
+
+        DeviceGroupMemberVO result = service.updateMember(USER_ID, 1L, 9L,
+                memberRequest("member", "OPERATE"));
+
+        assertThat(result.getPermission()).isEqualTo(GroupPermission.OPERATE);
+        assertThat(member.getPermission()).isEqualTo(GroupPermission.OPERATE);
+    }
+
+    @Test
+    void removeMember_should_delete_after_owner_check() {
+        when(groupMapper.selectById(1L)).thenReturn(group(1L, null));
+        when(memberMapper.selectById(9L)).thenReturn(member(20L, GroupPermission.VIEW));
+
+        service.removeMember(USER_ID, 1L, 9L);
+
+        verify(memberMapper).deleteById(9L);
+    }
+
+    @Test
+    void pageDevices_should_allow_shared_group_without_owner_filter() {
+        DeviceGroup shared = group(1L, null);
+        shared.setUserId(999L);
+        when(deviceAccessService.resolveGroup(USER_ID, 1L))
+                .thenReturn(new DeviceAccessService.GroupAccess(shared, GroupPermission.VIEW));
+        when(groupMapper.selectDescendantIds(999L, 1L)).thenReturn(List.of(1L));
+        Page<Device> page = new Page<>(1, 10);
+        page.setRecords(List.of(device(100L, 999L)));
+        page.setTotal(1);
+        when(deviceService.getDevicesInGroups(any())).thenReturn(page);
+
+        var result = service.pageDevices(USER_ID, 1L, 1, 10);
+
+        ArgumentCaptor<DeviceQueryDTO> captor = ArgumentCaptor.forClass(DeviceQueryDTO.class);
+        verify(deviceService).getDevicesInGroups(captor.capture());
+        assertThat(captor.getValue().getOwnerId()).isNull();
+        assertThat(captor.getValue().getGroupIds()).containsExactly(1L);
+        assertThat(result.getRecords().get(0).getAccessLevel()).isEqualTo(GroupPermission.VIEW);
+    }
+
+    private DeviceGroupMemberRequest memberRequest(String username, String permission) {
+        DeviceGroupMemberRequest request = new DeviceGroupMemberRequest();
+        request.setUsername(username);
+        request.setPermission(permission);
+        return request;
+    }
+
+    private DeviceGroupMember member(Long userId, String permission) {
+        DeviceGroupMember member = new DeviceGroupMember();
+        member.setId(9L);
+        member.setGroupId(1L);
+        member.setUserId(userId);
+        member.setPermission(permission);
+        return member;
+    }
+
+    private User user(Long id, String username, String status) {
+        User user = new User();
+        user.setId(id);
+        user.setUsername(username);
+        user.setEmail(username + "@example.com");
+        user.setStatus(status);
+        return user;
     }
 
     private void assertCode(Runnable action, ResultCode expected) {

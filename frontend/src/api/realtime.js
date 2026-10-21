@@ -139,14 +139,21 @@ export function subscribeRealtime({ onEvent, onError, onOpen, onStatus } = {}) {
 }
 
 function handleChunk(chunk, onEvent) {
-  const dataLines = chunk
-    .split('\n')
+  const lines = chunk.split('\n')
+  const dataLines = lines
     .filter((line) => line.startsWith('data:'))
     .map((line) => line.slice(5).trim())
   // 心跳注释帧（以 `:` 开头）不含 data: 行，此处直接忽略
   if (dataLines.length === 0 || !onEvent) return
   try {
-    onEvent(JSON.parse(dataLines.join('\n')))
+    const event = JSON.parse(dataLines.join('\n'))
+    // T-41：保留 SSE 的 event 名（device-data / device-log / property-trend），
+    // 供页面按主题分流；没有 event 行时保持原对象形状，既有消费方零影响。
+    const eventLine = lines.find((line) => line.startsWith('event:'))
+    if (eventLine) {
+      event.eventName = eventLine.slice(6).trim()
+    }
+    onEvent(event)
   } catch (e) {
     // 忽略无法解析的心跳或注释帧
   }

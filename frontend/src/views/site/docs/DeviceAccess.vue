@@ -151,13 +151,14 @@
           <tr><th>身份</th><th>publish</th><th>subscribe</th></tr>
         </thead>
         <tbody>
-          <tr><td>设备</td><td><code>device/{deviceKey}/#</code></td><td><code>device/{deviceKey}/cmd/#</code></td></tr>
-          <tr><td>平台后端账号</td><td><code>device/+/cmd/#</code></td><td><code>device/+/#</code></td></tr>
+          <tr><td>设备</td><td>自身 <code>{prefix}</code> 下，且不得进入 <code>{prefix}cmd/</code></td><td>仅 <code>{prefix}cmd/</code></td></tr>
+          <tr><td>平台后端账号</td><td>启用产品前缀下且路径含 <code>/cmd/</code></td><td>启用产品前缀（设备位为 <code>+</code>）</td></tr>
+          <tr><td>网关代理子设备</td><td>目标须为当前网关的 <code>SUB</code> 子设备</td><td>同上，按目标设备命名空间判定</td></tr>
         </tbody>
       </table>
       <p>
-        授权由 <code>POST /internal/emqx/acl</code> 判定：从用户名解析出 productKey / deviceKey，
-        按上表匹配 topic 与 action。
+        授权由 <code>POST /internal/emqx/acl</code> 判定。完整规则（含自定义模板、网关委托与拒绝清单）见
+        <router-link to="/docs/protocol/d1">D1 · MQTT 主题与 ACL</router-link>。
       </p>
     </template>
 
@@ -170,7 +171,7 @@
       <h3>常见排错</h3>
       <ul>
         <li>连接被拒：检查用户名是否为 <code>{productKey}.{deviceKey}</code>，密码是否为最新密钥。</li>
-        <li>发布被拒：确认 Topic 落在 ACL 允许的 <code>device/{deviceKey}/#</code> 范围内。</li>
+        <li>发布被拒：确认 Topic 在自身 <code>{prefix}</code> 下，且没有进入 <code>{prefix}cmd/</code>。</li>
         <li>设备一直离线：确认已设置遗言与心跳，且保活时间小于遗言窗口。</li>
       </ul>
     </template>
@@ -237,6 +238,9 @@ const char* MQTT_USER = "esp32-fall-detect.sensor-01"; // {productKey}.{deviceKe
 const char* MQTT_PASS = "<device_secret>";
 const char* TOPIC_DATA = "device/sensor-01/data";
 const char* TOPIC_LWT  = "device/sensor-01/lwt";
+const char* PAYLOAD    = "{\\"id\\":\\"esp32-1\\",\\"version\\":\\"1.0\\","
+                         "\\"method\\":\\"thing.event.property.post\\","
+                         "\\"params\\":{\\"temperature\\":26.5}}";
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -249,7 +253,7 @@ void setup() {
 void loop() {
   if (!client.connected()) client.connect("sensor-01", MQTT_USER, MQTT_PASS, TOPIC_LWT, 1, false, "offline");
   client.loop();
-  client.publish(TOPIC_DATA, "{\\"temperature\\": 26.5}", false);
+  client.publish(TOPIC_DATA, PAYLOAD, false);
   delay(5000);
 }`
 </script>

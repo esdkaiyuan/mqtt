@@ -16,6 +16,7 @@ import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.Product;
+import com.mqtt.cloud.event.DeviceStatusChangedEvent;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCredentialService;
@@ -27,6 +28,7 @@ import com.mqtt.cloud.service.EmqxClientKicker;
 import com.mqtt.cloud.service.ProductService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +48,7 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     private final DeviceAuthCacheService authCacheService;
     private final EmqxClientKicker emqxClientKicker;
     private final DeviceTopologyService deviceTopologyService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -244,6 +247,16 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     }
 
     @Override
+    public IPage<Device> getDevicesInGroups(DeviceQueryDTO dto) {
+        Page<Device> page = new Page<>(dto.getPageNum(), dto.getPageSize());
+        if (dto.getGroupIds() == null || dto.getGroupIds().isEmpty()) {
+            // 共享分组分页必须始终带分组范围；空范围视为无权数据，绝不退化为全表
+            return page;
+        }
+        return this.baseMapper.pageQuery(page, dto, dto.getOwnerId());
+    }
+
+    @Override
     public Device getDeviceById(Long deviceId) {
         Device device = this.getById(deviceId);
         if (device == null || Boolean.TRUE.equals(device.getDeleted())) {
@@ -305,6 +318,10 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
         // 状态历史只在状态真正变化时写入，与改造前语义一致
         if (statusChanged) {
             deviceStatusHistoryService.recordStatusChange(deviceId, status);
+            // 仅上下线切换驱动场景触发；事件在事务提交后由 SceneStatusTriggerListener 消费
+            if (DeviceStatusValue.ONLINE.equals(status) || DeviceStatusValue.OFFLINE.equals(status)) {
+                eventPublisher.publishEvent(new DeviceStatusChangedEvent(deviceId, status, eventTime));
+            }
         }
     }
 

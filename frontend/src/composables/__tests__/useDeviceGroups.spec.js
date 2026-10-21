@@ -94,8 +94,23 @@ describe('composables/useDeviceGroups', () => {
     await settle()
 
     expect(deviceGroupApi.tree).toHaveBeenCalledTimes(1)
+    expect(deviceGroupApi.tree).toHaveBeenCalledWith(undefined)
     expect(state.tree.value).toEqual(TREE)
     expect(state.tree.value[0].children[0].deviceCount).toBe(2)
+  })
+
+  it('分组管理页开启 includeShared 时携带查询参数并使用独立缓存', async () => {
+    mountHarness(() => ({
+      sharedTree: useDeviceGroupTreeQuery(true),
+      ownTree: useDeviceGroupTreeQuery(false)
+    }))
+    await settle()
+
+    expect(deviceGroupApi.tree).toHaveBeenCalledTimes(2)
+    expect(deviceGroupApi.tree).toHaveBeenCalledWith({ includeShared: true })
+    expect(deviceGroupApi.tree).toHaveBeenCalledWith(undefined)
+    expect(state.sharedTree.tree.value).toEqual(TREE)
+    expect(state.ownTree.tree.value).toEqual(TREE)
   })
 
   it('分组平铺列表解包 Result 信封', async () => {
@@ -103,6 +118,7 @@ describe('composables/useDeviceGroups', () => {
     await settle()
 
     expect(deviceGroupApi.list).toHaveBeenCalledTimes(1)
+    expect(deviceGroupApi.list).toHaveBeenCalledWith(undefined)
     expect(state.groups.value).toEqual(FLAT)
   })
 

@@ -3,6 +3,7 @@ package com.mqtt.cloud.service.impl;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.constant.AuthModeValue;
+import com.mqtt.cloud.common.constant.ProtocolTypeValue;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.util.AfterCommit;
 import com.mqtt.cloud.dto.request.ProductRequest;
@@ -35,6 +36,8 @@ public class ProductServiceImpl implements ProductService {
     private static final String STATUS_ENABLED = "ENABLED";
     private static final String STATUS_DISABLED = "DISABLED";
     private static final String RESERVED_KEY = "platform";
+    private static final int MAX_DRIVER_ID_LENGTH = 64;
+    private static final int MAX_DRIVER_CONFIG_LENGTH = 4096;
 
     /** 支持的产品认证方式，取值集合以 {@link AuthModeValue} 为准。 */
     private static final Set<String> SUPPORTED_AUTH_MODES =
@@ -74,6 +77,7 @@ public class ProductServiceImpl implements ProductService {
         product.setPayloadFormat(StringUtils.hasText(request.getPayloadFormat())
                 ? request.getPayloadFormat() : DEFAULT_PAYLOAD_FORMAT);
         product.setMetadataSchema(request.getMetadataSchema());
+        applyProtocol(product, request, true);
         product.setStatus(STATUS_ENABLED);
         productMapper.insert(product);
         return product;
@@ -116,6 +120,7 @@ public class ProductServiceImpl implements ProductService {
             existing.setPayloadFormat(request.getPayloadFormat());
         }
         existing.setMetadataSchema(request.getMetadataSchema());
+        applyProtocol(existing, request, false);
         productMapper.updateById(existing);
         // 产品标识变更会改变用户名与缓存键，旧键下的元数据不再可达，主动清理
         if (!previousKey.equals(existing.getProductKey())) {
@@ -127,6 +132,67 @@ public class ProductServiceImpl implements ProductService {
             authCacheService.evictProduct(existing.getProductKey());
         }
         return existing;
+    }
+
+    /**
+     * 应用接入协议与驱动配置（T-31 P4）。
+     * <p>
+     * 更新时 {@code protocolType} 为空表示保持原值 —— 旧客户端编辑产品时不会传该字段，
+     * 若按「空 = MQTT」处理，会把已配置的 MODBUS 产品静默改回 MQTT，采集直接停摆。
+     * 切换到非驱动协议（MQTT / HTTP / GATEWAY_MQTT）时清空驱动字段，避免遗留配置误导排障。
+     */
+    private void applyProtocol(Product product, ProductRequest request, boolean creating) {
+        String protocol = request.getProtocolType() == null
+                ? (creating ? ProtocolTypeValue.MQTT : product.getProtocolType())
+                : resolveProtocol(request.getProtocolType());
+        if (!StringUtils.hasText(protocol)) {
+            protocol = ProtocolTypeValue.MQTT;
+        }
+        product.setProtocolType(protocol);
+
+        boolean driverProtocol = ProtocolTypeValue.MODBUS.equals(protocol)
+                || ProtocolTypeValue.OPC_UA.equals(protocol);
+        if (!driverProtocol) {
+            product.setDriverId(null);
+            product.setDriverConfig(null);
+            return;
+        }
+
+        if (request.getDriverId() != null) {
+            String driverId = request.getDriverId().trim();
+            if (driverId.length() > MAX_DRIVER_ID_LENGTH) {
+                throw new BusinessException(ResultCode.BAD_REQUEST,
+                        "驱动标识不能超过 " + MAX_DRIVER_ID_LENGTH + " 字符");
+            }
+            // 更新时空串视为「未加载 / 不修改」：前端 driver_config 需单独拉取，
+            // 若把空串当作 clear，用户打开编辑框立刻保存就会把现场连接参数抹掉。
+            if (!driverId.isEmpty() || creating) {
+                product.setDriverId(driverId.isEmpty() ? null : driverId);
+            }
+        } else if (creating) {
+            product.setDriverId(null);
+        }
+
+        if (request.getDriverConfig() != null) {
+            String driverConfig = request.getDriverConfig().trim();
+            if (driverConfig.length() > MAX_DRIVER_CONFIG_LENGTH) {
+                throw new BusinessException(ResultCode.BAD_REQUEST,
+                        "驱动配置不能超过 " + MAX_DRIVER_CONFIG_LENGTH + " 字符");
+            }
+            if (!driverConfig.isEmpty() || creating) {
+                product.setDriverConfig(driverConfig.isEmpty() ? null : driverConfig);
+            }
+        } else if (creating) {
+            product.setDriverConfig(null);
+        }
+    }
+
+    private String resolveProtocol(String raw) {
+        String normalized = ProtocolTypeValue.normalize(raw.trim().toUpperCase(Locale.ROOT));
+        if (!ProtocolTypeValue.isSupported(normalized)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "不支持的接入协议: " + raw);
+        }
+        return normalized;
     }
 
     /**

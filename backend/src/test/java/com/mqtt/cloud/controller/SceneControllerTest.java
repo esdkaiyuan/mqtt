@@ -10,6 +10,7 @@ import com.mqtt.cloud.dto.request.SceneRequest;
 import com.mqtt.cloud.dto.request.SceneTestRequest;
 import com.mqtt.cloud.dto.response.SceneExecutionDetail;
 import com.mqtt.cloud.dto.response.SceneTestResult;
+import com.mqtt.cloud.dto.response.SceneVersionVO;
 import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.entity.SceneExecution;
 import com.mqtt.cloud.filter.UserPrincipal;
@@ -108,6 +109,26 @@ class SceneControllerTest {
         when(sceneService.getScene(USER_ID, SCENE_ID)).thenReturn(scene);
 
         assertThat(controller.getScene(SCENE_ID).getData()).isSameAs(scene);
+    }
+
+    @Test
+    void listVersions_should_delegate_with_current_user() {
+        authenticate();
+        SceneVersionVO version = new SceneVersionVO();
+        when(sceneService.listVersions(USER_ID, SCENE_ID)).thenReturn(List.of(version));
+
+        assertThat(controller.listVersions(SCENE_ID).getData()).containsExactly(version);
+        verify(sceneService).listVersions(USER_ID, SCENE_ID);
+    }
+
+    @Test
+    void restoreVersion_should_delegate_with_current_user() {
+        authenticate();
+        SceneDefinition restored = new SceneDefinition();
+        when(sceneService.restoreVersion(USER_ID, SCENE_ID, 700L)).thenReturn(restored);
+
+        assertThat(controller.restoreVersion(SCENE_ID, 700L).getData()).isSameAs(restored);
+        verify(sceneService).restoreVersion(USER_ID, SCENE_ID, 700L);
     }
 
     @Test

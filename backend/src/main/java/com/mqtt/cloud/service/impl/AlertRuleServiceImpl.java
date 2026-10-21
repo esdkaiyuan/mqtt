@@ -34,13 +34,16 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
     private final DeviceService deviceService;
     private final DeviceScopeService deviceScopeService;
     private final ScopeJson scopeJson;
+    private final AlertWindowAggregator alertWindowAggregator;
 
     public AlertRuleServiceImpl(DeviceService deviceService,
                                 DeviceScopeService deviceScopeService,
-                                ScopeJson scopeJson) {
+                                ScopeJson scopeJson,
+                                AlertWindowAggregator alertWindowAggregator) {
         this.deviceService = deviceService;
         this.deviceScopeService = deviceScopeService;
         this.scopeJson = scopeJson;
+        this.alertWindowAggregator = alertWindowAggregator;
     }
 
     @Override
@@ -60,6 +63,7 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
         AlertRule rule = getOwned(userId, id);
         applyAndValidate(rule, request, userId);
         updateById(rule);
+        alertWindowAggregator.clearRule(rule.getId());
         populateScopeView(rule);
         return rule;
     }
@@ -69,6 +73,7 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
     public void delete(Long userId, Long id) {
         AlertRule rule = getOwned(userId, id);
         removeById(rule.getId());
+        alertWindowAggregator.clearRule(rule.getId());
     }
 
     @Override
@@ -161,6 +166,19 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
             throw invalid("启用状态只能是 0 或 1");
         }
 
+        int windowSeconds = request.getWindowSeconds() == null ? 0 : request.getWindowSeconds();
+        if (windowSeconds < 0 || windowSeconds > AlertConstants.MAX_SECONDS) {
+            throw invalid("统计窗口取值需在 [0, 86400] 秒");
+        }
+        int minSamples = request.getMinSamples() == null ? 1 : request.getMinSamples();
+        if (minSamples < 1 || minSamples > AlertConstants.MAX_MIN_SAMPLES) {
+            throw invalid("最少样本数需在 [1, " + AlertConstants.MAX_MIN_SAMPLES + "]");
+        }
+        String aggregateType = normalizeUpper(request.getAggregateType());
+        if (aggregateType != null && !AlertConstants.AGGREGATES.contains(aggregateType)) {
+            throw invalid("聚合方式必须是 AVG / MIN / MAX / SUM / COUNT");
+        }
+
         String identifier = trimToNull(request.getIdentifier());
         String operator = normalizeUpper(request.getOperator());
         String thresholdValue = trimToNull(request.getThresholdValue());
@@ -182,11 +200,25 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
             }
             eventType = null;
             offlineSeconds = 0;
+            if (windowSeconds > 0) {
+                if (aggregateType == null) {
+                    aggregateType = AlertConstants.AGGREGATE_AVG;
+                }
+                if (!isDecimal(thresholdValue)) {
+                    throw invalid("窗口聚合阈值必须是可解析的十进制数");
+                }
+            } else {
+                aggregateType = null;
+                minSamples = 1;
+            }
         } else if (AlertConstants.SOURCE_OFFLINE.equals(sourceType)) {
             identifier = null;
             operator = null;
             thresholdValue = null;
             eventType = null;
+            aggregateType = null;
+            windowSeconds = 0;
+            minSamples = 1;
         } else {
             checkIdentifier(identifier, "事件规则");
             if (eventType != null && !AlertConstants.EVENT_TYPES.contains(eventType)) {
@@ -195,6 +227,9 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
             operator = null;
             thresholdValue = null;
             offlineSeconds = 0;
+            aggregateType = null;
+            windowSeconds = 0;
+            minSamples = 1;
         }
 
         rule.setName(name);
@@ -207,6 +242,9 @@ public class AlertRuleServiceImpl extends ServiceImpl<AlertRuleMapper, AlertRule
         rule.setIdentifier(identifier);
         rule.setOperator(operator);
         rule.setThresholdValue(thresholdValue);
+        rule.setAggregateType(aggregateType);
+        rule.setWindowSeconds(windowSeconds);
+        rule.setMinSamples(minSamples);
         rule.setEventType(eventType);
         rule.setOfflineSeconds(offlineSeconds);
         rule.setSuppressWindowSeconds(suppressWindowSeconds);

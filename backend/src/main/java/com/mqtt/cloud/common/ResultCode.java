@@ -156,9 +156,54 @@ public enum ResultCode {
     POINT_DISPATCH_NO_POINTS(6291, "该设备没有启用中的边缘点位可下发", HttpStatus.BAD_REQUEST),
     POINT_DISPATCH_DEVICE_INVALID(6292, "设备不可下发点表（不存在 / 已禁用 / 接入协议不支持边缘驱动）", HttpStatus.BAD_REQUEST),
 
+    // ── T-32 · OTA 灰度与固件校验 ──
+    /** G-11-4：目标设备全部已在别的升级任务中，互斥后无设备可下发。 */
+    OTA_DEVICE_CONFLICT(6293, "目标设备全部已被其他升级任务占用", HttpStatus.BAD_REQUEST),
+    /** G-11-1：灰度参数非法（批次大小、批次间隔越界或非 BATCHED 策略下携带灰度参数）。 */
+    OTA_BATCH_PARAM_INVALID(6294, "灰度批次参数非法", HttpStatus.BAD_REQUEST),
+
+    // ── T-34 · 命令级权限与调用配额 ──
+    /** 危险命令标识符：命中全局黑名单且该角色未豁免。 */
+    COMMAND_IDENTIFIER_DENIED(6295, "当前角色无权下发该命令", HttpStatus.FORBIDDEN),
+    /** 命令类型不在该角色的允许矩阵内。 */
+    COMMAND_TYPE_DENIED(6296, "当前角色无权下发该类型的命令", HttpStatus.FORBIDDEN),
+
     // ── T-30 · 限流 ──
     /** 开放接口按 API Key 维度限流。文档（apiEndpoints.js）早已宣称 429，此处补齐后端实现。 */
     RATE_LIMIT_EXCEEDED(4002, "超出密钥的调用频率限制", HttpStatus.TOO_MANY_REQUESTS),
+    /** 命令调用配额超限（T-34），按操作者维度而非 API Key 维度。 */
+    COMMAND_QUOTA_EXCEEDED(4291, "命令调用超出配额", HttpStatus.TOO_MANY_REQUESTS),
+
+    // ── T-37 · 设备调试中心 ──
+    /** 模拟上行的消息类型不在 data / heartbeat / lwt / reply / ota 内。 */
+    DEBUG_MESSAGE_TYPE_UNSUPPORTED(6297, "调试消息类型非法（仅支持 data / heartbeat / lwt / reply / ota）", HttpStatus.BAD_REQUEST),
+    /** data / reply / ota 的载荷必须是 JSON 对象，或超出大小上限。 */
+    DEBUG_PAYLOAD_INVALID(6298, "调试载荷非法（须为 JSON 对象且不超过大小上限）", HttpStatus.BAD_REQUEST),
+    /** 代码生成的目标端或语言不在白名单内。 */
+    DEBUG_CODE_TARGET_UNSUPPORTED(6299, "代码生成目标或语言不支持", HttpStatus.BAD_REQUEST),
+
+    // ── T-38 · 快速上位机（Web 组态） ──
+    HMI_VIEW_NOT_FOUND(6300, "上位机不存在或无权访问", HttpStatus.NOT_FOUND),
+    HMI_VIEW_LIMIT_EXCEEDED(6301, "上位机数量已达上限", HttpStatus.BAD_REQUEST),
+    HMI_CONFIG_INVALID(6302, "上位机配置非法", HttpStatus.BAD_REQUEST),
+    HMI_BINDING_INVALID(6303, "上位机控件绑定非法（属性 / 服务不存在、类型或可写性不匹配）", HttpStatus.BAD_REQUEST),
+    HMI_WIDGET_TYPE_UNSUPPORTED(6304, "上位机控件类型非法", HttpStatus.BAD_REQUEST),
+
+    // ── T-46 · 看板大屏与跨用户分享 ──
+    DASHBOARD_SHARE_NOT_FOUND(6305, "看板分享不存在或已失效", HttpStatus.NOT_FOUND),
+    DASHBOARD_SHARE_INVALID(6306, "看板分享配置非法", HttpStatus.BAD_REQUEST),
+    DASHBOARD_SHARE_LIMIT_EXCEEDED(6307, "看板分享数量超出上限", HttpStatus.BAD_REQUEST),
+
+    // ── T-48 · 分组级权限共享 ──
+    DEVICE_GROUP_MEMBER_INVALID(6308, "分组成员或权限非法", HttpStatus.BAD_REQUEST),
+    DEVICE_GROUP_MEMBER_NOT_FOUND(6309, "分组成员不存在", HttpStatus.NOT_FOUND),
+    DEVICE_GROUP_ACCESS_DENIED(6310, "无权访问该分组或设备", HttpStatus.FORBIDDEN),
+
+    // ── T-50 · Modbus 多从站与 64 位整型 ──
+    POINT_UNIT_ID_INVALID(6311, "Modbus 从站地址非法（须在 0~247，留空表示继承驱动配置）", HttpStatus.BAD_REQUEST),
+
+    // ── T-51 · 场景版本回滚 ──
+    SCENE_VERSION_NOT_FOUND(6312, "场景版本不存在或不属于该场景", HttpStatus.NOT_FOUND),
 
     // ── T-30 · 死信处置闭环 ──
     DEAD_LETTER_NOT_FOUND(5002, "死信记录不存在", HttpStatus.NOT_FOUND),

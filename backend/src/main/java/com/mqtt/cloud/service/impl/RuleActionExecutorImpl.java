@@ -131,17 +131,26 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
         if (execution.getUserId() == null || !execution.getUserId().equals(device.getOwnerId())) {
             throw new ActionFailure("目标设备归属已变更");
         }
-        JsonNode config = readConfig(rule);
+        JsonNode config = readConfig(rule, execution);
         if (config == null) {
             throw new ActionFailure("动作配置缺失或非法");
         }
+        // T-33：动作类型的分界判据是「本次执行有没有配置快照」，而不是「快照还是规则优先」。
+        //   · 快照非空 = 多动作形态（每个动作一条执行记录、各带各的配置），必须按记录分派，
+        //     否则 N 条记录会全部执行成规则行上那个回退占位 action_type，即第一个动作；
+        //   · 快照为空 = 单动作形态（含全部存量执行记录），**保持按规则分派**：
+        //     执行记录上的 action_type 只是触发当时的快照，规则后来被改过时以规则为准，
+        //     这是 T-19 的既有语义，改动它会让存量行为漂移。
+        // 该判据与 readConfig 的读源判据完全一致，两处不会分叉。
+        String actionType = execution.getActionConfigSnapshot() != null
+                ? execution.getActionType() : rule.getActionType();
         Map<String, String> values = buildPlaceholders(execution, rule, device);
-        switch (rule.getActionType()) {
+        switch (actionType) {
             case RuleConstants.ACTION_UPDATE_PROPERTY -> updateProperty(device, config, values);
             case RuleConstants.ACTION_SEND_COMMAND -> sendCommand(device, config, values);
             case RuleConstants.ACTION_FORWARD_MQTT -> forwardMqtt(execution, config, values);
             case RuleConstants.ACTION_FORWARD_HTTP -> forwardHttp(execution, rule, config, values);
-            default -> throw new ActionFailure("不支持的动作类型 " + rule.getActionType());
+            default -> throw new ActionFailure("不支持的动作类型 " + actionType);
         }
     }
 
@@ -377,8 +386,19 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
         }
     }
 
-    private JsonNode readConfig(RuleDefinition rule) {
-        String json = rule.getActionConfig();
+    /**
+     * 取本次执行的动作配置（T-33）。
+     * <p>
+     * 优先读执行记录里的快照：多动作时同一规则的 N 条执行各自携带自己那份配置，
+     * 而 {@link #execute(Long)} 只拿到 executionId，回查规则只会读到那一个「单动作列」——
+     * 不读快照，第 2 个动作就会执行成第 1 个动作。
+     * <p>
+     * 快照为 {@code null}（单动作规则与全部存量执行记录）时回落到规则当前 {@code action_config}，
+     * 与 T-19 原始行为逐位一致。
+     */
+    private JsonNode readConfig(RuleDefinition rule, RuleExecution execution) {
+        String json = execution != null && execution.getActionConfigSnapshot() != null
+                ? execution.getActionConfigSnapshot() : rule.getActionConfig();
         if (json == null || json.isBlank()) {
             return null;
         }
@@ -386,7 +406,8 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
             JsonNode node = objectMapper.readTree(json);
             return node != null && node.isObject() ? node : null;
         } catch (Exception e) {
-            log.warn("规则动作配置解析失败: ruleId={}", rule.getId(), e);
+            log.warn("规则动作配置解析失败: ruleId={}, executionId={}",
+                    rule.getId(), execution != null ? execution.getId() : null, e);
             return null;
         }
     }

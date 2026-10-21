@@ -99,6 +99,23 @@ describe('api/realtime SSE 客户端', () => {
     client.close()
   })
 
+  it('保留 SSE event 名供页面按主题分流', async () => {
+    const onEvent = vi.fn()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(streamResponse([
+        'event: device-log\ndata: {"deviceKey":"dev-1"}\n\n'
+      ]))
+    )
+
+    const client = subscribeRealtime({ onEvent })
+    await flush()
+
+    expect(onEvent).toHaveBeenCalledWith({ deviceKey: 'dev-1', eventName: 'device-log' })
+
+    client.close()
+  })
+
   it('携带 Authorization 头请求实时通道', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamResponse([]))
     vi.stubGlobal('fetch', fetchMock)

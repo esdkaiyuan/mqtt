@@ -8,39 +8,57 @@
             返回
           </el-button>
           <span class="detail-heading__name">{{ device.deviceName }}</span>
+          <el-tag
+            v-if="isSharedDevice"
+            size="small"
+            :type="canOperateDevice ? 'success' : 'warning'"
+            effect="plain"
+          >
+            {{ canOperateDevice ? '共享 · 可操作' : '共享 · 只读' }}
+          </el-tag>
         </div>
       </template>
       <template #actions>
-        <!--
-          点位表入口（T-31 P2）。
-          不做「仅 Modbus 设备可见」的条件渲染：设备详情接口当前不返回产品的 protocolType，
-          接入方法要么改动既有出参（影响前端其他消费方），要么额外发一次产品查询。
-          点位表本身对 MQTT 直连设备是空表（无点位即无内容），展示成本低于引入判断逻辑。
-        -->
-        <el-button @click="goPoints">
-          <svg-icon name="list" :size="14" />
-          点位表
-        </el-button>
-        <el-button @click="goLogs">
-          <svg-icon name="history" :size="14" />
-          设备日志
-        </el-button>
-        <el-button @click="editDevice">
-          <svg-icon name="edit" :size="14" />
-          编辑
-        </el-button>
-        <el-button type="danger" plain @click="deleteDevice">
-          <svg-icon name="delete" :size="14" />
-          删除
-        </el-button>
+        <template v-if="!isSharedDevice">
+          <!--
+            点位表入口（T-31 P2）。
+            不做「仅 Modbus 设备可见」的条件渲染：设备详情接口当前不返回产品的 protocolType，
+            接入方法要么改动既有出参（影响前端其他消费方），要么额外发一次产品查询。
+            点位表本身对 MQTT 直连设备是空表（无点位即无内容），展示成本低于引入判断逻辑。
+          -->
+          <el-button @click="goDebug">
+            <svg-icon name="settings" :size="14" />
+            调试
+          </el-button>
+          <el-button @click="goHmi">
+            <svg-icon name="chart" :size="14" />
+            上位机
+          </el-button>
+          <el-button @click="goPoints">
+            <svg-icon name="list" :size="14" />
+            点位表
+          </el-button>
+          <el-button @click="goLogs">
+            <svg-icon name="history" :size="14" />
+            设备日志
+          </el-button>
+          <el-button @click="editDevice">
+            <svg-icon name="edit" :size="14" />
+            编辑
+          </el-button>
+          <el-button type="danger" plain @click="deleteDevice">
+            <svg-icon name="delete" :size="14" />
+            删除
+          </el-button>
+        </template>
       </template>
     </PageHeader>
 
-    <div v-if="parent" class="parent-gateway-bar">
-      <span class="parent-gateway-bar__label">所属网关</span>
+    <div v-if="parent && !isSharedDevice" class="parent-gateway-bar">
+      <span class="parent-gateway-bar__label">所属上级</span>
       <span class="parent-gateway-bar__name">{{ parent.deviceName }}</span>
       <span class="parent-gateway-bar__key">{{ parent.deviceKey }}</span>
-      <el-button link type="primary" size="small" @click="goParentGateway">查看网关</el-button>
+      <el-button link type="primary" size="small" @click="goParentGateway">查看上级</el-button>
     </div>
 
     <div class="detail-main">
@@ -76,7 +94,7 @@
         </div>
       </div>
 
-      <div v-if="isGateway" id="device-sub-device-section" class="info-card card">
+      <div v-if="canHaveChildren && !isSharedDevice" id="device-sub-device-section" class="info-card card">
         <SubDevicePanel
           :sub-devices="subDevices"
           :loading="subDevicesLoading"
@@ -89,7 +107,7 @@
         />
       </div>
 
-      <div id="device-credential-section" class="info-card card">
+      <div v-if="!isSharedDevice" id="device-credential-section" class="info-card card">
         <DeviceCredentialPanel
           :auth-mode="authMode"
           :auth-mode-loading="authModeLoading"
@@ -111,8 +129,10 @@
       <div id="device-property-trend-section" class="info-card card">
         <DevicePropertyTrend
           :device-id="device.id"
+          :device-key="device.deviceKey || ''"
           :device-name="device.deviceName"
           :product-id="device.productId"
+          :can-export="!isSharedDevice"
         />
       </div>
 
@@ -133,6 +153,7 @@
           :device-key="device.deviceKey || ''"
           :loading="capabilityLoading"
           :sending="sending"
+          :can-operate="canOperateDevice"
           @send="handleSendCommand"
         />
       </div>
@@ -144,6 +165,7 @@
           :online="device.status === 'ONLINE'"
           :loading="shadowLoading"
           :setting="setting"
+          :can-operate="canOperateDevice"
           @set-desired="handleSetDesired"
         />
       </div>
@@ -155,6 +177,8 @@
           :loading="recordsLoading"
           :page="commandPage"
           :size="commandSize"
+          :device-key="device.deviceKey || ''"
+          :can-export="!isSharedDevice"
           @page-change="handleCommandPageChange"
         />
       </div>
@@ -170,7 +194,7 @@
     />
 
     <el-dialog v-model="attachVisible" title="挂载既有设备" width="440px">
-      <p class="attach-hint">仅列出本网关所属产品下的普通设备；挂载后该设备经本网关代连</p>
+      <p class="attach-hint">仅列出本产品下的普通设备；挂载后该设备经本设备代连（支持多级子网关）</p>
       <el-select
         v-model="attachTargetId"
         placeholder="选择要挂载的设备"
@@ -283,8 +307,15 @@ const {
 // 签发与吊销为管理员动作，前端置灰仅作体验层提示，后端仍独立鉴权
 const canWrite = computed(() => authStore.hasRole(['ADMIN']))
 
-// 设备拓扑（T-26）：nodeType 由详情接口带回，决定是否展示子设备区块
-const isGateway = computed(() => device.value.nodeType === 'GATEWAY')
+// T-48：共享分组成员按 accessLevel 收敛页面操作；命令 / 影子写值还需平台 OPERATOR 角色
+const isSharedDevice = computed(() => ['VIEW', 'OPERATE'].includes(device.value?.accessLevel))
+const canOperateDevice = computed(() =>
+  ['OWNER', 'OPERATE'].includes(device.value?.accessLevel || 'OWNER') &&
+  authStore.hasRole(['ADMIN', 'OPERATOR'])
+)
+
+// 设备拓扑（T-26 / T-47）：GATEWAY 与 SUB（子网关）都可以有下级
+const canHaveChildren = computed(() => ['GATEWAY', 'SUB'].includes(device.value.nodeType))
 const topologyDeviceId = computed(() => device.value.id || null)
 const {
   subDevices,
@@ -324,7 +355,7 @@ async function handleAttachConfirm() {
 async function handleDetach(subDevice) {
   try {
     await ElMessageBox.confirm(
-      `确定将「${subDevice.deviceName}」从本网关解绑吗？设备与凭据保留，可重新挂载。`,
+      `确定将「${subDevice.deviceName}」从本设备解绑吗？设备与凭据保留，可重新挂载。`,
       '确认解绑',
       { confirmButtonText: '解绑', cancelButtonText: '取消', type: 'warning' }
     )
@@ -350,7 +381,7 @@ function goParentGateway() {
 watch(
   credentialProductId,
   (value) => {
-    if (value) loadAuthMode()
+    if (value && !isSharedDevice.value) loadAuthMode()
   },
   { immediate: true }
 )
@@ -368,16 +399,19 @@ watch(device, (value) => ui.setRailContext({ device: value }), { immediate: true
 
 onMounted(loadDevice)
 
-// 网关与其子设备之间互跳复用同一个路由组件，须按 id 变化重新加载
+// 上级设备与其子设备之间互跳复用同一个路由组件，须按 id 变化重新加载
 watch(() => route.params.id, loadDevice)
 
 async function loadDevice() {
   device.value = await deviceStore.fetchDeviceById(route.params.id)
   subDevices.value = []
   parent.value = null
-  if (isGateway.value) {
+  // 共享成员不访问拓扑 / 凭据等所有者能力，避免无谓的 403
+  if (isSharedDevice.value) return
+  if (canHaveChildren.value) {
     await loadSubDevices()
-  } else if (device.value?.nodeType === 'SUB') {
+  }
+  if (device.value?.nodeType === 'SUB') {
     await loadParent()
   }
 }
@@ -391,6 +425,14 @@ function goBack() {
 // 设备统一日志时间线（T-20）
 function goLogs() {
   router.push(`/workbench/devices/${route.params.id}/logs`)
+}
+
+function goDebug() {
+  router.push(`/workbench/devices/${route.params.id}/debug`)
+}
+
+function goHmi() {
+  router.push({ path: '/workbench/hmi/new', query: { deviceId: route.params.id } })
 }
 
 // 设备点位表（T-31 P2）

@@ -13,7 +13,8 @@ import java.time.LocalDateTime;
  * OTA 逐台升级记录（T-22）。
  * <p>
  * 任务下一台设备一行，唯一键 {@code (task_id, device_id)}；状态流转
- * {@code PENDING → DISPATCHED → DOWNLOADING → FLASHING → SUCCESS}，旁支 {@code FAILED}/{@code TIMEOUT}。
+ * {@code PENDING → DISPATCHED → DOWNLOADING → FLASHING → VERIFYING → SUCCESS}，旁支 {@code FAILED}/{@code TIMEOUT}，
+ * T-32 追加 {@code SKIPPED}（任务终止时未下发即跳过）。
  * 进度由设备上行主题 {@code device/{key}/ota} 回传，经 {@code OtaProgressService} 旁路更新，进度单调不减。
  * {@code command_id} 关联 {@code device_command_record.command_id}，便于跳转命令详情。
  * <p>
@@ -43,13 +44,25 @@ public class OtaUpgradeRecord {
     @TableField("version")
     private String version;
 
-    /** 状态：PENDING/DISPATCHED/DOWNLOADING/FLASHING/SUCCESS/FAILED/TIMEOUT */
+    /** 所属批号（T-32；ALL 策略与存量行恒为 1） */
+    @TableField("batch_no")
+    private Integer batchNo;
+
+    /** 状态：PENDING/DISPATCHED/DOWNLOADING/FLASHING/VERIFYING/SUCCESS/FAILED/TIMEOUT/SKIPPED */
     @TableField("status")
     private String status;
 
     /** 进度百分比 0~100 */
     @TableField("progress")
     private Integer progress;
+
+    /** 固件校验结果（T-32）：NOT_REPORTED/VERIFYING/PASSED/MISMATCHED */
+    @TableField("verify_status")
+    private String verifyStatus;
+
+    /** 设备回传的固件 md5（T-32），与 ota_firmware.md5 比对后写 verify_status */
+    @TableField("reported_md5")
+    private String reportedMd5;
 
     /** 设备回传或系统填写的信息 */
     @TableField("message")

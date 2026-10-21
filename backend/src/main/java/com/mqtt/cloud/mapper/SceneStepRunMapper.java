@@ -73,6 +73,31 @@ public interface SceneStepRunMapper extends BaseMapper<SceneStepRun> {
                       @Param("firstSeq") Integer firstSeq,
                       @Param("nextAttemptAt") LocalDateTime nextAttemptAt);
 
+    /**
+     * 手动重试时整体重置 {@code fromSeq} 起的并行块：并行开始 / 汇合 / 分支步骤（含已成功分支）全部回到
+     * {@code PENDING}，由并行开始步骤重新分叉，避免只重放单个分支导致汇合条件永远无法满足（T-49）。
+     */
+    int resetParallelFrom(@Param("executionId") Long executionId, @Param("fromSeq") int fromSeq);
+
     /** 回填转发载荷快照（HTTP/MQTT 步骤渲染成功后调用，无论发送成功与否）。 */
     int updateForwardPayload(@Param("id") Long id, @Param("forwardPayload") String forwardPayload);
+
+    /** 回填分支 / 循环流程结果快照（T-44）。 */
+    int updateFlowResult(@Param("id") Long id, @Param("flowResult") String flowResult);
+
+    /**
+     * 循环继续：把当前循环步骤从 {@code RUNNING} 复位为 {@code PENDING}，记录迭代轮次与结果快照。
+     * 仅当仍 {@code RUNNING} 时生效（多副本幂等）。
+     */
+    int resetLoopStep(@Param("id") Long id,
+                      @Param("loopIteration") int loopIteration,
+                      @Param("flowResult") String flowResult);
+
+    /**
+     * 重置循环体：把循环体内的已执行 / 已跳过步骤复位为 {@code PENDING}，清空轮次与流程结果；
+     * 未执行（仍 {@code PENDING}）的步骤保持不变。
+     */
+    int resetLoopBody(@Param("executionId") Long executionId,
+                      @Param("startSeq") int startSeq,
+                      @Param("endSeq") int endSeq);
 }

@@ -3,6 +3,7 @@ package com.mqtt.cloud.util;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.RuleConstants;
 import com.mqtt.cloud.common.SceneConstants;
+import com.mqtt.cloud.common.constant.ShadowChangeSide;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.config.RuleProperties;
 import com.mqtt.cloud.config.SceneProperties;
@@ -23,9 +24,12 @@ import tools.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 场景保存期校验（T-23 设计文档 §7）。
@@ -89,7 +93,7 @@ public class SceneValidator {
         String triggerType = normalizeUpper(request.getTriggerType());
         if (triggerType == null || !SceneConstants.TRIGGERS.contains(triggerType)) {
             throw new BusinessException(ResultCode.SCENE_TRIGGER_UNSUPPORTED,
-                    "触发源必须是 PROPERTY / EVENT / TIMER");
+                    "触发源必须是 PROPERTY / EVENT / TIMER / ONLINE / OFFLINE");
         }
 
         Long triggerDeviceId = request.getTriggerDeviceId();
@@ -122,6 +126,7 @@ public class SceneValidator {
         definition.setTriggerOperator(trigger.triggerOperator());
         definition.setTriggerThreshold(trigger.triggerThreshold());
         definition.setTriggerEventType(trigger.triggerEventType());
+        definition.setTriggerShadowSide(trigger.shadowSide());
         definition.setTimerCron(trigger.timerCron());
         definition.setConditionLogic(conditionLogic);
         definition.setConditionConfig(conditionConfigJson);
@@ -133,7 +138,8 @@ public class SceneValidator {
     // ---------- 触发源 ----------
 
     private record Trigger(Long triggerDeviceId, String triggerIdentifier, String triggerOperator,
-                           String triggerThreshold, String triggerEventType, String timerCron) {
+                           String triggerThreshold, String triggerEventType, String timerCron,
+                           String shadowSide) {
     }
 
     private Trigger validateTrigger(Long userId, String triggerType, SceneRequest request) {
@@ -142,6 +148,7 @@ public class SceneValidator {
         String threshold = trimToNull(request.getTriggerThreshold());
         String eventType = trimToNull(request.getTriggerEventType());
         String cron = trimToNull(request.getTimerCron());
+        String shadowSide = normalizeUpper(request.getTriggerShadowSide());
         Long deviceId = request.getTriggerDeviceId();
 
         if (SceneConstants.TRIGGER_TIMER.equals(triggerType)) {
@@ -153,14 +160,42 @@ public class SceneValidator {
             } catch (IllegalArgumentException e) {
                 throw invalid("cron 表达式非法：" + e.getMessage());
             }
-            if (deviceId != null || identifier != null || operator != null || threshold != null || eventType != null) {
-                throw invalid("定时触发不允许配置触发设备 / 标识符 / 比较条件 / 事件类型");
+            if (deviceId != null || identifier != null || operator != null || threshold != null
+                    || eventType != null || shadowSide != null) {
+                throw invalid("定时触发不允许配置触发设备 / 标识符 / 比较条件 / 事件类型 / 影子变更侧");
             }
-            return new Trigger(null, null, null, null, null, cron);
+            return new Trigger(null, null, null, null, null, cron, null);
         }
 
         if (cron != null) {
             throw invalid("cron 表达式仅在定时触发时允许配置");
+        }
+
+        if (SceneConstants.STATUS_TRIGGERS.contains(triggerType)) {
+            if (identifier != null || operator != null || threshold != null || eventType != null
+                    || shadowSide != null) {
+                throw invalid("上下线触发不允许配置标识符 / 比较条件 / 事件类型 / 影子变更侧");
+            }
+            return new Trigger(deviceId, null, null, null, null, null, null);
+        }
+
+        if (SceneConstants.TRIGGER_SHADOW.equals(triggerType)) {
+            if (operator != null || threshold != null || eventType != null) {
+                throw invalid("影子变更触发不支持比较符 / 阈值 / 事件类型");
+            }
+            if (shadowSide == null) {
+                shadowSide = ShadowChangeSide.REPORTED;
+            } else if (!ShadowChangeSide.ALL.contains(shadowSide)) {
+                throw invalid("影子变更侧必须是 REPORTED / DESIRED / ANY");
+            }
+            if (identifier != null && identifier.length() > RuleConstants.MAX_IDENTIFIER_LENGTH) {
+                throw invalid("触发标识符长度不能超过 " + RuleConstants.MAX_IDENTIFIER_LENGTH);
+            }
+            return new Trigger(deviceId, identifier, null, null, null, null, shadowSide);
+        }
+
+        if (shadowSide != null) {
+            throw invalid("影子变更侧仅用于 SHADOW 触发源");
         }
         if (identifier == null) {
             throw invalid("触发标识符不能为空");
@@ -179,7 +214,7 @@ public class SceneValidator {
                     throw invalid("事件类型长度不能超过 " + RuleConstants.MAX_EVENT_TYPE_LENGTH);
                 }
             }
-            return new Trigger(deviceId, identifier, null, null, eventType, null);
+            return new Trigger(deviceId, identifier, null, null, eventType, null, null);
         }
 
         // PROPERTY
@@ -197,7 +232,7 @@ public class SceneValidator {
                 throw invalid("数值比较符下触发阈值必须是可解析的十进制数");
             }
         }
-        return new Trigger(deviceId, identifier, operator, threshold, null, null);
+        return new Trigger(deviceId, identifier, operator, threshold, null, null, null);
     }
 
     // ---------- 条件组 ----------
@@ -280,26 +315,39 @@ public class SceneValidator {
             if (actionType == null) {
                 throw new BusinessException(ResultCode.SCENE_STEP_UNSUPPORTED, "步骤动作类型不能为空");
             }
-            if (!SceneConstants.ACTIONS.contains(actionType)) {
+            if (!SceneConstants.STEP_TYPES.contains(actionType)) {
                 throw new BusinessException(ResultCode.SCENE_STEP_UNSUPPORTED, "不支持的步骤动作类型 " + actionType);
             }
 
+            boolean flowStep = SceneConstants.FLOW_STEPS.contains(actionType);
             String targetType = normalizeUpper(step.getTargetType());
-            if (targetType == null || !SceneConstants.TARGETS.contains(targetType)) {
-                throw invalid("步骤目标类型必须是 TRIGGER / FIXED");
-            }
-            if (SceneConstants.FORWARD_ACTIONS.contains(actionType) && !SceneConstants.TARGET_TRIGGER.equals(targetType)) {
-                throw invalid("转发类动作的目标类型必须是 TRIGGER");
-            }
-            if (SceneConstants.TRIGGER_TIMER.equals(triggerType)
-                    && (SceneConstants.ACTION_UPDATE_PROPERTY.equals(actionType)
-                        || SceneConstants.ACTION_SEND_COMMAND.equals(actionType))
-                    && !SceneConstants.TARGET_FIXED.equals(targetType)) {
-                throw invalid("定时触发的属性更新 / 命令下发步骤必须使用固定目标（FIXED）");
+            if (flowStep) {
+                if (targetType != null && !SceneConstants.TARGET_NONE.equals(targetType)) {
+                    throw invalid("流程步骤（分支 / 循环 / 并行）不支持目标配置");
+                }
+                if (!isEmpty(step.getTargetConfig())) {
+                    throw invalid("流程步骤（分支 / 循环 / 并行）不支持目标配置");
+                }
+                targetType = SceneConstants.TARGET_NONE;
+            } else {
+                if (targetType == null || !SceneConstants.TARGET_TRIGGER.equals(targetType)
+                        && !SceneConstants.TARGET_FIXED.equals(targetType)) {
+                    throw invalid("步骤目标类型必须是 TRIGGER / FIXED");
+                }
+                if (SceneConstants.FORWARD_ACTIONS.contains(actionType)
+                        && !SceneConstants.TARGET_TRIGGER.equals(targetType)) {
+                    throw invalid("转发类动作的目标类型必须是 TRIGGER");
+                }
+                if (SceneConstants.TRIGGER_TIMER.equals(triggerType)
+                        && (SceneConstants.ACTION_UPDATE_PROPERTY.equals(actionType)
+                            || SceneConstants.ACTION_SEND_COMMAND.equals(actionType))
+                        && !SceneConstants.TARGET_FIXED.equals(targetType)) {
+                    throw invalid("定时触发的属性更新 / 命令下发步骤必须使用固定目标（FIXED）");
+                }
             }
 
             String targetConfigJson = validateTarget(userId, targetType, step.getTargetConfig());
-            String actionConfigJson = validateActionConfig(actionType, step.getActionConfig());
+            String actionConfigJson = validateActionConfig(userId, triggerType, actionType, step.getActionConfig());
 
             SceneStep entity = new SceneStep();
             entity.setSeq(expectedSeq);
@@ -308,15 +356,18 @@ public class SceneValidator {
             entity.setTargetType(targetType);
             entity.setTargetConfig(targetConfigJson);
             entity.setActionConfig(actionConfigJson);
+            entity.setParallelSeq(flowStep ? null : step.getParallelSeq());
+            entity.setBranchIndex(flowStep ? null : step.getBranchIndex());
             entity.setEnabled(step.getEnabled() == null || step.getEnabled() ? 1 : 0);
             result.add(entity);
         }
+        validateFlowStructure(result, steps.size());
         return result;
     }
 
     /** 校验固定目标：非空、至少一个集合非空、归属合法、去重后数量在 [1, min(MAX_BATCH_SIZE, max-target-devices)]。 */
     private String validateTarget(Long userId, String targetType, BatchTargetRequest targetConfig) {
-        if (SceneConstants.TARGET_TRIGGER.equals(targetType)) {
+        if (SceneConstants.TARGET_TRIGGER.equals(targetType) || SceneConstants.TARGET_NONE.equals(targetType)) {
             return null;
         }
         if (targetConfig == null || isEmpty(targetConfig)) {
@@ -335,8 +386,8 @@ public class SceneValidator {
     }
 
     private static boolean isEmpty(BatchTargetRequest target) {
-        return isBlank(target.getDeviceIds()) && isBlank(target.getProductIds())
-                && isBlank(target.getGroupIds()) && isBlank(target.getTagIds());
+        return target == null || (isBlank(target.getDeviceIds()) && isBlank(target.getProductIds())
+                && isBlank(target.getGroupIds()) && isBlank(target.getTagIds()));
     }
 
     private static boolean isBlank(List<Long> list) {
@@ -345,7 +396,7 @@ public class SceneValidator {
 
     // ---------- 动作配置（形状同 T-19 §5.2 / §7.3） ----------
 
-    private String validateActionConfig(String actionType, JsonNode config) {
+    private String validateActionConfig(Long userId, String triggerType, String actionType, JsonNode config) {
         if (config == null || !config.isObject()) {
             throw invalid("动作配置不能为空");
         }
@@ -423,6 +474,64 @@ public class SceneValidator {
                 }
                 checkPayloadTemplate(config);
             }
+            case SceneConstants.STEP_BRANCH -> {
+                checkIdentifier(text(config, "identifier"), "分支条件");
+                String operator = normalizeUpper(text(config, "operator"));
+                if (operator == null || !RuleConstants.OPERATORS.contains(operator)) {
+                    throw invalid("分支条件比较符必须是 GT / GTE / LT / LTE / EQ / NE");
+                }
+                String threshold = text(config, "threshold");
+                if (threshold == null) {
+                    throw invalid("分支条件阈值不能为空");
+                }
+                if (threshold.length() > RuleConstants.MAX_THRESHOLD_LENGTH) {
+                    throw invalid("分支条件阈值长度不能超过 " + RuleConstants.MAX_THRESHOLD_LENGTH);
+                }
+                if (SceneConstants.NUMERIC_OPERATORS.contains(operator) && !isDecimal(threshold)) {
+                    throw invalid("数值比较符下分支条件阈值必须是可解析的十进制数");
+                }
+                Long conditionDeviceId = longOrNull(config, "deviceId");
+                if (conditionDeviceId != null) {
+                    checkDeviceOwned(userId, conditionDeviceId);
+                }
+                if (SceneConstants.TRIGGER_TIMER.equals(triggerType) && conditionDeviceId == null) {
+                    throw invalid("定时触发的分支条件必须指定取值设备");
+                }
+                Integer trueSeq = intOrNull(config, "trueSeq");
+                Integer falseSeq = intOrNull(config, "falseSeq");
+                if (trueSeq == null && falseSeq == null) {
+                    throw invalid("分支步骤至少需要一个跳转目标（trueSeq / falseSeq）");
+                }
+                if ((trueSeq != null && trueSeq < 1) || (falseSeq != null && falseSeq < 1)) {
+                    throw invalid("分支跳转目标序号必须从 1 开始");
+                }
+            }
+            case SceneConstants.STEP_LOOP -> {
+                Integer startSeq = intOrNull(config, "startSeq");
+                Integer times = intOrNull(config, "times");
+                if (startSeq == null || startSeq < 1) {
+                    throw invalid("循环步骤必须指定循环体起始序号 startSeq");
+                }
+                if (times == null || times < 1 || times > SceneConstants.MAX_LOOP_TIMES) {
+                    throw invalid("循环次数需在 [1, " + SceneConstants.MAX_LOOP_TIMES + "]");
+                }
+            }
+            case SceneConstants.STEP_PARALLEL -> {
+                Integer branches = intOrNull(config, "branches");
+                if (branches == null || branches < SceneConstants.MIN_PARALLEL_BRANCHES
+                        || branches > SceneConstants.MAX_PARALLEL_BRANCHES) {
+                    throw invalid("并行分支数需在 [" + SceneConstants.MIN_PARALLEL_BRANCHES
+                            + ", " + SceneConstants.MAX_PARALLEL_BRANCHES + "]");
+                }
+                if (config.properties().size() != 1) {
+                    throw invalid("并行开始步骤仅支持 branches 配置");
+                }
+            }
+            case SceneConstants.STEP_JOIN -> {
+                if (!config.properties().isEmpty()) {
+                    throw invalid("并行汇合步骤不支持配置");
+                }
+            }
             default -> throw new BusinessException(ResultCode.SCENE_STEP_UNSUPPORTED,
                     "不支持的步骤动作类型 " + actionType);
         }
@@ -437,6 +546,232 @@ public class SceneValidator {
             throw invalid("动作配置超过大小上限 " + ruleProperties.getMaxPayloadBytes() + " 字节");
         }
         return json;
+    }
+
+    // ---------- 分支 / 循环结构（T-44） ----------
+
+    /**
+     * 结构校验：分支只允许向前跳转且不能从循环外跳入循环体；循环范围必须嵌套或互不相交；
+     * 循环展开后的总执行次数受 {@link SceneConstants#MAX_EXECUTION_STEPS} 约束。
+     */
+    private void validateFlowStructure(List<SceneStep> steps, int totalSteps) {
+        Set<Integer> enabledSeqs = new HashSet<>();
+        List<LoopBlock> loops = new ArrayList<>();
+        for (SceneStep step : steps) {
+            if (step.getEnabled() != null && step.getEnabled() == 1) {
+                enabledSeqs.add(step.getSeq());
+            }
+        }
+        List<ParallelBlock> parallels = collectParallelBlocks(steps);
+        for (SceneStep step : steps) {
+            if (!SceneConstants.STEP_LOOP.equals(step.getActionType())
+                    || !enabledSeqs.contains(step.getSeq())) {
+                continue;
+            }
+            JsonNode config = readConfig(step.getActionConfig());
+            Integer startSeq = intOrNull(config, "startSeq");
+            Integer times = intOrNull(config, "times");
+            if (startSeq == null || times == null) {
+                continue;
+            }
+            if (startSeq >= step.getSeq()) {
+                throw invalid("循环体起始序号必须小于循环步骤序号（第 " + step.getSeq() + " 步）");
+            }
+            if (!enabledSeqs.contains(startSeq)) {
+                throw invalid("循环体起始步骤（第 " + startSeq + " 步）必须启用");
+            }
+            loops.add(new LoopBlock(startSeq, step.getSeq(), times));
+        }
+        for (int i = 0; i < loops.size(); i++) {
+            for (int j = i + 1; j < loops.size(); j++) {
+                LoopBlock first = loops.get(i);
+                LoopBlock second = loops.get(j);
+                boolean disjoint = first.loopSeq() < second.startSeq() || second.loopSeq() < first.startSeq();
+                boolean firstContainsSecond =
+                        first.startSeq() <= second.startSeq() && second.loopSeq() <= first.loopSeq();
+                boolean secondContainsFirst =
+                        second.startSeq() <= first.startSeq() && first.loopSeq() <= second.loopSeq();
+                if (!disjoint && !firstContainsSecond && !secondContainsFirst) {
+                    throw invalid("循环范围不能部分重叠：第 " + first.startSeq() + "–" + first.loopSeq()
+                            + " 步与第 " + second.startSeq() + "–" + second.loopSeq() + " 步");
+                }
+            }
+        }
+        for (ParallelBlock parallel : parallels) {
+            for (LoopBlock loop : loops) {
+                boolean disjoint = parallel.joinSeq() < loop.startSeq() || loop.loopSeq() < parallel.startSeq();
+                if (!disjoint) {
+                    throw invalid("并行块（第 " + parallel.startSeq() + "–" + parallel.joinSeq()
+                            + " 步）不能与循环体（第 " + loop.startSeq() + "–" + loop.loopSeq() + " 步）重叠");
+                }
+            }
+        }
+
+        for (SceneStep step : steps) {
+            if (!SceneConstants.STEP_BRANCH.equals(step.getActionType())
+                    || !enabledSeqs.contains(step.getSeq())) {
+                continue;
+            }
+            JsonNode config = readConfig(step.getActionConfig());
+            for (String field : List.of("trueSeq", "falseSeq")) {
+                Integer target = intOrNull(config, field);
+                if (target == null) {
+                    continue;
+                }
+                if (target <= step.getSeq()) {
+                    throw invalid("第 " + step.getSeq() + " 步的分支只能向前跳转（目标 " + target + "）");
+                }
+                if (target > totalSteps) {
+                    throw invalid("第 " + step.getSeq() + " 步的分支目标超出步骤范围（目标 " + target + "）");
+                }
+                if (!enabledSeqs.contains(target)) {
+                    throw invalid("第 " + step.getSeq() + " 步的分支目标（第 " + target + " 步）必须启用");
+                }
+                for (LoopBlock loop : loops) {
+                    boolean targetInside = loop.startSeq() <= target && target <= loop.loopSeq();
+                    boolean branchInside = loop.startSeq() <= step.getSeq() && step.getSeq() <= loop.loopSeq();
+                    if (targetInside && !branchInside) {
+                        throw invalid("第 " + step.getSeq() + " 步的分支不能从循环外跳入第 "
+                                + loop.startSeq() + "–" + loop.loopSeq() + " 步的循环体");
+                    }
+                }
+                for (ParallelBlock parallel : parallels) {
+                    if (parallel.startSeq() <= target && target <= parallel.joinSeq()) {
+                        throw invalid("第 " + step.getSeq() + " 步的分支不能跳入并行块（第 "
+                                + parallel.startSeq() + "–" + parallel.joinSeq() + " 步）");
+                    }
+                }
+            }
+        }
+
+        int totalExecutions = 0;
+        for (SceneStep step : steps) {
+            if (!enabledSeqs.contains(step.getSeq())) {
+                continue;
+            }
+            long multiplier = 1;
+            for (LoopBlock loop : loops) {
+                if (loop.startSeq() <= step.getSeq() && step.getSeq() <= loop.loopSeq()) {
+                    multiplier *= loop.times();
+                    if (multiplier > SceneConstants.MAX_EXECUTION_STEPS) {
+                        break;
+                    }
+                }
+            }
+            totalExecutions += (int) Math.min(multiplier, SceneConstants.MAX_EXECUTION_STEPS + 1L);
+            if (totalExecutions > SceneConstants.MAX_EXECUTION_STEPS) {
+                throw new BusinessException(ResultCode.SCENE_LIMIT_EXCEEDED,
+                        "循环展开后的步骤执行次数不能超过 " + SceneConstants.MAX_EXECUTION_STEPS);
+            }
+        }
+    }
+
+    /**
+     * 扫描并行块：PARALLEL 与 JOIN 必须成对、不能嵌套；块内只允许普通动作步骤，
+     * 且每个启用步骤必须归属当前块的具体分支；每个分支至少一个启用步骤。
+     */
+    private List<ParallelBlock> collectParallelBlocks(List<SceneStep> steps) {
+        List<ParallelBlock> blocks = new ArrayList<>();
+        int activeStart = -1;
+        int branches = 0;
+        Map<Integer, Integer> enabledBranchCounts = new HashMap<>();
+        for (SceneStep step : steps) {
+            String type = step.getActionType();
+            boolean enabled = step.getEnabled() == null || step.getEnabled() == 1;
+            if (SceneConstants.STEP_PARALLEL.equals(type)) {
+                if (!enabled) {
+                    throw invalid("并行开始步骤（第 " + step.getSeq() + " 步）必须启用");
+                }
+                if (activeStart > 0) {
+                    throw invalid("并行块不能嵌套：第 " + step.getSeq() + " 步位于第 " + activeStart + " 步的并行块内");
+                }
+                JsonNode config = readConfig(step.getActionConfig());
+                Integer count = intOrNull(config, "branches");
+                if (count == null || count < SceneConstants.MIN_PARALLEL_BRANCHES
+                        || count > SceneConstants.MAX_PARALLEL_BRANCHES) {
+                    throw invalid("并行分支数需在 [" + SceneConstants.MIN_PARALLEL_BRANCHES
+                            + ", " + SceneConstants.MAX_PARALLEL_BRANCHES + "]");
+                }
+                activeStart = step.getSeq();
+                branches = count;
+                enabledBranchCounts.clear();
+                continue;
+            }
+            if (SceneConstants.STEP_JOIN.equals(type)) {
+                if (!enabled) {
+                    throw invalid("并行汇合步骤（第 " + step.getSeq() + " 步）必须启用");
+                }
+                if (activeStart < 0) {
+                    throw invalid("第 " + step.getSeq() + " 步的并行汇合没有对应的并行开始");
+                }
+                for (int branch = 0; branch < branches; branch++) {
+                    if (enabledBranchCounts.getOrDefault(branch, 0) == 0) {
+                        throw invalid("并行块（第 " + activeStart + " 步）的分支 " + (branch + 1)
+                                + " 至少需要一个启用步骤");
+                    }
+                }
+                blocks.add(new ParallelBlock(activeStart, step.getSeq(), branches));
+                activeStart = -1;
+                branches = 0;
+                continue;
+            }
+            if (activeStart > 0) {
+                if (SceneConstants.FLOW_STEPS.contains(type)) {
+                    throw invalid("并行块内只允许普通动作步骤（第 " + step.getSeq() + " 步为 " + type + "）");
+                }
+                Integer parallelSeq = step.getParallelSeq();
+                Integer branchIndex = step.getBranchIndex();
+                if (parallelSeq == null || parallelSeq != activeStart) {
+                    throw invalid("第 " + step.getSeq() + " 步必须归属并行块（parallelSeq=" + activeStart + "）");
+                }
+                if (branchIndex == null || branchIndex < 0 || branchIndex >= branches) {
+                    throw invalid("第 " + step.getSeq() + " 步的 branchIndex 需在 [0, " + (branches - 1) + "]");
+                }
+                if (enabled) {
+                    enabledBranchCounts.merge(branchIndex, 1, Integer::sum);
+                }
+            } else if (step.getParallelSeq() != null || step.getBranchIndex() != null) {
+                throw invalid("第 " + step.getSeq() + " 步不在并行块内，不能设置 parallelSeq / branchIndex");
+            }
+        }
+        if (activeStart > 0) {
+            throw invalid("并行开始（第 " + activeStart + " 步）缺少对应的并行汇合步骤");
+        }
+        return blocks;
+    }
+
+    private record LoopBlock(int startSeq, int loopSeq, int times) {
+    }
+
+    private record ParallelBlock(int startSeq, int joinSeq, int branches) {
+    }
+
+    private JsonNode readConfig(String json) {
+        if (json == null || json.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            return node != null && node.isObject() ? node : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static Integer intOrNull(JsonNode node, String field) {
+        if (node == null) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        return value != null && value.isNumber() ? value.asInt() : null;
+    }
+
+    private static Long longOrNull(JsonNode node, String field) {
+        if (node == null) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        return value != null && value.isNumber() ? value.asLong() : null;
     }
 
     private void checkPayloadTemplate(JsonNode config) {

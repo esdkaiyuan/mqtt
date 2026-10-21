@@ -20,8 +20,13 @@ import {
   formatActionSummary,
   formatCondition,
   formatTriggerSummary,
+  normalizeParallelMembership,
   normalizeStep,
   normalizeTriggerSource,
+  parallelInfoAt,
+  remapFlowRefsAfterMove,
+  remapFlowRefsAfterRemove,
+  scanParallelBlocks,
   withNormalizedSeq
 } from '@/utils/scene'
 
@@ -47,7 +52,8 @@ const TRIGGER_FIELDS = [
   'timerCron'
 ]
 const CONDITION_FIELDS = ['deviceId', 'identifier', 'operator', 'threshold']
-const STEP_FIELDS = ['delaySeconds', 'targetType', 'targetMode', 'targetConfig', 'actionConfig', 'enabled']
+const STEP_FIELDS = ['delaySeconds', 'targetType', 'targetMode', 'targetConfig', 'actionConfig',
+  'parallelSeq', 'branchIndex', 'enabled']
 
 function conditionPosition(index) {
   return { x: LAYOUT.condition.x, y: index * LAYOUT.condition.gapY }
@@ -113,7 +119,11 @@ function conditionGroupNode(conditions) {
   }
 }
 
-function stepNode(step, index) {
+function stepNode(step, index, steps) {
+  const info = parallelInfoAt(steps, index)
+  const branchLabel = info && !['PARALLEL', 'JOIN'].includes(step.actionType)
+    ? `分支 ${Number(step.branchIndex ?? 0) + 1} · `
+    : ''
   return {
     id: `step-${index}`,
     type: NODE_TYPE.STEP,
@@ -122,7 +132,7 @@ function stepNode(step, index) {
     data: {
       key: `step-${index}`,
       title: `步骤 ${index + 1}`,
-      summary: formatActionSummary(step),
+      summary: `${branchLabel}${formatActionSummary(step)}`,
       status: step.enabled
         ? { label: ACTION_TYPE_LABELS[step.actionType] || '启用', type: 'success' }
         : { label: '已停用', type: 'danger' },
@@ -167,7 +177,7 @@ export function projectScene(form) {
   }
 
   steps.forEach((step, index) => {
-    nodes.push(stepNode(step, index))
+    nodes.push(stepNode(step, index, steps))
   })
 
   if (steps.length > 0) {
@@ -178,7 +188,10 @@ export function projectScene(form) {
       target: 'step-0',
       type: EDGE_TYPE
     })
+    const { blocks } = scanParallelBlocks(steps)
+    const suppressed = parallelLinearEdgesToSuppress(blocks)
     for (let index = 1; index < steps.length; index += 1) {
+      if (suppressed.has(`${index - 1}-${index}`)) continue
       edges.push({
         id: `step-${index - 1}-step-${index}`,
         source: `step-${index - 1}`,
@@ -187,9 +200,99 @@ export function projectScene(form) {
         label: formatDelayEdgeLabel(steps[index].delaySeconds)
       })
     }
+    addParallelEdges(edges, steps, blocks)
+    addFlowEdges(edges, steps)
   }
 
   return { nodes, edges }
+}
+
+/** 并行块内部不画普通顺序边，改由「并行开始 → 分支首步」「分支末步 → 汇合」表达。 */
+function parallelLinearEdgesToSuppress(blocks) {
+  const suppressed = new Set()
+  blocks.forEach((block) => {
+    for (let index = block.startIndex; index < block.joinIndex; index += 1) {
+      suppressed.add(`${index}-${index + 1}`)
+    }
+  })
+  return suppressed
+}
+
+function addParallelEdges(edges, steps, blocks) {
+  blocks.forEach((block) => {
+    for (let branch = 0; branch < block.branches; branch += 1) {
+      const members = block.members[branch] || []
+      if (members.length === 0) continue
+      edges.push({
+        id: `step-${block.startIndex}-parallel-${branch}-${members[0]}`,
+        source: `step-${block.startIndex}`,
+        target: `step-${members[0]}`,
+        type: EDGE_TYPE,
+        label: `并行 ${branch + 1}`
+      })
+      for (let index = 0; index < members.length - 1; index += 1) {
+        const from = members[index]
+        const to = members[index + 1]
+        edges.push({
+          id: `step-${from}-branch-${branch}-step-${to}`,
+          source: `step-${from}`,
+          target: `step-${to}`,
+          type: EDGE_TYPE,
+          label: formatDelayEdgeLabel(steps[to].delaySeconds)
+        })
+      }
+      const last = members[members.length - 1]
+      edges.push({
+        id: `step-${last}-join-${block.joinIndex}`,
+        source: `step-${last}`,
+        target: `step-${block.joinIndex}`,
+        type: EDGE_TYPE,
+        label: `分支 ${branch + 1} 汇合`
+      })
+    }
+  })
+}
+
+/** 分支 / 循环的跳转边：仅用于画布可视化，不改变线性执行模型。 */
+function addFlowEdges(edges, steps) {
+  steps.forEach((step, index) => {
+    if (step.actionType === 'BRANCH') {
+      addBranchEdge(edges, steps, index, 'trueSeq', '真')
+      addBranchEdge(edges, steps, index, 'falseSeq', '假')
+      return
+    }
+    if (step.actionType === 'LOOP') {
+      const startIndex = Number(step.actionConfig?.startSeq) - 1
+      if (startIndex >= 0 && startIndex < steps.length) {
+        edges.push({
+          id: `step-${index}-loop-step-${startIndex}`,
+          source: `step-${index}`,
+          target: `step-${startIndex}`,
+          type: EDGE_TYPE,
+          label: '循环'
+        })
+      }
+    }
+  })
+}
+
+function addBranchEdge(edges, steps, index, field, label) {
+  const targetSeq = Number(stepField(steps[index], field))
+  const targetIndex = targetSeq - 1
+  if (!Number.isInteger(targetSeq) || targetIndex < 0 || targetIndex >= steps.length) return
+  // 目标就是下一步时已有顺序边，不重复绘制
+  if (targetIndex === index + 1) return
+  edges.push({
+    id: `step-${index}-${field}-step-${targetIndex}`,
+    source: `step-${index}`,
+    target: `step-${targetIndex}`,
+    type: EDGE_TYPE,
+    label
+  })
+}
+
+function stepField(step, field) {
+  return step?.actionConfig?.[field]
 }
 
 function parseIndex(id, prefix) {
@@ -230,7 +333,7 @@ function addNode(form, event, timerSource) {
   if (event.nodeType === NODE_TYPE.STEP) {
     const steps = asArray(form.steps)
     if (steps.length >= MAX_STEPS) return false
-    form.steps = withNormalizedSeq([...steps, createStep(timerSource)])
+    form.steps = normalizeParallelMembership(withNormalizedSeq([...steps, createStep(timerSource)]))
     return true
   }
   return false
@@ -249,7 +352,11 @@ function removeNode(form, event) {
   if (stepIndex >= 0) {
     const steps = asArray(form.steps)
     if (stepIndex >= steps.length) return false
-    form.steps = withNormalizedSeq(steps.filter((_, index) => index !== stepIndex))
+    const next = [...steps]
+    remapFlowRefsAfterRemove(next, stepIndex)
+    form.steps = normalizeParallelMembership(
+      withNormalizedSeq(next.filter((_, index) => index !== stepIndex))
+    )
     return true
   }
   return false
@@ -265,7 +372,8 @@ function reorderStep(form, event) {
   const next = [...steps]
   const [moved] = next.splice(from, 1)
   next.splice(to, 0, moved)
-  form.steps = withNormalizedSeq(next)
+  remapFlowRefsAfterMove(next, from, to)
+  form.steps = normalizeParallelMembership(withNormalizedSeq(next))
   return true
 }
 
@@ -307,6 +415,7 @@ function updateNode(form, event, timerSource) {
     const step = asArray(form.steps)[stepIndex]
     if (!step) return false
     updateStep(step, patch, timerSource)
+    normalizeParallelMembership(form.steps)
     return true
   }
   return false

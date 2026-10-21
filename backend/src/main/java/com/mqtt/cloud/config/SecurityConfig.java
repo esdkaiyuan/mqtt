@@ -111,6 +111,8 @@ public class SecurityConfig {
                     // 安全性不受影响：首次 REQUEST 派发已按下列规则完成鉴权。
                     .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                     .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                    // 公开大屏分享（T-46）：凭不可猜测的分享令牌只读访问，无登录态
+                    .requestMatchers("/public/dashboard-shares/**").permitAll()
                     // 内部回调：不参与 JWT 鉴权，由 InternalTokenFilter 校验共享令牌
                     .requestMatchers("/internal/**").permitAll()
                     // 设备上报：鉴权由 DeviceCredentialAuthFilter 负责，与 /internal/** 同构
@@ -132,6 +134,25 @@ public class SecurityConfig {
                     .requestMatchers("/messages/**", "/analytics/**").hasAnyRole("ADMIN", "OPERATOR")
                     // OTA 固件包与升级任务（T-22）：ADMIN / OPERATOR
                     .requestMatchers("/ota/**").hasAnyRole("ADMIN", "OPERATOR")
+                    // 命令下发（T-34 / G-4-1）：只放行 ADMIN / OPERATOR。
+                    // 改造前此处只有末尾的 anyRequest().authenticated()，VIEWER 也能下发命令 ——
+                    // 这是命令级权限缺口里最直接的一个洞。注意只拦 POST（下发），
+                    // GET（命令记录查询）仍归入 authenticated()，保留 VIEWER 的只读排查能力。
+                    .requestMatchers(HttpMethod.POST, "/devices/*/commands")
+                    .hasAnyRole("ADMIN", "OPERATOR")
+                    // 批量命令下发（DeviceBatchController /devices/batch/commands）同样限定；
+                    // 只拦这一条，不动 /devices/batch 下的 enable/disable/groups/tags ——
+                    // 那些是设备管理动作，属另一条权限链路，本批不扩大范围。
+                    .requestMatchers(HttpMethod.POST, "/devices/batch/commands")
+                    .hasAnyRole("ADMIN", "OPERATOR")
+                    // 影子期望值写入（T-48）：与命令下发同为设备写操作，VIEWER 只读；
+                    // 共享分组的 OPERATE 权限仍需叠加该平台角色闸门。
+                    .requestMatchers(HttpMethod.PUT, "/devices/*/shadow/desired")
+                    .hasAnyRole("ADMIN", "OPERATOR")
+                    // 调试模拟上行（T-37）：属于写操作（会真实触发规则 / 告警 / 影子），
+                    // 与控制台命令同权限；context / code 为只读，仍走末尾 authenticated()
+                    .requestMatchers(HttpMethod.POST, "/devices/*/debug/simulate")
+                    .hasAnyRole("ADMIN", "OPERATOR")
                     // 设备证书签发/吊销与设备令牌（T-25）：属产品管理动作，仅 ADMIN，不进入公开端点
                     .requestMatchers("/devices/*/certificate", "/devices/*/certificate/revoke",
                             "/devices/*/token").hasRole("ADMIN")

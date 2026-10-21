@@ -67,6 +67,20 @@ class ResultCodeEnumTest {
     }
 
     @Test
+    void debug_and_hmi_codes_must_exist_with_designed_http_status() {
+        // T-37 调试中心：类型 / 载荷 / 代码目标均为管理面输入错误，统一 400
+        assertCode(6297, ResultCode.DEBUG_MESSAGE_TYPE_UNSUPPORTED, HttpStatus.BAD_REQUEST);
+        assertCode(6298, ResultCode.DEBUG_PAYLOAD_INVALID, HttpStatus.BAD_REQUEST);
+        assertCode(6299, ResultCode.DEBUG_CODE_TARGET_UNSUPPORTED, HttpStatus.BAD_REQUEST);
+        // T-38 上位机：不存在 404（不区分越权，避免探测），其余配置类错误 400
+        assertCode(6300, ResultCode.HMI_VIEW_NOT_FOUND, HttpStatus.NOT_FOUND);
+        assertCode(6301, ResultCode.HMI_VIEW_LIMIT_EXCEEDED, HttpStatus.BAD_REQUEST);
+        assertCode(6302, ResultCode.HMI_CONFIG_INVALID, HttpStatus.BAD_REQUEST);
+        assertCode(6303, ResultCode.HMI_BINDING_INVALID, HttpStatus.BAD_REQUEST);
+        assertCode(6304, ResultCode.HMI_WIDGET_TYPE_UNSUPPORTED, HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void codes_must_be_unique() {
         Map<Integer, Long> counts = Arrays.stream(ResultCode.values())
                 .collect(Collectors.groupingBy(ResultCode::getCode, Collectors.counting()));

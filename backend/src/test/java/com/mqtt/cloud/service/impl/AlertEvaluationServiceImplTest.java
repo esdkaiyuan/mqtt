@@ -21,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -57,6 +58,7 @@ class AlertEvaluationServiceImplTest {
     private AlertNotifier alertNotifier;
     private DeviceScopeService deviceScopeService;
     private AlertProperties properties;
+    private AlertWindowAggregator windowAggregator;
     private AlertEvaluationServiceImpl service;
 
     @BeforeEach
@@ -67,8 +69,9 @@ class AlertEvaluationServiceImplTest {
         alertNotifier = mock(AlertNotifier.class);
         deviceScopeService = mock(DeviceScopeService.class);
         properties = new AlertProperties();
+        windowAggregator = mock(AlertWindowAggregator.class);
         service = new AlertEvaluationServiceImpl(alertRuleMapper, alertRecordMapper, deviceMapper,
-                alertNotifier, deviceScopeService, properties);
+                alertNotifier, deviceScopeService, properties, windowAggregator);
         when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device());
     }
 
@@ -98,6 +101,46 @@ class AlertEvaluationServiceImplTest {
         assertThat(saved.getFirstTriggeredAt()).isNotNull();
         assertThat(saved.getLastTriggeredAt()).isNotNull();
         verify(alertNotifier).notifyTriggered(saved, device());
+    }
+
+    @Test
+    void onProperties_should_trigger_with_window_aggregate_value() {
+        AlertRule rule = thresholdRule(AlertConstants.OPERATOR_GT, "80");
+        rule.setWindowSeconds(300);
+        rule.setAggregateType(AlertConstants.AGGREGATE_AVG);
+        rule.setMinSamples(3);
+        when(alertRuleMapper.selectEnabledForDevice(USER_ID, DEVICE_ID, AlertConstants.SOURCE_THRESHOLD))
+                .thenReturn(List.of(rule));
+        when(windowAggregator.accept(eq(rule), eq(DEVICE_ID), eq(RECEIVED_AT), eq("86.5")))
+                .thenReturn(Optional.of(new AlertWindowAggregator.Aggregate("85.5", 3)));
+        when(alertRecordMapper.selectOpenByRuleAndDevice(RULE_ID, DEVICE_ID)).thenReturn(null);
+
+        service.onProperties(DEVICE_ID, PRODUCT_ID,
+                List.of(new PropertySample("temperature", "86.5", RECEIVED_AT)));
+
+        ArgumentCaptor<AlertRecord> captor = ArgumentCaptor.forClass(AlertRecord.class);
+        verify(alertRecordMapper).insert(captor.capture());
+        assertThat(captor.getValue().getTitle()).isEqualTo("temperature 300s 均值 超过 80");
+        assertThat(captor.getValue().getTriggerValue()).isEqualTo("85.5");
+    }
+
+    @Test
+    void onProperties_should_not_evaluate_when_window_samples_insufficient() {
+        AlertRule rule = thresholdRule(AlertConstants.OPERATOR_GT, "80");
+        rule.setWindowSeconds(300);
+        rule.setAggregateType(AlertConstants.AGGREGATE_AVG);
+        rule.setMinSamples(3);
+        when(alertRuleMapper.selectEnabledForDevice(USER_ID, DEVICE_ID, AlertConstants.SOURCE_THRESHOLD))
+                .thenReturn(List.of(rule));
+        when(windowAggregator.accept(eq(rule), eq(DEVICE_ID), eq(RECEIVED_AT), eq("86.5")))
+                .thenReturn(Optional.empty());
+
+        service.onProperties(DEVICE_ID, PRODUCT_ID,
+                List.of(new PropertySample("temperature", "86.5", RECEIVED_AT)));
+
+        verify(alertRecordMapper, never()).insert(any(AlertRecord.class));
+        verify(alertRecordMapper, never()).selectOpenByRuleAndDevice(any(), any());
+        verify(alertNotifier, never()).notifyTriggered(any(), any());
     }
 
     @Test

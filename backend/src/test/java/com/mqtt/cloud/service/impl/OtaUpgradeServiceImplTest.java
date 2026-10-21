@@ -14,11 +14,13 @@ import com.mqtt.cloud.dto.response.OtaTaskDetailVO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceCommandRecord;
 import com.mqtt.cloud.entity.OtaFirmware;
+import com.mqtt.cloud.entity.OtaUpgradeBatch;
 import com.mqtt.cloud.entity.OtaUpgradeRecord;
 import com.mqtt.cloud.entity.OtaUpgradeTask;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.OtaFirmwareMapper;
+import com.mqtt.cloud.mapper.OtaUpgradeBatchMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeRecordMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeTaskMapper;
 import com.mqtt.cloud.service.DeviceBatchService;
@@ -75,6 +77,7 @@ class OtaUpgradeServiceImplTest {
     private OtaFirmwareMapper firmwareMapper;
     private OtaUpgradeTaskMapper taskMapper;
     private OtaUpgradeRecordMapper recordMapper;
+    private OtaUpgradeBatchMapper batchMapper;
     private DeviceMapper deviceMapper;
     private DeviceBatchService deviceBatchService;
     private DeviceCommandService deviceCommandService;
@@ -89,16 +92,18 @@ class OtaUpgradeServiceImplTest {
     void setUp() {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), OtaUpgradeRecord.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), OtaUpgradeTask.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), OtaUpgradeBatch.class);
         firmwareMapper = mock(OtaFirmwareMapper.class);
         taskMapper = mock(OtaUpgradeTaskMapper.class);
         recordMapper = mock(OtaUpgradeRecordMapper.class);
+        batchMapper = mock(OtaUpgradeBatchMapper.class);
         deviceMapper = mock(DeviceMapper.class);
         deviceBatchService = mock(DeviceBatchService.class);
         deviceCommandService = mock(DeviceCommandService.class);
         productService = mock(ProductService.class);
         properties = new OtaProperties();
         objectMapper = new ObjectMapper();
-        service = new OtaUpgradeServiceImpl(firmwareMapper, taskMapper, recordMapper, deviceMapper,
+        service = new OtaUpgradeServiceImpl(firmwareMapper, taskMapper, recordMapper, batchMapper, deviceMapper,
                 deviceBatchService, deviceCommandService, productService, properties, objectMapper);
     }
 
@@ -500,6 +505,12 @@ class OtaUpgradeServiceImplTest {
         task.setSuccessCount(0);
         task.setFailedCount(0);
         task.setStatus(OtaStatusValue.TASK_RUNNING);
+        task.setBatchMode(OtaStatusValue.BATCH_MODE_ALL);
+        task.setBatchSize(0);
+        task.setBatchIntervalMs(0L);
+        task.setBatchTotal(1);
+        task.setCurrentBatchNo(1);
+        task.setSkippedCount(0);
         task.setCreatedAt(LocalDateTime.of(2026, 10, 3, 9, 0, 0));
         return task;
     }
@@ -511,8 +522,10 @@ class OtaUpgradeServiceImplTest {
         record.setDeviceId(deviceId);
         record.setFirmwareId(FIRMWARE_ID);
         record.setVersion(VERSION);
+        record.setBatchNo(1);
         record.setStatus(status);
         record.setProgress(0);
+        record.setVerifyStatus(OtaStatusValue.VERIFY_NOT_REPORTED);
         return record;
     }
 

@@ -20,12 +20,19 @@ import bash from 'highlight.js/lib/languages/bash'
 import json from 'highlight.js/lib/languages/json'
 import cpp from 'highlight.js/lib/languages/cpp'
 import http from 'highlight.js/lib/languages/http'
+import javascript from 'highlight.js/lib/languages/javascript'
+import python from 'highlight.js/lib/languages/python'
+import java from 'highlight.js/lib/languages/java'
 
-// 只注册文档实际用到的四种语言，走 lib/core 避免整包引入
+// 只注册实际用到的语言，走 lib/core 避免整包引入。
+// javascript / python / java 供 T-37 调试中心的属性代码使用；arduino 复用 cpp 高亮。
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('json', json)
 hljs.registerLanguage('cpp', cpp)
 hljs.registerLanguage('http', http)
+hljs.registerLanguage('javascript', javascript)
+hljs.registerLanguage('python', python)
+hljs.registerLanguage('java', java)
 
 const props = defineProps({
   code: {

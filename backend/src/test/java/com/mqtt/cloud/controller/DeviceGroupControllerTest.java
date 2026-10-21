@@ -3,8 +3,10 @@ package com.mqtt.cloud.controller;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mqtt.cloud.common.Result;
+import com.mqtt.cloud.dto.request.DeviceGroupMemberRequest;
 import com.mqtt.cloud.dto.request.DeviceGroupRequest;
 import com.mqtt.cloud.dto.request.DeviceIdsRequest;
+import com.mqtt.cloud.dto.response.DeviceGroupMemberVO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceGroup;
 import com.mqtt.cloud.filter.UserPrincipal;
@@ -53,9 +55,9 @@ class DeviceGroupControllerTest {
     void tree_should_delegate_for_current_user() {
         authenticate();
         DeviceGroup root = new DeviceGroup();
-        when(deviceGroupService.tree(USER_ID)).thenReturn(List.of(root));
+        when(deviceGroupService.tree(USER_ID, false)).thenReturn(List.of(root));
 
-        Result<List<DeviceGroup>> result = controller.tree();
+        Result<List<DeviceGroup>> result = controller.tree(false);
 
         assertThat(result.getCode()).isEqualTo(200);
         assertThat(result.getData()).containsExactly(root);
@@ -65,9 +67,9 @@ class DeviceGroupControllerTest {
     void list_should_delegate_for_current_user() {
         authenticate();
         DeviceGroup group = new DeviceGroup();
-        when(deviceGroupService.list(USER_ID)).thenReturn(List.of(group));
+        when(deviceGroupService.list(USER_ID, false)).thenReturn(List.of(group));
 
-        assertThat(controller.list().getData()).containsExactly(group);
+        assertThat(controller.list(false).getData()).containsExactly(group);
     }
 
     @Test
@@ -84,7 +86,7 @@ class DeviceGroupControllerTest {
     void get_should_delegate() {
         authenticate();
         DeviceGroup group = new DeviceGroup();
-        when(deviceGroupService.getOwned(USER_ID, 3L)).thenReturn(group);
+        when(deviceGroupService.getAccessible(USER_ID, 3L)).thenReturn(group);
 
         assertThat(controller.get(3L).getData()).isSameAs(group);
     }
@@ -142,6 +144,25 @@ class DeviceGroupControllerTest {
         controller.removeDevices(3L, request);
 
         verify(deviceGroupService).removeDevices(USER_ID, 3L, List.of(100L));
+    }
+
+    @Test
+    void member_endpoints_should_delegate_with_current_user() {
+        authenticate();
+        DeviceGroupMemberRequest request = new DeviceGroupMemberRequest();
+        request.setUsername("member");
+        request.setPermission("VIEW");
+        DeviceGroupMemberVO member = new DeviceGroupMemberVO();
+        when(deviceGroupService.listMembers(USER_ID, 3L)).thenReturn(List.of(member));
+        when(deviceGroupService.addMember(USER_ID, 3L, request)).thenReturn(member);
+        when(deviceGroupService.updateMember(USER_ID, 3L, 9L, request)).thenReturn(member);
+
+        assertThat(controller.listMembers(3L).getData()).containsExactly(member);
+        assertThat(controller.addMember(3L, request).getData()).isSameAs(member);
+        assertThat(controller.updateMember(3L, 9L, request).getData()).isSameAs(member);
+        controller.removeMember(3L, 9L);
+
+        verify(deviceGroupService).removeMember(USER_ID, 3L, 9L);
     }
 
     private void authenticate() {

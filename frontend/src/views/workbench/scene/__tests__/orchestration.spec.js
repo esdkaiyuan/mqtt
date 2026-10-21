@@ -102,6 +102,51 @@ describe('projectScene', () => {
     expect(nodes.find((node) => node.id === 'trigger').data.removable).toBeFalsy()
   })
 
+  it('分支与循环绘制跳转边', () => {
+    const steps = withNormalizedSeq([
+      createStep(),
+      {
+        ...createStep(),
+        actionType: 'LOOP',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: { startSeq: 1, times: 2 }
+      },
+      {
+        ...createStep(),
+        actionType: 'BRANCH',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: { trueSeq: 5, falseSeq: null }
+      },
+      createStep(),
+      createStep()
+    ])
+    const graph = projectScene(baseForm({ steps }))
+
+    expect(findEdge(graph, 'step-1', 'step-0').label).toBe('循环')
+    expect(findEdge(graph, 'step-2', 'step-4').label).toBe('真')
+  })
+
+  it('并行块绘制分叉 / 汇合边并隐藏跨分支顺序边', () => {
+    const steps = withNormalizedSeq([
+      { ...createStep(), actionType: 'PARALLEL', targetType: 'NONE', targetConfig: null, actionConfig: { branches: 2 } },
+      { ...createStep(), branchIndex: 0, parallelSeq: 1 },
+      { ...createStep(), branchIndex: 1, parallelSeq: 1 },
+      { ...createStep(), actionType: 'JOIN', targetType: 'NONE', targetConfig: null, actionConfig: {} },
+      createStep()
+    ])
+    const graph = projectScene(baseForm({ steps }))
+
+    expect(findEdge(graph, 'step-0', 'step-1').label).toBe('并行 1')
+    expect(findEdge(graph, 'step-0', 'step-2').label).toBe('并行 2')
+    expect(findEdge(graph, 'step-1', 'step-2')).toBeUndefined()
+    expect(findEdge(graph, 'step-1', 'step-3').label).toContain('分支 1 汇合')
+    expect(findEdge(graph, 'step-2', 'step-3').label).toContain('分支 2 汇合')
+    expect(findEdge(graph, 'step-3', 'step-4')).toBeTruthy()
+    expect(graph.nodes.find((node) => node.id === 'step-1').data.summary).toContain('分支 1')
+  })
+
   it('触发节点摘要按 triggerType 分支', () => {
     const property = projectScene(baseForm()).nodes[0]
     expect(property.data.summary).toBe('temperature > 30')
@@ -195,6 +240,33 @@ describe('applySceneEvent', () => {
     expect(form.conditions).toHaveLength(1)
   })
 
+  it('node-remove 步骤：同步重映射分支目标', () => {
+    const form = baseForm({
+      steps: withNormalizedSeq([
+        createStep(),
+        {
+          ...createStep(),
+          actionType: 'BRANCH',
+          targetType: 'NONE',
+          targetConfig: null,
+          actionConfig: {
+            deviceId: null,
+            identifier: 'temperature',
+            operator: 'GT',
+            threshold: '30',
+            trueSeq: 4,
+            falseSeq: null
+          }
+        },
+        createStep(),
+        createStep()
+      ])
+    })
+
+    expect(applySceneEvent(form, { type: 'node-remove', id: 'step-2' })).toBe(true)
+    expect(form.steps[1].actionConfig.trueSeq).toBe(3)
+  })
+
   it('node-reorder：按落点位置换算新顺序并归一化 seq', () => {
     const form = baseForm({
       steps: withNormalizedSeq([createStep(), createStep(), createStep()])
@@ -215,6 +287,36 @@ describe('applySceneEvent', () => {
     const form = baseForm({ steps: withNormalizedSeq([createStep(), createStep()]) })
     const position = projectScene(form).nodes.find((node) => node.id === 'step-0').position
     expect(applySceneEvent(form, { type: 'node-reorder', id: 'step-0', position })).toBe(false)
+  })
+
+  it('node-reorder：同步重映射分支目标', () => {
+    const form = baseForm({
+      steps: withNormalizedSeq([
+        createStep(),
+        {
+          ...createStep(),
+          actionType: 'BRANCH',
+          targetType: 'NONE',
+          targetConfig: null,
+          actionConfig: {
+            deviceId: null,
+            identifier: 'temperature',
+            operator: 'GT',
+            threshold: '30',
+            trueSeq: 4,
+            falseSeq: null
+          }
+        },
+        createStep(),
+        createStep()
+      ])
+    })
+    const position = projectScene(form).nodes.find((node) => node.id === 'step-2').position
+
+    expect(
+      applySceneEvent(form, { type: 'node-reorder', id: 'step-3', position })
+    ).toBe(true)
+    expect(form.steps[1].actionConfig.trueSeq).toBe(3)
   })
 
   it('node-update 触发节点：仅回写触发字段', () => {

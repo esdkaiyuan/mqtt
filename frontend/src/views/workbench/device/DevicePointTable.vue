@@ -64,7 +64,13 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="数据类型" width="120">
+        <el-table-column label="从站" width="100">
+          <template #default="{ row }">
+            <el-input v-model="row.unitId" maxlength="3" placeholder="继承" />
+          </template>
+        </el-table-column>
+
+        <el-table-column label="数据类型" width="150">
           <template #default="{ row }">
             <el-select v-model="row.dataType">
               <el-option v-for="d in DATA_TYPE_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
@@ -259,7 +265,11 @@ async function handleSave() {
   try {
     await devicePointTableApi.savePoints(
       deviceId.value,
-      points.value.map((p) => ({ ...p }))
+      points.value.map((p) => ({
+        ...p,
+        unitId: p.unitId === '' || p.unitId === null || p.unitId === undefined
+          ? null : Number(p.unitId)
+      }))
     )
     ElMessage.success('点位表已保存')
     await load()
@@ -353,6 +363,13 @@ function validate() {
     }
     if (isRegisterType(p.pointType) && !/^\d+$/.test((p.address || '').trim())) {
       return `点位「${key}」的地址必须是寄存器号（数字）`
+    }
+    const unitId = p.unitId
+    if (unitId !== null && unitId !== undefined && String(unitId).trim() !== '') {
+      const n = Number(unitId)
+      if (!Number.isInteger(n) || n < 0 || n > 247) {
+        return `点位「${key}」的从站地址需在 0~247，留空表示继承驱动配置`
+      }
     }
     if (p.scale === 0) {
       return `点位「${key}」的 scale 不能为 0（会把所有值压成 0）`

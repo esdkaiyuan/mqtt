@@ -76,6 +76,161 @@ const BAD_SCENE = {
   steps: [{ ...VALID_SCENE.steps[0], actionConfig: { identifier: '', value: '' } }]
 }
 
+const FLOW_SCENE = {
+  ...VALID_SCENE,
+  id: 8,
+  name: '流程场景',
+  steps: [
+    {
+      seq: 1,
+      delaySeconds: 0,
+      actionType: 'UPDATE_PROPERTY',
+      targetType: 'TRIGGER',
+      targetConfig: null,
+      actionConfig: { identifier: 'switch', value: 'on' },
+      enabled: true
+    },
+    {
+      seq: 2,
+      delaySeconds: 0,
+      actionType: 'LOOP',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: { startSeq: 1, times: 2 },
+      enabled: true
+    },
+    {
+      seq: 3,
+      delaySeconds: 0,
+      actionType: 'BRANCH',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: {
+        deviceId: null,
+        identifier: 'temperature',
+        operator: 'GT',
+        threshold: '30',
+        trueSeq: 4,
+        falseSeq: null
+      },
+      enabled: true
+    },
+    {
+      seq: 4,
+      delaySeconds: 0,
+      actionType: 'UPDATE_PROPERTY',
+      targetType: 'TRIGGER',
+      targetConfig: null,
+      actionConfig: { identifier: 'switch', value: 'off' },
+      enabled: true
+    }
+  ]
+}
+
+const PARALLEL_SCENE = {
+  ...VALID_SCENE,
+  id: 10,
+  name: '并行场景',
+  steps: [
+    {
+      seq: 1,
+      delaySeconds: 0,
+      actionType: 'PARALLEL',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: { branches: 2 },
+      enabled: true
+    },
+    {
+      seq: 2,
+      delaySeconds: 0,
+      actionType: 'UPDATE_PROPERTY',
+      targetType: 'TRIGGER',
+      targetConfig: null,
+      actionConfig: { identifier: 'switch', value: 'on' },
+      parallelSeq: 1,
+      branchIndex: 0,
+      enabled: true
+    },
+    {
+      seq: 3,
+      delaySeconds: 0,
+      actionType: 'UPDATE_PROPERTY',
+      targetType: 'TRIGGER',
+      targetConfig: null,
+      actionConfig: { identifier: 'switch', value: 'off' },
+      parallelSeq: 1,
+      branchIndex: 1,
+      enabled: true
+    },
+    {
+      seq: 4,
+      delaySeconds: 0,
+      actionType: 'JOIN',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: {},
+      enabled: true
+    },
+    {
+      seq: 5,
+      delaySeconds: 0,
+      actionType: 'UPDATE_PROPERTY',
+      targetType: 'TRIGGER',
+      targetConfig: null,
+      actionConfig: { identifier: 'switch', value: 'off' },
+      enabled: true
+    }
+  ]
+}
+
+const INVALID_PARALLEL_SCENE = {
+  ...PARALLEL_SCENE,
+  steps: PARALLEL_SCENE.steps.filter((step) => step.actionType !== 'JOIN')
+}
+
+const INVALID_BRANCH_SCENE = {
+  ...FLOW_SCENE,
+  steps: [
+    {
+      seq: 1,
+      delaySeconds: 0,
+      actionType: 'BRANCH',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: {
+        deviceId: null,
+        identifier: 'temperature',
+        operator: 'GT',
+        threshold: '30',
+        trueSeq: null,
+        falseSeq: null
+      },
+      enabled: true
+    },
+    {
+      seq: 2,
+      delaySeconds: 0,
+      actionType: 'UPDATE_PROPERTY',
+      targetType: 'TRIGGER',
+      targetConfig: null,
+      actionConfig: { identifier: 'switch', value: 'on' },
+      enabled: true
+    }
+  ]
+}
+
+const SHADOW_SCENE = {
+  ...VALID_SCENE,
+  id: 9,
+  name: '影子联动',
+  triggerType: 'SHADOW',
+  triggerIdentifier: '',
+  triggerOperator: null,
+  triggerThreshold: null,
+  triggerShadowSide: 'ANY'
+}
+
 /* ---------- Element Plus 最小替身 ---------- */
 const ElDrawerStub = {
   name: 'ElDrawer',
@@ -380,5 +535,124 @@ describe('components/scene/SceneFormDialog', () => {
     await changeTriggerType(wrapper, 'PROPERTY')
     // 切到 TIMER 时清空了属性标识符，切回后应保持为空
     expect(wrapper.find('input[placeholder="如：temperature"]').element.value).toBe('')
+  })
+
+  it('上下线触发隐藏标识符并提交空触发标识', async () => {
+    wrapper = mountDialog(VALID_SCENE)
+    await flushPromises()
+
+    await changeTriggerType(wrapper, 'ONLINE')
+
+    expect(wrapper.find('.form-hint--block').text()).toContain('设备状态变化时触发')
+    expect(wrapper.find('input[placeholder="如：temperature"]').exists()).toBe(false)
+
+    await buttonByText(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    const payload = hooks.updateScene.mock.calls[0][1]
+    expect(payload.triggerType).toBe('ONLINE')
+    expect(payload.triggerIdentifier).toBeNull()
+    expect(payload.triggerOperator).toBeNull()
+    expect(payload.triggerThreshold).toBeNull()
+    expect(payload.timerCron).toBeNull()
+  })
+
+  it('上下线触发切回属性触发后标识符保持清空', async () => {
+    wrapper = mountDialog(VALID_SCENE)
+    await flushPromises()
+
+    await changeTriggerType(wrapper, 'OFFLINE')
+    await changeTriggerType(wrapper, 'PROPERTY')
+
+    expect(wrapper.find('input[placeholder="如：temperature"]').element.value).toBe('')
+  })
+
+  it('分支步骤缺少跳转目标时阻止提交', async () => {
+    wrapper = mountDialog(INVALID_BRANCH_SCENE)
+    await flushPromises()
+
+    await buttonByText(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    expect(hooks.updateScene).not.toHaveBeenCalled()
+    expect(messageMock.warning).toHaveBeenCalledWith('第 1 步：请至少设置一个分支跳转目标')
+  })
+
+  it('分支与循环步骤提交 NONE 目标并保留流程配置', async () => {
+    wrapper = mountDialog(FLOW_SCENE)
+    await flushPromises()
+
+    await buttonByText(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    const payload = hooks.updateScene.mock.calls[0][1]
+    expect(payload.steps[1]).toMatchObject({
+      actionType: 'LOOP',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: { startSeq: 1, times: 2 }
+    })
+    expect(payload.steps[2]).toMatchObject({
+      actionType: 'BRANCH',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: { trueSeq: 4, falseSeq: null }
+    })
+  })
+
+  it('并行步骤提交 NONE 目标并携带分支归属', async () => {
+    wrapper = mountDialog(PARALLEL_SCENE)
+    await flushPromises()
+
+    await buttonByText(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    const payload = hooks.updateScene.mock.calls[0][1]
+    expect(payload.steps[0]).toMatchObject({
+      actionType: 'PARALLEL',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: { branches: 2 },
+      parallelSeq: null,
+      branchIndex: null
+    })
+    expect(payload.steps[1]).toMatchObject({ parallelSeq: 1, branchIndex: 0 })
+    expect(payload.steps[2]).toMatchObject({ parallelSeq: 1, branchIndex: 1 })
+    expect(payload.steps[3]).toMatchObject({
+      actionType: 'JOIN',
+      targetType: 'NONE',
+      parallelSeq: null,
+      branchIndex: null
+    })
+    expect(payload.steps[4]).toMatchObject({ parallelSeq: null, branchIndex: null })
+  })
+
+  it('并行块缺少汇合步骤时阻止提交', async () => {
+    wrapper = mountDialog(INVALID_PARALLEL_SCENE)
+    await flushPromises()
+
+    await buttonByText(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    expect(hooks.updateScene).not.toHaveBeenCalled()
+    expect(messageMock.warning.mock.calls[0][0]).toContain('缺少对应的并行汇合')
+  })
+
+  it('影子变更触发允许空标识符并提交变更侧', async () => {
+    wrapper = mountDialog(SHADOW_SCENE)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('变更侧')
+    expect(wrapper.find('input[placeholder="留空表示任意属性变更"]').exists()).toBe(true)
+
+    await buttonByText(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    const payload = hooks.updateScene.mock.calls[0][1]
+    expect(payload.triggerType).toBe('SHADOW')
+    expect(payload.triggerShadowSide).toBe('ANY')
+    expect(payload.triggerIdentifier).toBeNull()
+    expect(payload.triggerOperator).toBeNull()
+    expect(payload.timerCron).toBeNull()
   })
 })

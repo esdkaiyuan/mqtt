@@ -4,6 +4,7 @@ import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceStatus;
 import com.mqtt.cloud.entity.Message;
+import com.mqtt.cloud.event.DeviceStatusChangedEvent;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.DeviceStatusHistoryMapper;
 import com.mqtt.cloud.mapper.MessageMapper;
@@ -11,6 +12,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -31,11 +33,13 @@ class IngestPersistenceServiceTest {
     private final DeviceMapper deviceMapper = mock(DeviceMapper.class);
     private final MessageMapper messageMapper = mock(MessageMapper.class);
     private final DeviceStatusHistoryMapper statusHistoryMapper = mock(DeviceStatusHistoryMapper.class);
+    private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
     private final SimpleMeterRegistry registry = new SimpleMeterRegistry();
     private final IngestMetrics metrics = new IngestMetrics(registry);
 
     private final IngestPersistenceService service =
-            new IngestPersistenceService(deviceMapper, messageMapper, statusHistoryMapper, metrics);
+            new IngestPersistenceService(deviceMapper, messageMapper, statusHistoryMapper, metrics,
+                    eventPublisher);
 
     private Device device(long id, String key, String status) {
         Device device = new Device();
@@ -95,6 +99,27 @@ class IngestPersistenceServiceTest {
         assertThat(historyCaptor.getValue())
                 .extracting(DeviceStatus::getDeviceId)
                 .containsExactly(1L);
+
+        ArgumentCaptor<DeviceStatusChangedEvent> eventCaptor =
+                ArgumentCaptor.forClass(DeviceStatusChangedEvent.class);
+        verify(eventPublisher, times(1)).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().deviceId()).isEqualTo(1L);
+        assertThat(eventCaptor.getValue().status()).isEqualTo(DeviceStatusValue.ONLINE);
+        assertThat(eventCaptor.getValue().occurredAt()).isEqualTo(now);
+    }
+
+    @Test
+    void persist_should_publish_offline_event_on_lwt() {
+        when(deviceMapper.findByDeviceKeys(anyCollection())).thenReturn(List.of(
+                device(1L, "k1", DeviceStatusValue.ONLINE)));
+
+        LocalDateTime now = LocalDateTime.now();
+        service.persist(List.of(record("k1", "lwt", now)));
+
+        ArgumentCaptor<DeviceStatusChangedEvent> eventCaptor =
+                ArgumentCaptor.forClass(DeviceStatusChangedEvent.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().status()).isEqualTo(DeviceStatusValue.OFFLINE);
     }
 
     @Test
@@ -105,5 +130,6 @@ class IngestPersistenceServiceTest {
         service.persist(List.of(record("k1", "data", LocalDateTime.now())));
 
         verify(statusHistoryMapper, never()).insertBatch(any());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 }

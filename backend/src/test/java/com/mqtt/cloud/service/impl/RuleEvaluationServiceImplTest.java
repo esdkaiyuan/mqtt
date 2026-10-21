@@ -69,6 +69,7 @@ class RuleEvaluationServiceImplTest {
     private DeviceScopeService deviceScopeService;
     private RuleProperties properties;
     private ThreadPoolTaskExecutor ruleExecutor;
+    private ObjectMapper objectMapper;
     private RuleEvaluationServiceImpl service;
 
     @BeforeEach
@@ -89,8 +90,11 @@ class RuleEvaluationServiceImplTest {
         // 默认关闭缓存，使各用例的规则桩可独立生效；缓存行为由专门用例覆盖
         properties.setCacheTtlSeconds(0);
         ruleExecutor = mock(ThreadPoolTaskExecutor.class);
+        objectMapper = new ObjectMapper();
+        // T-33：多条件 / 多动作解析需要 ObjectMapper（与生产注入一致）
         service = new RuleEvaluationServiceImpl(ruleDefinitionMapper, deviceMapper, ruleExecutionMapper,
-                ruleActionExecutor, deviceScopeService, properties, ruleExecutor, new SimpleMeterRegistry());
+                ruleActionExecutor, deviceScopeService, properties, ruleExecutor, objectMapper,
+                new SimpleMeterRegistry());
         // 让投递到线程池的任务在当前线程同步执行，便于断言动作执行入口
         doAnswer(invocation -> {
             ((Runnable) invocation.getArgument(0)).run();

@@ -11,6 +11,10 @@ const mocks = vi.hoisted(() => ({
   taskDetail: vi.fn(),
   taskRecords: vi.fn(),
   retryTask: vi.fn(),
+  pauseTask: vi.fn(),
+  resumeTask: vi.fn(),
+  advanceTask: vi.fn(),
+  abortTask: vi.fn(),
   getProducts: vi.fn()
 }))
 
@@ -34,7 +38,11 @@ vi.mock('@/api/ota', () => ({
   otaApi: {
     taskDetail: mocks.taskDetail,
     taskRecords: mocks.taskRecords,
-    retryTask: mocks.retryTask
+    retryTask: mocks.retryTask,
+    pauseTask: mocks.pauseTask,
+    resumeTask: mocks.resumeTask,
+    advanceTask: mocks.advanceTask,
+    abortTask: mocks.abortTask
   }
 }))
 
@@ -217,6 +225,58 @@ const RECORDS = [
   }
 ]
 
+/** T-32：灰度任务详情（含批次时间线与互斥剔除提示）。 */
+const BATCHED_DETAIL = {
+  ...DETAIL,
+  id: 21,
+  name: '灰度分批升级',
+  status: 'RUNNING',
+  batchMode: 'BATCHED',
+  batchSize: 2,
+  batchTotal: 3,
+  currentBatchNo: 1,
+  batchIntervalMs: 600000,
+  conflictSkippedCount: 1,
+  batches: [
+    {
+      id: 31,
+      batchNo: 1,
+      deviceCount: 2,
+      dispatchedCount: 2,
+      successCount: 1,
+      failedCount: 1,
+      skippedCount: 0,
+      status: 'PARTIAL',
+      startedAt: '2026-10-01T08:10:00.000',
+      finishedAt: '2026-10-01T09:00:00.000'
+    },
+    {
+      id: 32,
+      batchNo: 2,
+      deviceCount: 2,
+      dispatchedCount: 0,
+      successCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      status: 'PENDING',
+      startedAt: null,
+      finishedAt: null
+    },
+    {
+      id: 33,
+      batchNo: 3,
+      deviceCount: 1,
+      dispatchedCount: 0,
+      successCount: 0,
+      failedCount: 0,
+      skippedCount: 0,
+      status: 'PENDING',
+      startedAt: null,
+      finishedAt: null
+    }
+  ]
+}
+
 async function settle() {
   await flushPromises()
   await flushPromises()
@@ -376,5 +436,95 @@ describe('views/workbench/ota/UpgradeTaskDetail', () => {
     await buttonByText('返回').trigger('click')
 
     expect(mocks.routerPush).toHaveBeenCalledWith({ name: 'UpgradeTasks' })
+  })
+
+  /* ---------- T-32 灰度批次与固件校验 ---------- */
+
+  it('灰度任务展示批次时间线与下发策略', async () => {
+    mocks.taskDetail.mockResolvedValue({ code: 200, data: BATCHED_DETAIL })
+    mountPage()
+    await settle()
+
+    expect(wrapper.text()).toContain('灰度批次')
+    expect(wrapper.text()).toContain('待下发')
+    expect(wrapper.text()).toContain('部分成功')
+    expect(wrapper.text()).toContain('每批 2 台')
+    expect(wrapper.text()).toContain('10 分钟 自动推进')
+    expect(wrapper.text()).toContain('1 台设备正在其他升级任务中')
+  })
+
+  it('灰度任务提供暂停与终止', async () => {
+    mocks.taskDetail.mockResolvedValue({ code: 200, data: BATCHED_DETAIL })
+    mountPage()
+    await settle()
+
+    const buttons = wrapper.findAll('button').map((b) => b.text().trim())
+    expect(buttons).toContain('暂停下发')
+    expect(buttons).toContain('终止下发')
+  })
+
+  it('点击「终止下发」确认后调用终止接口', async () => {
+    mocks.taskDetail.mockResolvedValue({ code: 200, data: BATCHED_DETAIL })
+    mocks.abortTask.mockResolvedValue({ code: 200, data: 4 })
+    mountPage()
+    await settle()
+
+    await buttonByText('终止下发').trigger('click')
+    await settle()
+
+    expect(mocks.abortTask).toHaveBeenCalledWith('21')
+    expect(mocks.message.success).toHaveBeenCalledWith('已终止，跳过 4 台')
+  })
+
+  it('推进按钮上报后端返回的下发台数', async () => {
+    mocks.taskDetail.mockResolvedValue({ code: 200, data: BATCHED_DETAIL })
+    mocks.advanceTask.mockResolvedValue({ code: 200, data: 2 })
+    mountPage()
+    await settle()
+
+    await buttonByText('推进下一批').trigger('click')
+    await settle()
+
+    expect(mocks.advanceTask).toHaveBeenCalledWith('21')
+    expect(mocks.message.success).toHaveBeenCalledWith('已下发 2 台')
+  })
+
+  it('批次全部下发后禁用推进按钮', async () => {
+    mocks.taskDetail.mockResolvedValue({
+      code: 200,
+      data: { ...BATCHED_DETAIL, currentBatchNo: 3, status: 'RUNNING' }
+    })
+    mountPage()
+    await settle()
+
+    expect(buttonByText('推进下一批').attributes('disabled')).toBeDefined()
+  })
+
+  it('一次性全量任务不渲染灰度控制与批次面板', async () => {
+    mountPage()
+    await settle()
+
+    const buttons = wrapper.findAll('button').map((b) => b.text().trim())
+    expect(buttons).not.toContain('暂停下发')
+    expect(buttons).not.toContain('推进下一批')
+    expect(wrapper.text()).not.toContain('灰度批次')
+  })
+
+  it('逐台记录展示固件校验结果', async () => {
+    mocks.taskRecords.mockResolvedValue({
+      code: 200,
+      data: {
+        records: [
+          { ...RECORDS[0], batchNo: 1, verifyStatus: 'MISMATCHED' },
+          { ...RECORDS[1], batchNo: 1, verifyStatus: 'PASSED' }
+        ],
+        total: 2
+      }
+    })
+    mountPage()
+    await settle()
+
+    expect(wrapper.text()).toContain('校验不通过')
+    expect(wrapper.text()).toContain('已校验')
   })
 })

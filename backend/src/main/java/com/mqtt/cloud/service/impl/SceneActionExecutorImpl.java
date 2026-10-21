@@ -6,6 +6,7 @@ import com.mqtt.cloud.config.RuleProperties;
 import com.mqtt.cloud.config.SceneProperties;
 import com.mqtt.cloud.dto.request.BatchTargetRequest;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.entity.SceneExecution;
 import com.mqtt.cloud.entity.SceneStep;
@@ -143,8 +144,10 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
         }
         try {
             StepContext context = loadContext(run);
-            run(run, context);
-            markStepSuccess(run);
+            StepOutcome outcome = run(run, context);
+            if (outcome.completed()) {
+                markStepSuccess(run, outcome);
+            }
         } catch (ActionFailure e) {
             handleFailure(run, truncate(e.getMessage(), ERROR_MESSAGE_MAX));
         } catch (Exception e) {
@@ -177,16 +180,28 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
         return new StepContext(scene, step, execution, triggerDeviceType);
     }
 
-    /** 分派动作：转发类单次出站；属性 / 命令类逐台执行且全部成功才算成功。 */
-    private void run(SceneStepRun run, StepContext context) {
+    /** 分派动作：转发类单次出站；属性 / 命令类逐台执行且全部成功才算成功；分支 / 循环单独路由。 */
+    private StepOutcome run(SceneStepRun run, StepContext context) {
         SceneStep step = context.step();
         SceneExecution execution = context.execution();
         SceneDefinition scene = context.scene();
+        String actionType = step.getActionType();
+        if (SceneConstants.STEP_BRANCH.equals(actionType)) {
+            return runBranch(run, step, execution);
+        }
+        if (SceneConstants.STEP_LOOP.equals(actionType)) {
+            return runLoop(run, step, execution);
+        }
+        if (SceneConstants.STEP_PARALLEL.equals(actionType)) {
+            return runParallel(run, step);
+        }
+        if (SceneConstants.STEP_JOIN.equals(actionType)) {
+            return runJoin(run);
+        }
         JsonNode config = readConfig(step);
         if (config == null) {
             throw new ActionFailure("动作配置缺失或非法");
         }
-        String actionType = step.getActionType();
 
         if (SceneConstants.FORWARD_ACTIONS.contains(actionType)) {
             Map<String, String> values = buildPlaceholders(context, run, null);
@@ -195,7 +210,7 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
                 case SceneConstants.ACTION_FORWARD_HTTP -> forwardHttp(run, scene, config, values);
                 default -> throw new ActionFailure("不支持的动作类型 " + actionType);
             }
-            return;
+            return StepOutcome.advance();
         }
 
         List<Device> devices = resolveDevices(step, execution);
@@ -223,6 +238,201 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
                 summary = summary + "：" + String.join("; ", errors);
             }
             throw new ActionFailure(summary);
+        }
+        return StepOutcome.advance();
+    }
+
+    /**
+     * 条件分支：读取取值设备的最新属性值，按比较结果选择 {@code trueSeq} / {@code falseSeq}。
+     * 目标为空表示结束本次执行（目标序号只允许向前，保存期已校验）。
+     */
+    private StepOutcome runBranch(SceneStepRun run, SceneStep step, SceneExecution execution) {
+        JsonNode config = readConfig(step);
+        if (config == null) {
+            throw new ActionFailure("分支配置缺失或非法");
+        }
+        String identifier = text(config, "identifier");
+        String operator = text(config, "operator");
+        String threshold = text(config, "threshold");
+        if (identifier == null || operator == null || threshold == null) {
+            throw new ActionFailure("分支条件配置不完整");
+        }
+        Long deviceId = conditionDeviceId(config, execution);
+        if (deviceId == null) {
+            throw new ActionFailure("分支条件缺少取值设备");
+        }
+        Device device = deviceMapper.selectById(deviceId);
+        if (device == null || execution.getUserId() == null
+                || !execution.getUserId().equals(device.getOwnerId())) {
+            throw new ActionFailure("分支条件设备不存在或归属已变更");
+        }
+        String actualValue = latestValue(deviceId, identifier);
+        boolean matched = Boolean.TRUE.equals(
+                RuleConditionMatcher.matchesProperty(actualValue, operator, threshold));
+        Integer target = matched ? intOrNull(config, "trueSeq") : intOrNull(config, "falseSeq");
+        String result = identifier + "=" + (actualValue == null ? "—" : actualValue)
+                + " " + operator + " " + threshold + " → " + (matched ? "真" : "假")
+                + (target == null ? "，结束执行" : "，跳转第 " + target + " 步");
+        updateFlowResult(run.getId(), truncate(result, ERROR_MESSAGE_MAX));
+        return target == null ? StepOutcome.finish() : StepOutcome.jumpTo(target);
+    }
+
+    /**
+     * 有界循环结束标记：每轮把循环体已执行步骤复位并重新排期；达到 {@code times} 后正常前进。
+     * 循环体为 {@code [startSeq, 当前循环步骤 - 1]}，只允许向前引用，保存期已校验嵌套与执行次数上限。
+     */
+    private StepOutcome runLoop(SceneStepRun run, SceneStep step, SceneExecution execution) {
+        JsonNode config = readConfig(step);
+        if (config == null) {
+            throw new ActionFailure("循环配置缺失或非法");
+        }
+        Integer startSeq = intOrNull(config, "startSeq");
+        Integer times = intOrNull(config, "times");
+        if (startSeq == null || times == null || startSeq < 1 || times < 1
+                || times > SceneConstants.MAX_LOOP_TIMES || run.getSeq() == null || startSeq >= run.getSeq()) {
+            throw new ActionFailure("循环配置非法");
+        }
+        int current = run.getLoopIteration() == null ? 0 : run.getLoopIteration();
+        if (current + 1 < times) {
+            int nextIteration = current + 1;
+            stepRunMapper.resetLoopBody(run.getExecutionId(), startSeq, run.getSeq() - 1);
+            executionMapper.recountFinishedSteps(run.getExecutionId());
+            String result = "第 " + (nextIteration + 1) + "/" + times + " 次循环";
+            if (stepRunMapper.resetLoopStep(run.getId(), nextIteration, result) == 0) {
+                log.warn("场景循环步骤复位失败（可能已被其它线程处理）: stepRunId={}", run.getId());
+                return StepOutcome.repeatStep();
+            }
+            SceneStepRun bodyStart = findBySeq(run.getExecutionId(), startSeq);
+            if (bodyStart == null) {
+                throw new ActionFailure("循环体起始步骤不存在");
+            }
+            int delay = bodyStart.getDelaySeconds() == null ? 0 : bodyStart.getDelaySeconds();
+            LocalDateTime scheduledAt = LocalDateTime.now().plusSeconds(delay);
+            stepRunMapper.scheduleNext(bodyStart.getId(), scheduledAt, scheduledAt);
+            if (delay == 0) {
+                deliver(bodyStart.getId());
+            }
+            return StepOutcome.repeatStep();
+        }
+        updateFlowResult(run.getId(), "循环完成（" + times + " 次）");
+        return StepOutcome.advance();
+    }
+
+    /**
+     * 并行开始：为每个分支找到序号最小的步骤，随并行步骤一起置成功并同时排期。
+     * 分支完成条件由明细状态实时计算，不落计数器，重试 / 重启后不会漂移。
+     */
+    private StepOutcome runParallel(SceneStepRun run, SceneStep step) {
+        JsonNode config = readConfig(step);
+        Integer branches = intOrNull(config, "branches");
+        if (branches == null || branches < SceneConstants.MIN_PARALLEL_BRANCHES
+                || branches > SceneConstants.MAX_PARALLEL_BRANCHES) {
+            throw new ActionFailure("并行配置非法");
+        }
+        List<SceneStepRun> runs = stepRunMapper.selectByExecutionId(run.getExecutionId());
+        List<Integer> starts = new ArrayList<>(branches);
+        StringBuilder summary = new StringBuilder("并行 ").append(branches).append(" 路：");
+        for (int branch = 0; branch < branches; branch++) {
+            SceneStepRun first = null;
+            for (SceneStepRun sibling : runs) {
+                if (sibling.getParallelSeq() == null || !sibling.getParallelSeq().equals(run.getSeq())
+                        || sibling.getBranchIndex() == null || sibling.getBranchIndex() != branch) {
+                    continue;
+                }
+                if (first == null || sibling.getSeq() < first.getSeq()) {
+                    first = sibling;
+                }
+            }
+            if (first == null) {
+                throw new ActionFailure("并行分支 " + (branch + 1) + " 没有可执行步骤");
+            }
+            starts.add(first.getSeq());
+            if (branch > 0) {
+                summary.append("、");
+            }
+            summary.append("分支 ").append(branch + 1).append(" 从第 ").append(first.getSeq()).append(" 步");
+        }
+        updateFlowResult(run.getId(), truncate(summary.toString(), ERROR_MESSAGE_MAX));
+        return StepOutcome.parallel(starts);
+    }
+
+    /** 并行汇合：空动作，仅回填流程结果后继续后续步骤。 */
+    private StepOutcome runJoin(SceneStepRun run) {
+        List<SceneStepRun> runs = stepRunMapper.selectByExecutionId(run.getExecutionId());
+        Integer parallelSeq = matchingParallelSeq(runs, run.getSeq());
+        String result = "并行汇合";
+        if (parallelSeq != null) {
+            SceneStepRun parallelRun = bySeq(runs, parallelSeq);
+            Integer branches = parallelRun == null ? null : readBranches(parallelRun);
+            if (branches != null) {
+                result = result + "（" + branches + " 路）";
+            }
+        }
+        updateFlowResult(run.getId(), result);
+        return StepOutcome.advance();
+    }
+
+    /** 在汇合步骤之前找最近的、尚未被其它汇合关闭的并行开始步骤序号。 */
+    private Integer matchingParallelSeq(List<SceneStepRun> runs, Integer joinSeq) {
+        if (joinSeq == null) {
+            return null;
+        }
+        Integer active = null;
+        for (SceneStepRun run : runs) {
+            if (run.getSeq() == null || run.getSeq() >= joinSeq) {
+                break;
+            }
+            if (SceneConstants.STEP_PARALLEL.equals(run.getActionType())) {
+                active = run.getSeq();
+            } else if (SceneConstants.STEP_JOIN.equals(run.getActionType())) {
+                active = null;
+            }
+        }
+        return active;
+    }
+
+    private Integer readBranches(SceneStepRun parallelRun) {
+        if (parallelRun.getStepId() == null) {
+            return null;
+        }
+        SceneStep step = stepMapper.selectById(parallelRun.getStepId());
+        return step == null ? null : intOrNull(readConfig(step), "branches");
+    }
+
+    private SceneStepRun bySeq(List<SceneStepRun> runs, Integer seq) {
+        for (SceneStepRun run : runs) {
+            if (seq != null && seq.equals(run.getSeq())) {
+                return run;
+            }
+        }
+        return null;
+    }
+
+    private Long conditionDeviceId(JsonNode config, SceneExecution execution) {
+        Long configured = config.get("deviceId") != null && config.get("deviceId").isNumber()
+                ? config.get("deviceId").asLong() : null;
+        return configured != null ? configured : execution.getTriggerDeviceId();
+    }
+
+    private String latestValue(Long deviceId, String identifier) {
+        List<DevicePropertyLatest> rows =
+                propertyLatestMapper.selectByIdentifiers(deviceId, List.of(identifier));
+        if (rows == null) {
+            return null;
+        }
+        for (DevicePropertyLatest row : rows) {
+            if (identifier.equals(row.getIdentifier())) {
+                return row.getValueText();
+            }
+        }
+        return null;
+    }
+
+    private void updateFlowResult(Long stepRunId, String result) {
+        try {
+            stepRunMapper.updateFlowResult(stepRunId, result);
+        } catch (Exception e) {
+            log.warn("场景流程结果快照回填失败: stepRunId={}", stepRunId, e);
         }
     }
 
@@ -434,8 +644,8 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
         return values;
     }
 
-    /** 成功收口：置步骤成功 + 推进进度；有下一步则排期（延时 0 立即投递），末步则整条执行成功。 */
-    private void markStepSuccess(SceneStepRun run) {
+    /** 成功收口：置步骤成功 + 推进进度；按分支目标或默认下一步排期，无下一步则整条执行成功。 */
+    private void markStepSuccess(SceneStepRun run, StepOutcome outcome) {
         LocalDateTime finishedAt = LocalDateTime.now();
         try {
             stepRunMapper.markSuccess(run.getId(), finishedAt);
@@ -445,9 +655,26 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
             return;
         }
         try {
-            SceneStepRun next = findNext(run);
+            if (!outcome.branchStarts().isEmpty()) {
+                scheduleBranches(run, outcome.branchStarts());
+                return;
+            }
+            if (outcome.end()) {
+                finishExecution(run.getExecutionId(), finishedAt);
+                return;
+            }
+            if (run.getParallelSeq() != null && run.getBranchIndex() != null) {
+                advanceParallelBranch(run);
+                return;
+            }
+            SceneStepRun next = outcome.nextSeq() == null
+                    ? findNext(run) : findBySeq(run.getExecutionId(), outcome.nextSeq());
             if (next == null) {
-                executionMapper.markSuccess(run.getExecutionId(), finishedAt);
+                if (outcome.nextSeq() != null) {
+                    log.warn("场景分支目标不存在，提前结束执行: executionId={}, targetSeq={}",
+                            run.getExecutionId(), outcome.nextSeq());
+                }
+                finishExecution(run.getExecutionId(), finishedAt);
                 return;
             }
             int delay = next.getDelaySeconds() == null ? 0 : next.getDelaySeconds();
@@ -459,6 +686,136 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
         } catch (Exception e) {
             log.warn("场景下一步排期异常: executionId={}, seq={}", run.getExecutionId(), run.getSeq(), e);
         }
+    }
+
+    /** 并行分叉：各分支首步独立排期，延时 0 立即投递。 */
+    private void scheduleBranches(SceneStepRun parallelRun, List<Integer> starts) {
+        List<SceneStepRun> runs = stepRunMapper.selectByExecutionId(parallelRun.getExecutionId());
+        for (Integer seq : starts) {
+            SceneStepRun start = bySeq(runs, seq);
+            if (start == null) {
+                log.warn("场景并行分支起始步骤不存在: executionId={}, parallelSeq={}, startSeq={}",
+                        parallelRun.getExecutionId(), parallelRun.getSeq(), seq);
+                continue;
+            }
+            scheduleAndDeliver(start);
+        }
+    }
+
+    /**
+     * 分支内推进：同分支还有后续步骤则排期；分支结束则检查所有分支是否完成，
+     * 全部完成才排期汇合步骤。执行已失败时不再排期任何后续步骤。
+     */
+    private void advanceParallelBranch(SceneStepRun run) {
+        try {
+            List<SceneStepRun> runs = stepRunMapper.selectByExecutionId(run.getExecutionId());
+            SceneStepRun next = null;
+            for (SceneStepRun sibling : runs) {
+                if (sibling.getParallelSeq() == null || !sibling.getParallelSeq().equals(run.getParallelSeq())
+                        || sibling.getBranchIndex() == null || !sibling.getBranchIndex().equals(run.getBranchIndex())
+                        || sibling.getSeq() == null || sibling.getSeq() <= run.getSeq()) {
+                    continue;
+                }
+                if (next == null || sibling.getSeq() < next.getSeq()) {
+                    next = sibling;
+                }
+            }
+            if (next != null) {
+                if (executionActive(run.getExecutionId())) {
+                    scheduleAndDeliver(next);
+                }
+                return;
+            }
+            SceneStepRun parallelRun = bySeq(runs, run.getParallelSeq());
+            Integer branches = parallelRun == null ? null : readBranches(parallelRun);
+            if (branches == null) {
+                log.warn("场景并行块配置缺失，无法判断汇合: executionId={}, parallelSeq={}",
+                        run.getExecutionId(), run.getParallelSeq());
+                return;
+            }
+            if (!allBranchesCompleted(runs, run.getParallelSeq(), branches)) {
+                return;
+            }
+            SceneStepRun join = findJoinAfter(runs, run.getParallelSeq());
+            if (join == null) {
+                log.warn("场景并行块缺少汇合步骤: executionId={}, parallelSeq={}",
+                        run.getExecutionId(), run.getParallelSeq());
+                return;
+            }
+            if (executionActive(run.getExecutionId())) {
+                scheduleAndDeliver(join);
+            }
+        } catch (Exception e) {
+            log.warn("场景并行分支推进异常: executionId={}, seq={}", run.getExecutionId(), run.getSeq(), e);
+        }
+    }
+
+    private boolean allBranchesCompleted(List<SceneStepRun> runs, Integer parallelSeq, int branches) {
+        for (int branch = 0; branch < branches; branch++) {
+            boolean hasStep = false;
+            for (SceneStepRun run : runs) {
+                if (run.getParallelSeq() == null || !run.getParallelSeq().equals(parallelSeq)
+                        || run.getBranchIndex() == null || run.getBranchIndex() != branch) {
+                    continue;
+                }
+                hasStep = true;
+                if (!SceneConstants.STEP_SUCCESS.equals(run.getStatus())
+                        && !SceneConstants.STEP_SKIPPED.equals(run.getStatus())) {
+                    return false;
+                }
+            }
+            if (!hasStep) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private SceneStepRun findJoinAfter(List<SceneStepRun> runs, Integer parallelSeq) {
+        for (SceneStepRun run : runs) {
+            if (run.getSeq() != null && run.getSeq() > parallelSeq
+                    && SceneConstants.STEP_JOIN.equals(run.getActionType())) {
+                return run;
+            }
+        }
+        return null;
+    }
+
+    private boolean executionActive(Long executionId) {
+        SceneExecution execution = executionMapper.selectById(executionId);
+        return execution != null && (SceneConstants.EXEC_RUNNING.equals(execution.getStatus())
+                || SceneConstants.EXEC_PENDING.equals(execution.getStatus()));
+    }
+
+    private void scheduleAndDeliver(SceneStepRun step) {
+        int delay = step.getDelaySeconds() == null ? 0 : step.getDelaySeconds();
+        LocalDateTime scheduledAt = LocalDateTime.now().plusSeconds(delay);
+        stepRunMapper.scheduleNext(step.getId(), scheduledAt, scheduledAt);
+        if (delay == 0) {
+            deliver(step.getId());
+        }
+    }
+
+    /** 终态收口：分支跳过的残留 PENDING 全部置 SKIPPED，按实际明细重算进度后置成功。 */
+    private void finishExecution(Long executionId, LocalDateTime finishedAt) {
+        try {
+            List<SceneStepRun> siblings = stepRunMapper.selectByExecutionId(executionId);
+            if (siblings != null) {
+                for (SceneStepRun sibling : siblings) {
+                    if (SceneConstants.STEP_PENDING.equals(sibling.getStatus())) {
+                        stepRunMapper.markSkipped(sibling.getId(), finishedAt);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("场景终态残留步骤清理异常: executionId={}", executionId, e);
+        }
+        try {
+            executionMapper.recountFinishedSteps(executionId);
+        } catch (Exception e) {
+            log.warn("场景执行进度重算异常: executionId={}", executionId, e);
+        }
+        executionMapper.markSuccess(executionId, finishedAt);
     }
 
     /** 找该执行下序号大于当前步的最小步骤（下一步）。 */
@@ -476,6 +833,43 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
             }
         }
         return next;
+    }
+
+    /** 按序号找本次执行的步骤明细（分支 / 循环路由）。 */
+    private SceneStepRun findBySeq(Long executionId, Integer seq) {
+        if (seq == null) {
+            return null;
+        }
+        for (SceneStepRun sibling : stepRunMapper.selectByExecutionId(executionId)) {
+            if (seq.equals(sibling.getSeq())) {
+                return sibling;
+            }
+        }
+        return null;
+    }
+
+    /** 步骤执行结果：是否已完成、分支跳转目标、是否主动结束、并行分支起始步骤、循环是否已自行复位。 */
+    private record StepOutcome(boolean completed, Integer nextSeq, boolean end, List<Integer> branchStarts) {
+
+        static StepOutcome advance() {
+            return new StepOutcome(true, null, false, List.of());
+        }
+
+        static StepOutcome jumpTo(Integer seq) {
+            return new StepOutcome(true, seq, false, List.of());
+        }
+
+        static StepOutcome finish() {
+            return new StepOutcome(true, null, true, List.of());
+        }
+
+        static StepOutcome parallel(List<Integer> starts) {
+            return new StepOutcome(true, null, false, starts);
+        }
+
+        static StepOutcome repeatStep() {
+            return new StepOutcome(false, null, false, List.of());
+        }
     }
 
     /** 投递步骤到场景线程池（只投递不执行）；队列满则置该步失败并中止整条执行。 */
@@ -583,6 +977,14 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
 
     private static int intValue(JsonNode node, int fallback) {
         return node != null && node.isNumber() ? node.asInt() : fallback;
+    }
+
+    private static Integer intOrNull(JsonNode node, String field) {
+        if (node == null) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        return value != null && value.isNumber() ? value.asInt() : null;
     }
 
     private static String describe(Throwable e) {

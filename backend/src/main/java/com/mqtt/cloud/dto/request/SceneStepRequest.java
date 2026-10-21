@@ -18,7 +18,7 @@ public class SceneStepRequest {
     /** 本步骤执行前延时（秒），相对前一步完成时刻（首步相对触发时刻）。 */
     private Integer delaySeconds;
 
-    /** 动作类型：UPDATE_PROPERTY / SEND_COMMAND / FORWARD_MQTT / FORWARD_HTTP，必填。 */
+    /** 动作类型：UPDATE_PROPERTY / SEND_COMMAND / FORWARD_MQTT / FORWARD_HTTP / BRANCH / LOOP / PARALLEL / JOIN，必填。 */
     private String actionType;
 
     /** 目标类型：TRIGGER（触发设备）/ FIXED（固定目标集合），必填。 */
@@ -29,6 +29,12 @@ public class SceneStepRequest {
 
     /** 动作配置对象（按 actionType 解释，形状同 T-19 §5.2）。 */
     private JsonNode actionConfig;
+
+    /** 所属并行块起始步骤序号（T-49，仅并行块内普通步骤）。 */
+    private Integer parallelSeq;
+
+    /** 并行分支序号（T-49，仅并行块内普通步骤，0 起）。 */
+    private Integer branchIndex;
 
     /** 是否启用，缺省 true。 */
     private Boolean enabled;

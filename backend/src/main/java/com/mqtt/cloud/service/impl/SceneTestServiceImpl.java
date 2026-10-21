@@ -2,6 +2,7 @@ package com.mqtt.cloud.service.impl;
 
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.SceneConstants;
+import com.mqtt.cloud.common.constant.ShadowChangeSide;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.dto.request.BatchTargetRequest;
 import com.mqtt.cloud.dto.request.SceneTestRequest;
@@ -21,7 +22,9 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 场景试运行实现（T-23 设计文档 §7.5 / §10.2）。
@@ -30,7 +33,8 @@ import java.util.List;
  * 全程不落库、不投递、不占用冷却锚点。匹配复用 {@link SceneMatcher}。
  * <p>
  * {@code EVENT} 源在试运行中把请求 {@code value} 视为事件类型（场景未配置类型过滤时忽略），
- * 以便对带事件类型过滤的场景做干跑验证；{@code TIMER} 源用当前分钟判定 cron 是否命中。
+ * 以便对带事件类型过滤的场景做干跑验证；{@code TIMER} 源用当前分钟判定 cron 是否命中；
+ * {@code ONLINE} / {@code OFFLINE} 源把 {@code value} 视为待判定状态（缺省即场景状态）。
  */
 @Slf4j
 @Service
@@ -84,17 +88,68 @@ public class SceneTestServiceImpl implements SceneTestService {
         int estimated = 0;
         for (SceneStep step : steps) {
             int delay = step.getDelaySeconds() == null ? 0 : step.getDelaySeconds();
-            estimated += delay;
+            estimated += delay * executionMultiplier(steps, step);
             summaries.add(summarize(userId, step, effective.getDeviceId(), delay));
         }
         return new SceneTestResult(true, conditionMatched, cooldownBlocked, conditions, summaries, estimated);
     }
 
-    /** 触发匹配：PROPERTY / EVENT 需设备 + 标识符；TIMER 用当前分钟判定 cron。 */
+    /** 循环展开后的执行次数上限：包含该步骤的所有循环次数之积（分支路径取上界）。 */
+    private int executionMultiplier(List<SceneStep> steps, SceneStep target) {
+        long multiplier = 1;
+        for (SceneStep step : steps) {
+            if (!SceneConstants.STEP_LOOP.equals(step.getActionType())) {
+                continue;
+            }
+            JsonNode config = readConfig(step.getActionConfig());
+            Integer startSeq = intOrNull(config, "startSeq");
+            Integer times = intOrNull(config, "times");
+            if (startSeq != null && times != null
+                    && startSeq <= target.getSeq() && target.getSeq() <= step.getSeq()) {
+                multiplier *= times;
+                if (multiplier >= SceneConstants.MAX_EXECUTION_STEPS) {
+                    return SceneConstants.MAX_EXECUTION_STEPS;
+                }
+            }
+        }
+        return (int) multiplier;
+    }
+
+    /** 触发匹配：PROPERTY / EVENT 需设备 + 标识符；ONLINE / OFFLINE 需设备（取值缺省为场景状态）；
+     * SHADOW 需设备（value 为变更侧，identifier 可空）；TIMER 用当前分钟判定 cron。 */
     private boolean matchTrigger(SceneDefinition scene, SceneTestRequest request) {
         String triggerType = scene.getTriggerType();
         if (SceneConstants.TRIGGER_TIMER.equals(triggerType)) {
             return sceneMatcher.matchesTimerTrigger(scene, LocalDateTime.now(sceneMatcher.timerZone()));
+        }
+        if (SceneConstants.STATUS_TRIGGERS.contains(triggerType)) {
+            if (request.getDeviceId() == null) {
+                throw new BusinessException(ResultCode.SCENE_INVALID, "上下线场景试运行需提供 deviceId");
+            }
+            String status = isBlank(request.getValue()) ? triggerType : request.getValue();
+            return sceneMatcher.matchesStatusTrigger(scene, request.getDeviceId(), status);
+        }
+        if (SceneConstants.TRIGGER_SHADOW.equals(triggerType)) {
+            if (request.getDeviceId() == null) {
+                throw new BusinessException(ResultCode.SCENE_INVALID, "影子变更场景试运行需提供 deviceId");
+            }
+            String side = isBlank(request.getValue()) ? scene.getTriggerShadowSide() : request.getValue();
+            if (isBlank(side) || ShadowChangeSide.ANY.equalsIgnoreCase(side)) {
+                side = ShadowChangeSide.REPORTED;
+            }
+            String normalizedSide = side.toUpperCase();
+            if (!ShadowChangeSide.EVENT_SIDES.contains(normalizedSide)) {
+                throw new BusinessException(ResultCode.SCENE_INVALID, "影子变更侧必须是 REPORTED / DESIRED");
+            }
+            Set<String> changed = new LinkedHashSet<>();
+            if (!isBlank(request.getIdentifier())) {
+                changed.add(request.getIdentifier().trim());
+            } else if (scene.getTriggerIdentifier() != null) {
+                changed.add(scene.getTriggerIdentifier());
+            } else {
+                changed.add("__any__");
+            }
+            return sceneMatcher.matchesShadowTrigger(scene, request.getDeviceId(), normalizedSide, changed);
         }
         if (request.getDeviceId() == null || isBlank(request.getIdentifier())) {
             throw new BusinessException(ResultCode.SCENE_INVALID, "非定时场景试运行需提供 deviceId 与 identifier");
@@ -120,9 +175,10 @@ public class SceneTestServiceImpl implements SceneTestService {
                 targetCount, delay, summary);
     }
 
-    /** 目标设备数：转发类单次出站恒 0；{@code TRIGGER} 有触发设备为 1；{@code FIXED} 解析目标集合（失败记 0）。 */
+    /** 目标设备数：转发 / 流程步骤恒 0；{@code TRIGGER} 有触发设备为 1；{@code FIXED} 解析目标集合（失败记 0）。 */
     private int targetCount(Long userId, SceneStep step, Long triggerDeviceId) {
-        if (SceneConstants.FORWARD_ACTIONS.contains(step.getActionType())) {
+        if (SceneConstants.FORWARD_ACTIONS.contains(step.getActionType())
+                || SceneConstants.FLOW_STEPS.contains(step.getActionType())) {
             return 0;
         }
         if (SceneConstants.TARGET_TRIGGER.equals(step.getTargetType())) {
@@ -152,6 +208,23 @@ public class SceneTestServiceImpl implements SceneTestService {
                     "转发到 topic " + nullToEmpty(text(config, "topic"));
             case SceneConstants.ACTION_FORWARD_HTTP ->
                     "转发到 " + nullToEmpty(text(config, "method")) + " " + nullToEmpty(text(config, "url"));
+            case SceneConstants.STEP_BRANCH -> {
+                Integer trueSeq = intOrNull(config, "trueSeq");
+                Integer falseSeq = intOrNull(config, "falseSeq");
+                yield "条件分支 → 真: " + (trueSeq == null ? "结束" : "第 " + trueSeq + " 步")
+                        + " / 假: " + (falseSeq == null ? "结束" : "第 " + falseSeq + " 步");
+            }
+            case SceneConstants.STEP_LOOP -> {
+                Integer startSeq = intOrNull(config, "startSeq");
+                Integer times = intOrNull(config, "times");
+                yield "循环 " + (times == null ? "?" : times) + " 次（回到第 "
+                        + (startSeq == null ? "?" : startSeq) + " 步）";
+            }
+            case SceneConstants.STEP_PARALLEL -> {
+                Integer branches = intOrNull(config, "branches");
+                yield "并行 " + (branches == null ? "?" : branches) + " 路";
+            }
+            case SceneConstants.STEP_JOIN -> "并行汇合";
             default -> actionType;
         };
     }
@@ -214,6 +287,14 @@ public class SceneTestServiceImpl implements SceneTestService {
             return null;
         }
         return value.asText();
+    }
+
+    private static Integer intOrNull(JsonNode node, String field) {
+        if (node == null) {
+            return null;
+        }
+        JsonNode value = node.get(field);
+        return value != null && value.isNumber() ? value.asInt() : null;
     }
 
     private static String nullToEmpty(String value) {

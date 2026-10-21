@@ -11,6 +11,7 @@ import com.mqtt.cloud.dto.request.SceneRequest;
 import com.mqtt.cloud.dto.request.SceneTestRequest;
 import com.mqtt.cloud.dto.response.SceneExecutionDetail;
 import com.mqtt.cloud.dto.response.SceneTestResult;
+import com.mqtt.cloud.dto.response.SceneVersionVO;
 import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.entity.SceneExecution;
 import com.mqtt.cloud.service.SceneExecutionService;
@@ -28,6 +29,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -89,6 +91,23 @@ public class SceneController {
             @Parameter(description = "执行记录 ID", required = true) @PathVariable Long id) {
         sceneExecutionService.manualRetry(SecurityUtils.requireUserId(), id);
         return Result.success();
+    }
+
+    @Operation(summary = "场景版本历史", description = "按版本号倒序返回摘要；不存在返回 6240，越权返回 403")
+    @GetMapping("/{id}/versions")
+    public Result<List<SceneVersionVO>> listVersions(
+            @Parameter(description = "场景 ID", required = true) @PathVariable Long id) {
+        return Result.success(sceneService.listVersions(SecurityUtils.requireUserId(), id));
+    }
+
+    @Operation(summary = "回滚场景版本", description = "覆盖场景定义与步骤流并生成新的 RESTORE 版本；"
+            + "版本不存在返回 6312，越权返回 403，快照损坏 / 重名返回 6241")
+    @PostMapping("/{id}/versions/{versionId}/restore")
+    public Result<SceneDefinition> restoreVersion(
+            @Parameter(description = "场景 ID", required = true) @PathVariable Long id,
+            @Parameter(description = "版本 ID", required = true) @PathVariable Long versionId) {
+        return Result.success(sceneService.restoreVersion(
+                SecurityUtils.requireUserId(), id, versionId));
     }
 
     @Operation(summary = "场景详情", description = "含条件组与步骤流；不存在返回 6240，越权返回 403")

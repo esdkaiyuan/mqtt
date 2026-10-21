@@ -49,16 +49,19 @@
 
     <!-- 数据格式约定 -->
     <template v-else>
-      <h2>载荷建议</h2>
-      <p>设备上报的 <code>payload</code> 建议使用 UTF-8 编码的 JSON，便于平台解析与展示：</p>
+      <h2>载荷格式</h2>
+      <p>
+        属性 / 事件上报必须使用 Alink 信封（<code>method + params</code>）。平铺的
+        <code>{"temperature":26.5}</code> 会被物模型解析判为无法解析。
+        完整字段与类型规则见 <router-link to="/docs/protocol/d2">D2 · 设备接入协议规范</router-link>。
+      </p>
       <CodeBlock language="json" :code="payloadSample" />
 
       <h2>约定</h2>
       <ul>
-        <li>时间戳统一使用秒级或毫秒级 Unix 时间，字段名建议 <code>ts</code>。</li>
-        <li>数值字段使用数字类型，避免以字符串承载数值。</li>
-        <li>附加信息放入 <code>metadata</code>，不影响主数据结构。</li>
-        <li>单条消息体建议不超过 64KB，超大数据请分片或走对象存储。</li>
+        <li>属性 / 事件时间以平台收到消息的时间为准，payload 内的 <code>ts</code> 仅作原始载荷保留。</li>
+        <li>数值字段使用 JSON number，避免以字符串承载数值；布尔字段用 boolean。</li>
+        <li>单条消息体建议不超过 64KB；HTTP 上报超过 <code>HTTP_INGEST_MAX_PAYLOAD_BYTES</code>（默认 65536）会返回 413。</li>
       </ul>
     </template>
   </DocArticle>
@@ -89,7 +92,7 @@ const streamEvent = `{
   "deviceId": 1,
   "deviceKey": "sensor-01",
   "topic": "device/sensor-01/data",
-  "payload": "{\\"temperature\\": 26.5}",
+  "payload": "{\\"method\\":\\"thing.event.property.post\\",\\"params\\":{\\"temperature\\":26.5}}",
   "ts": "2026-09-28 10:00:00"
 }`
 
@@ -104,7 +107,7 @@ const historyResponse = `{
         "deviceId": 1,
         "deviceKey": "sensor-01",
         "topic": "device/sensor-01/data",
-        "payload": "{\\"temperature\\": 26.5}",
+        "payload": "{\\"method\\":\\"thing.event.property.post\\",\\"params\\":{\\"temperature\\":26.5}}",
         "createdAt": "2026-09-28 10:00:00"
       }
     ],
@@ -115,9 +118,13 @@ const historyResponse = `{
 }`
 
 const payloadSample = `{
-  "temperature": 26.5,
-  "humidity": 61,
-  "ts": 1750000000,
-  "metadata": { "unit": "°C", "battery": 87 }
+  "id": "msg-20261021-0001",
+  "version": "1.0",
+  "method": "thing.event.property.post",
+  "params": {
+    "temperature": 26.5,
+    "humidity": 61,
+    "power": true
+  }
 }`
 </script>

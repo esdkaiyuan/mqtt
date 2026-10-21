@@ -48,6 +48,15 @@ public class AlertRuleRequest {
     /** 阈值（归一化文本），THRESHOLD 必填；数值比较符下必须是可解析的十进制数。 */
     private String thresholdValue;
 
+    /** 窗口聚合方式：AVG / MIN / MAX / SUM / COUNT；窗口 0 时忽略（T-52）。 */
+    private String aggregateType;
+
+    /** 统计窗口（秒），0=实时最新值，取值 [0, 86400]（T-52）。 */
+    private Integer windowSeconds;
+
+    /** 窗口内最少样本数，取值 [1, 1000]，缺省 1（T-52）。 */
+    private Integer minSamples;
+
     /** 事件类型过滤：info / alert / fault，EVENT 可选。 */
     private String eventType;
 

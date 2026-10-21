@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.mqtt.cloud.mapper.OtaUpgradeBatchMapper">
+
+    <!-- T-32：灰度自动推进的到期批次选取。
+     判定条件刻意全部落在「记录表的事实」与「任务列」上，不读 b.status / b.scheduled_at：
+       - b.batch_no = t.current_batch_no + 1：只推进「下一批」，杜绝跳批；
+       - t.status='RUNNING'：暂停（PAUSED）与终止（ABORTED）的任务不自动推进；
+       - t.batch_interval_ms > 0：间隔为 0 的任务只在控制台手动推进，永不会被选中；
+       - NOT EXISTS 上一批的非终态记录：上一批必须已收口才开下一批，
+         这是灰度的核心语义——前一批成功率未验证就继续铺量等于放弃灰度；
+         同时也避免「前一批还在刷固件、后一批已在下载」对现场网络与设备造成冲击。
+         直接查记录表而非依赖 b.status，是因为 b.status 仅在 refreshBatchCounters 被调用时刷新，
+         批次刚收口但尚未刷新时它仍可能是 RUNNING，会导致本该推进的批次被跳过一轮巡检。
+       - 间隔起算点取上一批最后一条记录的 updated_at（批次收口的近似时刻）；
+         batch_no=1 时无上一批，用 b.created_at 兜底（首批在任务创建后立即下发，此分支仅作防御）。
+     命中 uk_task_batch(task_id, batch_no) 与 idx_status(status)。 -->
+    <select id="selectDueBatches" resultType="com.mqtt.cloud.entity.OtaUpgradeBatch">
+        SELECT b.id, b.task_id, b.batch_no, b.device_count, b.dispatched_count, b.success_count,
+               b.failed_count, b.skipped_count, b.status, b.scheduled_at, b.started_at, b.finished_at,
+               b.created_at, b.updated_at
+        FROM ota_upgrade_batch b
+        JOIN ota_upgrade_task t ON t.id = b.task_id
+        WHERE b.status = 'PENDING'
+          AND t.status = 'RUNNING'
+          AND t.batch_mode = 'BATCHED'
+          AND t.batch_interval_ms &gt; 0
+          AND b.batch_no = t.current_batch_no + 1
+          AND NOT EXISTS (
+              SELECT 1 FROM ota_upgrade_record r
+              WHERE r.task_id = b.task_id
+                AND r.batch_no = b.batch_no - 1
+                AND r.status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING', 'VERIFYING')
+          )
+          AND TIMESTAMPDIFF(MICROSECOND,
+              COALESCE(
+                  (SELECT MAX(r2.updated_at) FROM ota_upgrade_record r2
+                   WHERE r2.task_id = b.task_id AND r2.batch_no = b.batch_no - 1),
+                  b.created_at),
+              #{now}) &gt;= #{batchIntervalMs} * 1000
+        ORDER BY b.id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- T-32：批次级聚合。子查询按 (task_id, batch_no) 过滤并按 status 分组，命中 idx_task_batch_status。
+         以 (task_id, batch_no) 而非 batch_id 定位：唯一键 uk_task_batch 保证命中单行，
+         且写法上完全规避了「UPDATE 的子查询引用同一张目标表」这一 MySQL 限制
+         （若用 (SELECT task_id FROM ota_upgrade_batch WHERE id = #{batchId}) 会直接报
+         You can't specify target table 'ota_upgrade_batch' for update in FROM clause）。
+         首个 CASE 分支保留 SKIPPED：批次随任务终止后不应被改写成 FAILED。
+         dispatched_count 排除 SKIPPED 记录（终止跳过 = 从未下发）。 -->
+    <update id="refreshBatchCounters">
+        UPDATE ota_upgrade_batch b
+        JOIN (
+            SELECT r.task_id AS task_id, r.batch_no AS batch_no,
+                   COUNT(*) AS device_count,
+                   SUM(CASE WHEN r.status &lt;&gt; 'PENDING' AND r.status &lt;&gt; 'SKIPPED' THEN 1 ELSE 0 END) AS dispatched_count,
+                   SUM(CASE WHEN r.status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
+                   SUM(CASE WHEN r.status IN ('FAILED', 'TIMEOUT') THEN 1 ELSE 0 END) AS failed_count,
+                   SUM(CASE WHEN r.status = 'SKIPPED' THEN 1 ELSE 0 END) AS skipped_count,
+                   CASE
+                       WHEN b.status = 'SKIPPED' THEN 'SKIPPED'
+                       WHEN SUM(CASE WHEN r.status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING', 'VERIFYING') THEN 1 ELSE 0 END) &gt; 0 THEN 'RUNNING'
+                       WHEN SUM(CASE WHEN r.status = 'SUCCESS' THEN 1 ELSE 0 END) = COUNT(*) THEN 'SUCCESS'
+                       WHEN SUM(CASE WHEN r.status = 'SUCCESS' THEN 1 ELSE 0 END) = 0 THEN 'FAILED'
+                       ELSE 'PARTIAL'
+                   END AS status
+            FROM ota_upgrade_record r
+            WHERE r.task_id = #{taskId} AND r.batch_no = #{batchNo}
+            GROUP BY r.task_id, r.batch_no
+        ) agg ON b.task_id = agg.task_id AND b.batch_no = agg.batch_no
+        SET b.device_count = agg.device_count,
+            b.dispatched_count = agg.dispatched_count,
+            b.success_count = agg.success_count,
+            b.failed_count = agg.failed_count,
+            b.skipped_count = agg.skipped_count,
+            b.status = agg.status,
+            b.finished_at = CASE WHEN b.finished_at IS NOT NULL THEN b.finished_at
+                                 WHEN agg.status IN ('SUCCESS', 'PARTIAL', 'FAILED') THEN CURRENT_TIMESTAMP(3)
+                                 ELSE b.finished_at END,
+            b.updated_at = CURRENT_TIMESTAMP(3)
+        WHERE b.task_id = #{taskId} AND b.batch_no = #{batchNo}
+    </update>
+
+</mapper>

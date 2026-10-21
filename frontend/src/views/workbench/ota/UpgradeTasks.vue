@@ -49,6 +49,21 @@
             </span>
           </template>
         </el-table-column>
+        <el-table-column label="跳过" width="80">
+          <template #default="{ row }">
+            <span :class="{ 'task-table__muted': (row.skippedCount ?? 0) > 0 }">
+              {{ row.skippedCount ?? 0 }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="下发策略" width="130">
+          <template #default="{ row }">
+            <span v-if="row.batchMode === 'BATCHED'" class="task-table__mono">
+              灰度 {{ row.currentBatchNo ?? 0 }}/{{ row.batchTotal ?? 1 }}
+            </span>
+            <span v-else class="task-table__muted">一次性全量</span>
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" disable-transitions>
@@ -59,13 +74,40 @@
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="goDetail(row)">详情</el-button>
             <el-button
+              v-if="row.status === 'RUNNING' && row.batchMode === 'BATCHED'"
+              link
+              type="warning"
+              :disabled="!canWrite"
+              @click="pauseTask(row)"
+            >
+              暂停
+            </el-button>
+            <el-button
+              v-if="row.status === 'PAUSED'"
               link
               type="primary"
-              :disabled="!canWrite || row.status === 'SUCCESS'"
+              :disabled="!canWrite"
+              @click="resumeTask(row)"
+            >
+              恢复
+            </el-button>
+            <el-button
+              v-if="row.status === 'RUNNING' && row.batchMode === 'BATCHED'"
+              link
+              type="primary"
+              :disabled="!canWrite || !hasPendingBatch(row)"
+              @click="advanceTask(row)"
+            >
+              推进下一批
+            </el-button>
+            <el-button
+              link
+              type="primary"
+              :disabled="!canWrite || row.status === 'SUCCESS' || row.status === 'ABORTED'"
               @click="retryTask(row)"
             >
               重投
@@ -73,7 +115,7 @@
             <el-button
               link
               type="danger"
-              :disabled="!canWrite || row.status === 'RUNNING'"
+              :disabled="!canWrite || isActive(row)"
               @click="removeTask(row)"
             >
               删除
@@ -180,6 +222,41 @@
         <p v-else class="dialog-form__hint">
           将对「{{ selectedFirmware?.productName || '该产品' }}」下的全部设备下发升级。
         </p>
+        <el-divider content-position="left">下发策略</el-divider>
+        <el-form-item label="灰度方式">
+          <el-radio-group v-model="form.batchMode">
+            <el-radio-button value="ALL">一次性全量</el-radio-button>
+            <el-radio-button value="BATCHED">分批灰度</el-radio-button>
+          </el-radio-group>
+          <p class="dialog-form__hint">
+            分批灰度只下发首批，确认本批成功率后再推进下一批；一次性全量与改造前行为一致。
+          </p>
+        </el-form-item>
+        <template v-if="form.batchMode === 'BATCHED'">
+          <el-form-item label="每批台数" required>
+            <el-input-number
+              v-model="form.batchSize"
+              :min="1"
+              :max="100000"
+              controls-position="right"
+              class="dialog-form__control"
+            />
+            <p class="dialog-form__hint">按设备顺序切批，最后一批装余数。</p>
+          </el-form-item>
+          <el-form-item label="批次推进间隔">
+            <el-select v-model="form.batchIntervalMs" class="dialog-form__control">
+              <el-option label="仅手动推进" :value="0" />
+              <el-option label="10 分钟" :value="600000" />
+              <el-option label="30 分钟" :value="1800000" />
+              <el-option label="1 小时" :value="3600000" />
+              <el-option label="6 小时" :value="21600000" />
+              <el-option label="24 小时" :value="86400000" />
+            </el-select>
+            <p class="dialog-form__hint">
+              自动推进以「上一批全部收口」为前提：前一批未验证完不会铺下一批。
+            </p>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="showCreateDialog = false">取消</el-button>
@@ -203,20 +280,26 @@ import { useDeviceGroupTreeQuery, useTagListQuery } from '@/composables/useDevic
 import { unwrapResult } from '@/utils/result'
 import { useAuthStore } from '@/stores/auth'
 
-/** 任务状态 → 中文文案。 */
+/** 任务状态 → 中文文案（T-32 增 PAUSED / ABORTED）。 */
 const STATUS_TEXT = {
   RUNNING: '进行中',
+  PAUSED: '已暂停',
+  ABORTED: '已终止',
   SUCCESS: '成功',
   PARTIAL: '部分成功',
   FAILED: '失败'
 }
-/** 任务状态 → el-tag 类型（RUNNING 蓝 / SUCCESS 绿 / PARTIAL 橙 / FAILED 红）。 */
+/** 任务状态 → el-tag 类型（RUNNING 蓝 / PAUSED 灰 / ABORTED 深灰 / SUCCESS 绿 / PARTIAL 橙 / FAILED 红）。 */
 const STATUS_TAG_TYPE = {
   RUNNING: 'primary',
+  PAUSED: 'warning',
+  ABORTED: 'info',
   SUCCESS: 'success',
   PARTIAL: 'warning',
   FAILED: 'danger'
 }
+/** 进行中（含暂停）——决定「删除」是否可用。 */
+const ACTIVE_STATUSES = ['RUNNING', 'PAUSED']
 /** 分组树选择器字段映射（与设备列表保持一致）。 */
 const TREE_PROPS = { label: 'name', children: 'children' }
 
@@ -266,7 +349,11 @@ const EMPTY_FORM = {
   targetMode: 'product',
   groupIds: [],
   tagIds: [],
-  deviceIds: []
+  deviceIds: [],
+  // T-32 灰度：默认一次性全量，与改造前行为一致
+  batchMode: 'ALL',
+  batchSize: 10,
+  batchIntervalMs: 0
 }
 const form = reactive({ ...EMPTY_FORM })
 
@@ -333,6 +420,7 @@ function progressStatus(row) {
   if (row.status === 'SUCCESS') return 'success'
   if (row.status === 'FAILED') return 'exception'
   if (row.status === 'PARTIAL') return 'warning'
+  // 暂停 / 终止都不再推进，用灰色表达「停在这里」而不是「失败」
   return ''
 }
 
@@ -375,17 +463,82 @@ async function handleCreate() {
     ElMessage.warning('请至少选择一个升级目标')
     return
   }
+  if (form.batchMode === 'BATCHED' && !(form.batchSize >= 1)) {
+    ElMessage.warning('每批台数必须大于 0')
+    return
+  }
 
   creating.value = true
   try {
-    await otaApi.createTask({ name, firmwareId: form.firmwareId, target: buildTarget() })
-    ElMessage.success('升级任务已创建')
+    const payload = { name, firmwareId: form.firmwareId, target: buildTarget() }
+    if (form.batchMode === 'BATCHED') {
+      payload.batchMode = 'BATCHED'
+      payload.batchSize = form.batchSize
+      payload.batchIntervalMs = form.batchIntervalMs
+    }
+    const detail = unwrapResult(await otaApi.createTask(payload), null)
+    const skipped = detail?.conflictSkippedCount ?? 0
+    // 被互斥剔除的设备必须显式告知：静默少发几台，运维会以为升级覆盖不全
+    ElMessage.success(
+      skipped > 0
+        ? `升级任务已创建；${skipped} 台设备正在其他升级任务中，已自动跳过`
+        : '升级任务已创建'
+    )
     showCreateDialog.value = false
     await invalidateTasks()
   } catch {
-    // 命中业务码 6231 / 6237 / 6238 时拦截器已提示后端文案，这里不再重复弹窗
+    // 命中业务码 6231 / 6237 / 6238 / 6293 / 6294 时拦截器已提示后端文案，这里不再重复弹窗
   } finally {
     creating.value = false
+  }
+}
+
+/** 任务是否处于「进行中」（含暂停），决定删除按钮是否可用。 */
+function isActive(row) {
+  return ACTIVE_STATUSES.includes(row.status)
+}
+
+/** 是否还有未下发的批次可推进：已下发的批号小于总批数即说明后面还有批次。 */
+function hasPendingBatch(row) {
+  return Number(row.currentBatchNo ?? 0) < Number(row.batchTotal ?? 1)
+}
+
+async function pauseTask(row) {
+  try {
+    await ElMessageBox.confirm(
+      `暂停后任务「${row.name}」不再开新批，已下发的设备会继续升级完成。确定暂停吗？`,
+      '确认暂停',
+      { confirmButtonText: '暂停', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return
+  }
+  try {
+    await otaApi.pauseTask(row.id)
+    ElMessage.success('任务已暂停')
+    await invalidateTasks()
+  } catch {
+    // 6238 由拦截器提示
+  }
+}
+
+async function resumeTask(row) {
+  try {
+    await otaApi.resumeTask(row.id)
+    ElMessage.success('任务已恢复')
+    await invalidateTasks()
+  } catch {
+    // 6238 由拦截器提示
+  }
+}
+
+async function advanceTask(row) {
+  try {
+    const sent = unwrapResult(await otaApi.advanceTask(row.id), 0)
+    ElMessage.success(sent > 0 ? `已下发 ${sent} 台` : '下一批没有待下发的设备')
+    await invalidateTasks()
+  } catch {
+    // 6238 由拦截器提示
   }
 }
 
@@ -469,6 +622,12 @@ function formatDateTime(value) {
 .task-table__failed {
   font-weight: var(--font-weight-medium);
   color: var(--color-danger);
+}
+
+/* 跳过数与「一次性全量」是弱信息，用三级文字色弱化，避免与失败数抢读 */
+.task-table__muted {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
 }
 
 .task-progress {

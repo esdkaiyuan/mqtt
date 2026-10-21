@@ -4,11 +4,16 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.constant.GroupPermission;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.dto.request.CommandInvokeRequest;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.DeviceCommandRecord;
 import com.mqtt.cloud.entity.DeviceEventRecord;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.filter.UserPrincipal;
+import com.mqtt.cloud.service.DeviceAccessService;
+import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceDataService;
 import com.mqtt.cloud.service.DeviceService;
@@ -53,6 +58,12 @@ class DeviceControllerDataTest {
 
     @Mock
     private DeviceDataService deviceDataService;
+
+    @Mock
+    private com.mqtt.cloud.service.DeviceAccessService deviceAccessService;
+
+    @Mock
+    private DeviceCommandService deviceCommandService;
 
     @InjectMocks
     private DeviceController controller;
@@ -130,6 +141,54 @@ class DeviceControllerDataTest {
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo(ResultCode.DEVICE_NOT_OWNED.getCode());
         verify(deviceDataService, never()).getEvents(anyLong(), anyLong(), anyLong());
+    }
+
+    @Test
+    void properties_should_allow_shared_view_member() {
+        authenticate(10L, "VIEWER");
+        Device device = device(100L, 999L);
+        when(deviceService.getDeviceByKey(DEVICE_KEY)).thenReturn(device);
+        when(deviceAccessService.resolveDeviceLevel(10L, "VIEWER", 100L))
+                .thenReturn(GroupPermission.VIEW);
+        when(deviceDataService.getPropertyLatest(100L)).thenReturn(List.of());
+
+        assertThat(controller.getDeviceProperties(DEVICE_KEY).getCode()).isEqualTo(200);
+        assertThat(device.getAccessLevel()).isEqualTo(GroupPermission.VIEW);
+    }
+
+    @Test
+    void commands_should_reject_view_member() {
+        authenticate(10L, "OPERATOR");
+        when(deviceService.getDeviceByKey(DEVICE_KEY)).thenReturn(device(100L, 999L));
+        when(deviceAccessService.resolveDeviceLevel(10L, "OPERATOR", 100L))
+                .thenReturn(GroupPermission.VIEW);
+
+        assertThatThrownBy(() -> controller.sendCommand(DEVICE_KEY, commandRequest()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.DEVICE_NOT_OWNED.getCode());
+        verify(deviceCommandService, never()).invoke(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void commands_should_allow_operate_member() {
+        authenticate(10L, "OPERATOR");
+        when(deviceService.getDeviceByKey(DEVICE_KEY)).thenReturn(device(100L, 999L));
+        when(deviceAccessService.resolveDeviceLevel(10L, "OPERATOR", 100L))
+                .thenReturn(GroupPermission.OPERATE);
+        DeviceCommandRecord record = new DeviceCommandRecord();
+        record.setCommandId("cmd-1");
+        when(deviceCommandService.invoke(org.mockito.ArgumentMatchers.any())).thenReturn(record);
+
+        assertThat(controller.sendCommand(DEVICE_KEY, commandRequest()).getData())
+                .isSameAs(record);
+    }
+
+    private CommandInvokeRequest commandRequest() {
+        CommandInvokeRequest request = new CommandInvokeRequest();
+        request.setType(DeviceCommandService.TYPE_PROPERTY_SET);
+        request.setIdentifier("power");
+        return request;
     }
 
     private Device device(Long id, Long ownerId) {

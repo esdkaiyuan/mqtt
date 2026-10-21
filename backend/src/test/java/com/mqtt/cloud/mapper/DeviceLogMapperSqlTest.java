@@ -9,9 +9,11 @@ import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -213,7 +215,10 @@ class DeviceLogMapperSqlTest {
     private static Document parse() throws Exception {
         try (InputStream in = open()) {
             assertThat(in).as("未找到 %s", MAPPER_XML).isNotNull();
-            return DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(in);
+            var builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+            // 离线构建：MyBatis DTD 仅用于校验，不能让单测依赖 mybatis.org 网络可达
+            builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
+            return builder.parse(in);
         }
     }
 

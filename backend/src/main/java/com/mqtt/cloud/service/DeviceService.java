@@ -53,6 +53,13 @@ public interface DeviceService extends IService<Device> {
 
     IPage<Device> getDevices(Long userId, DeviceQueryDTO dto);
 
+    /**
+     * 按已解析的分组范围分页设备（T-48 共享分组用）。
+     * <p>
+     * {@code dto.ownerId} 为空时不追加 owner 条件，仅依赖调用方已校验的 {@code groupIds} 限定范围。
+     */
+    IPage<Device> getDevicesInGroups(DeviceQueryDTO dto);
+
     Device getDeviceById(Long deviceId);
 
     Device getDeviceByKey(String deviceKey);

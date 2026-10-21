@@ -106,10 +106,13 @@ public class SceneExecutionLauncher {
             run.setSceneId(scene.getId());
             run.setStepId(step.getId());
             run.setSeq(step.getSeq());
+            run.setParallelSeq(step.getParallelSeq());
+            run.setBranchIndex(step.getBranchIndex());
             run.setActionType(step.getActionType());
             run.setDelaySeconds(delay);
             run.setStatus(SceneConstants.STEP_PENDING);
             run.setAttemptCount(0);
+            run.setLoopIteration(0);
             if (first) {
                 LocalDateTime scheduledAt = now.plusSeconds(delay);
                 run.setScheduledAt(scheduledAt);

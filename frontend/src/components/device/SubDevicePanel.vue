@@ -3,7 +3,7 @@
     <div class="sub-device-panel__head">
       <div class="sub-device-panel__intro">
         <h3 class="card-title">子设备</h3>
-        <p class="card-desc">经本网关代连的设备；解绑只清除父子关系，设备与凭据保留</p>
+        <p class="card-desc">经本设备代连的下级设备；解绑只清除父子关系，设备与凭据保留</p>
       </div>
       <el-button
         type="primary"
@@ -39,7 +39,7 @@
           </div>
         </li>
       </ul>
-      <p v-else class="sub-device-empty">该网关下暂无子设备</p>
+      <p v-else class="sub-device-empty">该设备下暂无子设备</p>
 
       <p v-if="!canWrite" class="sub-device-hint">仅管理员可挂载或解绑子设备</p>
     </div>

@@ -11,6 +11,7 @@ import com.mqtt.cloud.mapper.RuleExecutionMapper;
 import com.mqtt.cloud.service.DeviceScopeService;
 import com.mqtt.cloud.service.RuleActionExecutor;
 import com.mqtt.cloud.service.RuleEvaluationService;
+import com.mqtt.cloud.service.RuleMultiSpec;
 import com.mqtt.cloud.service.scope.DeviceMemberships;
 import com.mqtt.cloud.service.scope.ScopeMatcher;
 import com.mqtt.cloud.service.scope.RuleScope;
@@ -20,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -52,6 +54,7 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
     private final DeviceScopeService deviceScopeService;
     private final RuleProperties properties;
     private final ThreadPoolTaskExecutor ruleExecutor;
+    private final ObjectMapper objectMapper;
 
     private final Counter triggerCounter;
     private final Counter rejectedCounter;
@@ -69,6 +72,7 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
                                      DeviceScopeService deviceScopeService,
                                      RuleProperties properties,
                                      @Qualifier("ruleExecutor") ThreadPoolTaskExecutor ruleExecutor,
+                                     ObjectMapper objectMapper,
                                      MeterRegistry meterRegistry) {
         this.ruleDefinitionMapper = ruleDefinitionMapper;
         this.deviceMapper = deviceMapper;
@@ -77,6 +81,7 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
         this.deviceScopeService = deviceScopeService;
         this.properties = properties;
         this.ruleExecutor = ruleExecutor;
+        this.objectMapper = objectMapper;
         this.triggerCounter = Counter.builder("rule_trigger_total")
                 .description("规则命中并落执行记录次数")
                 .register(meterRegistry);
@@ -100,6 +105,17 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
             for (RuleDefinition rule : rules) {
                 if (!RuleConstants.SOURCE_PROPERTY.equals(rule.getSourceType())
                         || !inScope(rule, deviceId, memberships)) {
+                    continue;
+                }
+                // T-33：多条件规则整批求值一次；单条件规则走原逐样本路径（语义与触发次数均不变）
+                if (RuleMultiSpec.hasMultipleConditions(rule, objectMapper)) {
+                    RuleMultiMatcher.Result result = RuleMultiMatcher.matchProperties(
+                            RuleMultiSpec.logicOf(rule),
+                            RuleMultiSpec.conditionsOf(rule, objectMapper), samples);
+                    if (result.hit()) {
+                        trigger(rule, device, RuleConstants.SOURCE_PROPERTY,
+                                result.triggerIdentifier(), result.triggerValue());
+                    }
                     continue;
                 }
                 for (PropertySample sample : samples) {
@@ -136,6 +152,17 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
                         || !inScope(rule, deviceId, memberships)) {
                     continue;
                 }
+                // T-33：多条件规则整批求值一次；单条件规则走原逐样本路径
+                if (RuleMultiSpec.hasMultipleConditions(rule, objectMapper)) {
+                    RuleMultiMatcher.Result result = RuleMultiMatcher.matchEvents(
+                            RuleMultiSpec.logicOf(rule),
+                            RuleMultiSpec.conditionsOf(rule, objectMapper), samples);
+                    if (result.hit()) {
+                        trigger(rule, device, RuleConstants.SOURCE_EVENT,
+                                result.triggerIdentifier(), result.triggerValue());
+                    }
+                    continue;
+                }
                 for (EventSample sample : samples) {
                     if (!RuleConditionMatcher.matchesEvent(rule.getIdentifier(), rule.getEventType(),
                             sample.identifier(), sample.eventType())) {
@@ -158,7 +185,15 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
     }
 
     /**
-     * 命中处理：冷却判定 → 占用锚点 → 落执行记录 → 投递线程池。
+     * 命中处理：冷却判定 → 占用锚点 → 按动作数落执行记录 → 投递线程池（T-33 起支持多动作）。
+     * <p>
+     * <b>冷却只判定一次</b>：一次命中无论有几个动作都只占一次冷却锚点。若把判定放进动作循环，
+     * 第二个动作会被刚占的锚点直接挡掉，多动作就退化成了单动作。
+     * <p>
+     * <b>执行粒度 = 动作粒度</b>：多动作落 N 条独立 {@code rule_execution}，各自携带
+     * {@code action_type} 与 {@code action_config_snapshot}。这样重试 / 巡检重放 / 手动重试三条路径
+     * 沿用既有的单记录入口 {@code RuleActionExecutor.execute(executionId)} 即天然按动作隔离 ——
+     * 一个动作失败只重试它自己，不会把已经成功的动作重复投递（FORWARD_HTTP 重复投递有副作用）。
      * <p>
      * 冷却窗口内重复命中直接跳过（记 DEBUG，不落记录）；落库或投递失败只记 WARN + 指标，不冒泡。
      */
@@ -168,6 +203,21 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
             log.debug("规则冷却窗口内，跳过: ruleId={}", rule.getId());
             return;
         }
+        List<RuleMultiSpec.Action> actions = RuleMultiSpec.actionsOf(rule, objectMapper);
+        if (actions.isEmpty()) {
+            log.warn("规则动作列表为空，跳过本次触发: ruleId={}", rule.getId());
+            return;
+        }
+        boolean multiple = RuleMultiSpec.hasMultipleActions(rule, objectMapper);
+        for (RuleMultiSpec.Action action : actions) {
+            insertAndDispatch(rule, device, sourceType, identifier, triggerValue, action, multiple);
+        }
+    }
+
+    /** 落一条执行记录并投递；单动作失败不影响同一触发的其它动作。 */
+    private void insertAndDispatch(RuleDefinition rule, Device device, String sourceType,
+                                   String identifier, String triggerValue, RuleMultiSpec.Action action,
+                                   boolean multiple) {
         RuleExecution execution = new RuleExecution();
         execution.setUserId(rule.getUserId());
         execution.setRuleId(rule.getId());
@@ -178,15 +228,16 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
         execution.setSourceType(sourceType);
         execution.setIdentifier(identifier);
         execution.setTriggerValue(truncate(triggerValue, 512));
-        execution.setActionType(rule.getActionType());
+        execution.setActionType(action.actionType());
+        execution.setActionConfigSnapshot(writeActionSnapshot(action, multiple));
         execution.setStatus(RuleConstants.STATUS_PENDING);
         execution.setAttemptCount(0);
         execution.setNextAttemptAt(null);
         try {
             ruleExecutionMapper.insert(execution);
         } catch (Exception e) {
-            log.warn("规则执行记录落库失败，跳过本次触发: ruleId={}, deviceId={}",
-                    rule.getId(), device.getId(), e);
+            log.warn("规则执行记录落库失败，跳过该动作: ruleId={}, deviceId={}, actionType={}",
+                    rule.getId(), device.getId(), action.actionType(), e);
             return;
         }
         triggerCounter.increment();
@@ -198,6 +249,17 @@ public class RuleEvaluationServiceImpl implements RuleEvaluationService {
             log.warn("规则动作投递被拒绝（执行队列已满）: executionId={}", execution.getId());
             markRejected(execution.getId());
         }
+    }
+
+    /**
+     * 序列化动作配置快照；单动作形态写 {@code null}，让执行器回查规则当前配置，
+     * 与 T-19 原始路径逐位一致（存量执行记录同理）。
+     */
+    private String writeActionSnapshot(RuleMultiSpec.Action action, boolean multiple) {
+        if (!multiple) {
+            return null;
+        }
+        return action.actionConfig() == null ? null : action.actionConfig().toString();
     }
 
     /** 冷却判定并占用锚点（先占用再执行，避免同一批内连续命中重复触发）。 */

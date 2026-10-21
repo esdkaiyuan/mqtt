@@ -99,10 +99,10 @@
       </div>
 
       <div class="device-shadow-panel__footer">
-        <el-button v-if="deltaKeys.length" :loading="setting" @click="resendDelta">
+        <el-button v-if="deltaKeys.length" :loading="setting" :disabled="!canOperate" @click="resendDelta">
           按 delta 补发（{{ deltaKeys.length }}）
         </el-button>
-        <el-button v-if="fields.length" type="primary" :loading="setting" @click="submit">
+        <el-button v-if="fields.length" type="primary" :loading="setting" :disabled="!canOperate" @click="submit">
           下发期望值
         </el-button>
         <p v-if="!fields.length && !deltaKeys.length" class="device-shadow-panel__empty">
@@ -123,7 +123,9 @@ const props = defineProps({
   capability: { type: Object, default: () => ({ properties: [] }) },
   online: { type: Boolean, default: true },
   loading: { type: Boolean, default: false },
-  setting: { type: Boolean, default: false }
+  setting: { type: Boolean, default: false },
+  /** 共享分组 VIEW 成员或 VIEWER 角色只能查看影子，不能写 desired。 */
+  canOperate: { type: Boolean, default: true }
 })
 
 const emit = defineEmits(['set-desired'])

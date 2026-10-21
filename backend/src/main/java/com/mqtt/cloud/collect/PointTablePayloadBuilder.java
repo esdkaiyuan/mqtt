@@ -56,6 +56,9 @@ public final class PointTablePayloadBuilder {
         // address 对 TAG/NODE 类点位是名称而非数字，对线圈类是布尔字面量，故按文本下发。
         putIfPresent(node, "address", point.address());
         putIfPresent(node, "dataType", point.dataType());
+        if (point.unitId() != null) {
+            node.put("unitId", point.unitId());
+        }
         putIfPresent(node, "scale", point.scale());
         putIfPresent(node, "offset", point.offset());
         putIfPresent(node, "unit", point.unit());
@@ -85,6 +88,7 @@ public final class PointTablePayloadBuilder {
      * 实体将来加列时不会自动泄漏到下发载荷里，避免把内部字段（如 {@code enabled}、
      * {@code executor}）无意间暴露给网关。
      *
+     * @param unitId         从站地址，可空（空表示网关使用驱动默认值，T-50）
      * @param scale          线性缩放系数，可空（空表示不缩放）
      * @param offset         线性偏移，可空
      * @param readIntervalMs 采集周期，可空（网关侧应有默认值兜底）
@@ -93,6 +97,7 @@ public final class PointTablePayloadBuilder {
                                   String pointType,
                                   String address,
                                   String dataType,
+                                  Integer unitId,
                                   BigDecimal scale,
                                   BigDecimal offset,
                                   String unit,

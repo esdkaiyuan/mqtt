@@ -91,8 +91,22 @@ describe('components/product/ProductFormDialog 认证方式', () => {
   it('认证方式下拉渲染三个与后端枚举对齐的选项', async () => {
     const wrapper = await mountDialog()
 
-    const options = wrapper.findAll('.stub-option').map((item) => item.attributes('data-value'))
+    const authSelect = wrapper.findAllComponents({ name: 'ElSelect' }).at(0)
+    const options = authSelect.findAll('.stub-option').map((item) => item.attributes('data-value'))
     expect(options).toEqual(['SECRET', 'X509', 'JWT'])
+  })
+
+  it('接入协议默认 MQTT，切到 MODBUS 时显示驱动配置', async () => {
+    const wrapper = await mountDialog()
+    const selects = wrapper.findAllComponents({ name: 'ElSelect' })
+    expect(selects.at(1).props('modelValue')).toBe('MQTT')
+    expect(wrapper.text()).not.toContain('驱动标识')
+
+    await selects.at(1).vm.$emit('update:modelValue', 'MODBUS')
+
+    const labels = wrapper.findAll('.stub-form-item').map((item) => item.attributes('data-label'))
+    expect(labels).toContain('驱动标识')
+    expect(labels).toContain('驱动配置（JSON）')
   })
 
   it('选择非一机一密时提示存量设备需刷机', async () => {
@@ -132,5 +146,6 @@ describe('components/product/ProductFormDialog 认证方式', () => {
     expect(payload.productKey).toBe('env-sensor')
     expect(payload.productName).toBe('环境传感器')
     expect(payload.authMode).toBe('X509')
+    expect(payload.protocolType).toBe('MQTT')
   })
 })

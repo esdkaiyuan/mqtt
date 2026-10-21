@@ -174,7 +174,10 @@ describe('components/device/DeviceCommandHistory', () => {
     const wrapper = mountPanel({ records: ROWS, total: 2 })
     expect(wrapper.find('.stub-dialog').exists()).toBe(false)
 
-    await wrapper.findAllComponents({ name: 'ElButton' })[0].trigger('click')
+    const detailButton = wrapper
+      .findAllComponents({ name: 'ElButton' })
+      .find((button) => button.text().includes('详情'))
+    await detailButton.trigger('click')
 
     const dialog = wrapper.find('.stub-dialog')
     expect(dialog.exists()).toBe(true)

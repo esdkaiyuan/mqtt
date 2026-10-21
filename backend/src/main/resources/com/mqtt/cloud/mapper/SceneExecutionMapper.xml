@@ -65,6 +65,18 @@
         WHERE id = #{id}
     </update>
 
+    <!-- 按步骤明细重算进度：终态收口 / 循环重放后消除增量漂移 -->
+    <update id="recountFinishedSteps">
+        UPDATE scene_execution e
+        SET e.finished_steps = (
+                SELECT COUNT(*) FROM scene_step_run r
+                WHERE r.execution_id = e.id
+                  AND r.status IN ('SUCCESS', 'SKIPPED')
+            ),
+            e.updated_at = NOW(3)
+        WHERE e.id = #{id}
+    </update>
+
     <!-- 手动重试重置：仅当记录为 FAILED 时置回 RUNNING 并清空失败原因（status 守卫防并发） -->
     <update id="resetForRetry">
         UPDATE scene_execution

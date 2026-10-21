@@ -41,16 +41,21 @@ public interface DevicePointTableMapper extends BaseMapper<DevicePointTable> {
      * <p>
      * 只取 {@code executor='PLATFORM'}：边缘执行方的点位由网关自行采集，平台不轮询。
      *
-     * @param limit 单轮上限，防止点位规模大时一次性全量加载拖垮内存与现场总线
+     * @param limit        单轮上限，防止点位规模大时一次性全量加载拖垮内存与现场总线
+     * @param minIntervalMs 采集周期下限（毫秒），与 {@code app.modbus.min-interval-ms} 一致；
+     *                      点表误配 100ms 时按该下限出轮询，避免打爆现场总线
      */
     @Select("SELECT p.* FROM device_point_table p "
             + "LEFT JOIN (SELECT point_id, MAX(collected_at) AS last_at FROM device_point_run "
             + "           GROUP BY point_id) r ON r.point_id = p.id "
             + "WHERE p.enabled = 1 AND p.executor = 'PLATFORM' "
-            + "AND DATE_ADD(COALESCE(r.last_at, p.created_at), INTERVAL p.read_interval_ms * 1000 MICROSECOND) <= NOW(3) "
+            + "AND TIMESTAMPADD(MICROSECOND, "
+            + "    GREATEST(COALESCE(p.read_interval_ms, 60000), #{minIntervalMs}) * 1000, "
+            + "    COALESCE(r.last_at, p.created_at)) <= NOW(3) "
             + "ORDER BY COALESCE(r.last_at, p.created_at) ASC "
             + "LIMIT #{limit}")
-    List<DevicePointTable> findDuePlatformPoints(@Param("limit") int limit);
+    List<DevicePointTable> findDuePlatformPoints(@Param("limit") int limit,
+                                                 @Param("minIntervalMs") int minIntervalMs);
 
     /** 按设备取该设备已存在的执行方集合（写入前的一致性校验用）。 */
     @Select("SELECT DISTINCT executor FROM device_point_table WHERE device_id = #{deviceId}")

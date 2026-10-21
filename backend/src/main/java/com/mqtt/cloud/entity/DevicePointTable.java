@@ -48,7 +48,11 @@ public class DevicePointTable {
     @TableField("address")
     private String address;
 
-    /** 数据类型 int/float/double/bool/string */
+    /** Modbus 从站地址（0~247）；为空继承 driver_config.unitId（T-50） */
+    @TableField("unit_id")
+    private Integer unitId;
+
+    /** 数据类型 int/int32/uint32/int64/uint64/float/double/bool/string */
     @TableField("data_type")
     private String dataType;
 

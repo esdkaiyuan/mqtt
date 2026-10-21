@@ -38,6 +38,10 @@ import java.util.concurrent.TimeUnit;
 public class RealtimeStreamServiceImpl implements RealtimeStreamService {
 
     private static final String EVENT_DATA = "device-data";
+    /** 设备日志增量（T-36 / X-3）。 */
+    public static final String EVENT_DEVICE_LOG = "device-log";
+    /** 属性上报增量（T-36 / X-3），供趋势页实时追加。 */
+    public static final String EVENT_PROPERTY_TREND = "property-trend";
     private static final String HEARTBEAT_COMMENT = "hb";
 
     private final RealtimeProperties properties;
@@ -55,8 +59,8 @@ public class RealtimeStreamServiceImpl implements RealtimeStreamService {
     private ScheduledExecutorService heartbeatExecutor;
     private ScheduledFuture<?> heartbeatTask;
 
-    /** 最近一次 publish 的目标用户 ID，仅供测试断言使用 */
-    private volatile List<Long> lastRecipientUserIds = List.of();
+    /** 最近一次 publish 的目标用户 ID；包级可见，供同包测试断言使用 */
+    volatile List<Long> lastRecipientUserIds = List.of();
 
     /**
      * 测试用无参构造：使用默认配置。
@@ -77,13 +81,28 @@ public class RealtimeStreamServiceImpl implements RealtimeStreamService {
         }
     }
 
-    private record Subscriber(Long userId, boolean admin, SseEmitter emitter) {
+    /**
+     * 订阅者（T-36 起带主题集合）。
+     *
+     * @param topics 订阅的事件名；为空集合表示**订阅全部主题**，
+     *               这样 {@code subscribe(userId, admin)} 的既有行为与改造前等价
+     */
+    private record Subscriber(Long userId, boolean admin, Set<String> topics, SseEmitter emitter) {
+        boolean accepts(String eventName) {
+            return topics == null || topics.isEmpty() || topics.contains(eventName);
+        }
     }
 
     @Override
     public SseEmitter subscribe(Long userId, boolean admin) {
+        return subscribe(userId, admin, Set.of());
+    }
+
+    @Override
+    public SseEmitter subscribe(Long userId, boolean admin, Set<String> topics) {
         SseEmitter emitter = new SseEmitter(properties.getStreamTimeoutMs());
-        Subscriber subscriber = new Subscriber(userId, admin, emitter);
+        Subscriber subscriber = new Subscriber(userId, admin,
+                topics == null ? Set.of() : Set.copyOf(topics), emitter);
         emitter.onCompletion(() -> removeQuietly(subscriber));
         emitter.onTimeout(() -> removeQuietly(subscriber));
         emitter.onError(e -> removeQuietly(subscriber));
@@ -114,16 +133,38 @@ public class RealtimeStreamServiceImpl implements RealtimeStreamService {
         event.put("deviceKey", deviceKey);
         event.put("topic", topic);
         event.put("payload", payload);
-        dispatchExecutor.execute(() -> deliver(targets, event));
+        dispatchExecutor.execute(() -> deliver(targets, EVENT_DATA, event));
     }
 
-    private void deliver(List<Subscriber> targets, Map<String, Object> event) {
+    @Override
+    public void publishEvent(Long ownerId, String eventName, Map<String, Object> payload) {
+        if (eventName == null || eventName.isBlank()) {
+            return;
+        }
+        List<Subscriber> targets = snapshot().stream()
+                // 与 publishLocal 同一套过滤：管理员全收，普通用户仅收自己名下，无归属只推管理员
+                .filter(subscriber -> subscriber.admin()
+                        || (ownerId != null && ownerId.equals(subscriber.userId())))
+                .toList();
+        // 事件名为空时连订阅者都不筛，直接返回：连「谁会收到」都算不出来
+        if (targets.isEmpty()) {
+            return;
+        }
+        lastRecipientUserIds = targets.stream().map(Subscriber::userId).toList();
+        Map<String, Object> event = new LinkedHashMap<>(payload == null ? Map.of() : payload);
+        dispatchExecutor.execute(() -> deliver(targets, eventName, event));
+    }
+
+    private void deliver(List<Subscriber> targets, String eventName, Map<String, Object> event) {
         List<Subscriber> dead = new ArrayList<>();
         for (Subscriber subscriber : targets) {
+            if (!subscriber.accepts(eventName)) {
+                continue;
+            }
             try {
-                subscriber.emitter().send(SseEmitter.event().name(EVENT_DATA).data(event));
+                subscriber.emitter().send(SseEmitter.event().name(eventName).data(event));
             } catch (IOException | IllegalStateException e) {
-                log.debug("SSE 推送失败，摘除订阅者: userId={}", subscriber.userId());
+                log.debug("SSE 推送失败，摘除订阅者: userId={}, event={}", subscriber.userId(), eventName);
                 dead.add(subscriber);
             }
         }
@@ -194,7 +235,8 @@ public class RealtimeStreamServiceImpl implements RealtimeStreamService {
         log.debug("SSE 订阅移除: userId={}, 当前订阅数={}", subscriber.userId(), subscriberCount());
     }
 
-    private int subscriberCount() {
+    /** 当前订阅数；包级可见，供同包测试断言使用（指标 Gauge 也读它）。 */
+    int subscriberCount() {
         return subscribers.values().stream().mapToInt(Set::size).sum();
     }
 

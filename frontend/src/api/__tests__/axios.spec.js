@@ -85,6 +85,25 @@ describe('api/axios', () => {
       expect(result.data.records).toHaveLength(1)
     })
 
+    it('returnFullResponse 时原样返回完整响应（供附件下载读响应头）', async () => {
+      const blob = new Blob(['a,b'])
+      adapter.mockResolvedValue({
+        data: blob,
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-disposition': 'attachment; filename="x.csv"' },
+        config: { returnFullResponse: true }
+      })
+
+      const response = await api.get('/devices/dev-1/logs/export', {
+        responseType: 'blob',
+        returnFullResponse: true
+      })
+
+      expect(response.data).toBe(blob)
+      expect(response.headers['content-disposition']).toContain('x.csv')
+    })
+
     it('HTTP 200 但业务码非 200 时抛错并提示', async () => {
       adapter.mockResolvedValue(okResponse({ code: 500, message: '业务异常' }))
 

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.WebhookConfig;
 import com.mqtt.cloud.service.CommandReplyService;
+import com.mqtt.cloud.service.DeviceLogNotifier;
 import com.mqtt.cloud.service.OtaProgressService;
 import com.mqtt.cloud.service.RealtimeBroadcaster;
 import com.mqtt.cloud.service.ShadowDeliveryService;
@@ -54,6 +55,7 @@ public class IngestDispatcher {
     private final CommandReplyService commandReplyService;
     private final ShadowDeliveryService shadowDeliveryService;
     private final OtaProgressService otaProgressService;
+    private final DeviceLogNotifier deviceLogNotifier;
 
     public void dispatch(List<ResolvedEvent> events) {
         if (events.isEmpty()) {
@@ -94,6 +96,26 @@ public class IngestDispatcher {
             otaProgressService.handle(events);
         } catch (Exception e) {
             log.warn("OTA 进度回传分发失败，跳过本批: size={}", events.size(), e);
+        }
+        notifyDeviceLogs(events);
+    }
+
+    /**
+     * 设备日志实时通知（T-41）：本批落库提交后，按设备去重发一次 {@code device-log}。
+     * 只发「有更新」信号，不构造日志条目——日志查询仍是唯一数据源，避免实时影子与分页结果漂移。
+     */
+    private void notifyDeviceLogs(List<ResolvedEvent> events) {
+        java.util.Set<Long> notified = new java.util.HashSet<>();
+        for (ResolvedEvent event : events) {
+            Device device = event.device();
+            if (device == null || device.getId() == null || !notified.add(device.getId())) {
+                continue;
+            }
+            try {
+                deviceLogNotifier.notify(device);
+            } catch (Exception e) {
+                log.debug("设备日志实时通知失败（忽略）: deviceId={}", device.getId(), e);
+            }
         }
     }
 

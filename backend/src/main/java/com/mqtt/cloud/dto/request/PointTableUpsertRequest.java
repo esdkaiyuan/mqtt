@@ -1,5 +1,7 @@
 package com.mqtt.cloud.dto.request;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
@@ -39,8 +41,13 @@ public class PointTableUpsertRequest {
     /** 地址：寄存器号（数字）或 tag/节点名。寄存器类点位必填。 */
     private String address;
 
-    /** 数据类型 int/float/double/bool/string；为空按 {@code float} 处理（工业量测最常用）。 */
-    @Pattern(regexp = "^(int|float|double|bool|string)$", message = "数据类型非法")
+    /** Modbus 从站地址（0~247）；为空继承驱动配置（T-50）。 */
+    @Min(value = 0, message = "从站地址不能小于 0")
+    @Max(value = 247, message = "从站地址不能大于 247")
+    private Integer unitId;
+
+    /** 数据类型 int/int32/uint32/int64/uint64/float/double/bool/string；为空按 {@code float} 处理（工业量测最常用）。 */
+    @Pattern(regexp = "^(int|int32|uint32|int64|uint64|float|double|bool|string)$", message = "数据类型非法")
     private String dataType;
 
     /** 线性缩放系数；为空按 {@code 1} 处理。 */

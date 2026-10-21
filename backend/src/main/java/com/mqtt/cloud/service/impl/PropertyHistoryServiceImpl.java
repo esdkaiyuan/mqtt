@@ -2,6 +2,7 @@ package com.mqtt.cloud.service.impl;
 
 import com.mqtt.cloud.common.PropertyHistoryConstants;
 import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.constant.GroupPermission;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.security.SecurityUtils;
 import com.mqtt.cloud.config.PropertyHistoryProperties;
@@ -11,9 +12,12 @@ import com.mqtt.cloud.dto.response.PropertyHistoryPoint;
 import com.mqtt.cloud.dto.response.PropertySeriesVO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DevicePropertyHistory;
+import com.mqtt.cloud.filter.UserPrincipal;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.DevicePropertyHistoryMapper;
+import com.mqtt.cloud.service.DeviceAccessService;
 import com.mqtt.cloud.service.PropertyHistoryService;
+import com.mqtt.cloud.service.RealtimeStreamService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
 import lombok.RequiredArgsConstructor;
@@ -58,6 +62,8 @@ public class PropertyHistoryServiceImpl implements PropertyHistoryService {
     private final DevicePropertyHistoryMapper historyMapper;
     private final ThingModelService thingModelService;
     private final PropertyHistoryProperties properties;
+    private final RealtimeStreamService realtimeStreamService;
+    private final DeviceAccessService deviceAccessService;
 
     @Override
     public void append(Long deviceId, List<Sample> samples) {
@@ -75,6 +81,43 @@ public class PropertyHistoryServiceImpl implements PropertyHistoryService {
             rows.add(row);
         }
         historyMapper.insertBatch(rows);
+        publishTrend(deviceId, samples);
+    }
+
+    /**
+     * 把本批属性样本推送到趋势实时流（T-36 · X-3）。
+     * <p>
+     * 挂在 {@code append} 上是因为它是**属性历史唯一的写入点** —— 属性历史是追加型表，
+     * 绕过 append 直写的路径不存在，因此不会漏推也不会重推。
+     * <p>
+     * 整段 {@code try/catch} 静默：调用方是摄取主链路，
+     * 一个 SSE 推送失败不得让属性落库失败（进而让摄取重试）。
+     */
+    private void publishTrend(Long deviceId, List<Sample> samples) {
+        if (!properties.isStreamEnabled()) {
+            return;
+        }
+        try {
+            Device device = deviceMapper.selectById(deviceId);
+            if (device == null) {
+                return;
+            }
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("deviceId", deviceId);
+            payload.put("deviceKey", device.getDeviceKey());
+            payload.put("samples", samples.stream().map(sample -> {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("identifier", sample.identifier());
+                item.put("dataType", sample.dataType());
+                item.put("valueText", sample.valueText());
+                item.put("reportedAt", sample.reportedAt());
+                return item;
+            }).toList());
+            realtimeStreamService.publishEvent(device.getOwnerId(),
+                    RealtimeStreamServiceImpl.EVENT_PROPERTY_TREND, payload);
+        } catch (Exception e) {
+            log.debug("属性趋势实时推送失败（不影响落库）: deviceId={}", deviceId, e);
+        }
     }
 
     @Override
@@ -204,7 +247,12 @@ public class PropertyHistoryServiceImpl implements PropertyHistoryService {
         }
         boolean isOwner = device.getOwnerId() != null && device.getOwnerId().equals(userId);
         if (!isOwner && !SecurityUtils.isAdmin()) {
-            throw new BusinessException(ResultCode.DEVICE_NOT_OWNED);
+            UserPrincipal principal = SecurityUtils.getPrincipalOrNull();
+            String level = deviceAccessService.resolveDeviceLevel(userId,
+                    principal == null ? null : principal.getRole(), deviceId);
+            if (!GroupPermission.canView(level)) {
+                throw new BusinessException(ResultCode.DEVICE_NOT_OWNED);
+            }
         }
         return device;
     }

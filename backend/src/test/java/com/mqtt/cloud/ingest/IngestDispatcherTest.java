@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.WebhookConfig;
 import com.mqtt.cloud.service.CommandReplyService;
+import com.mqtt.cloud.service.DeviceLogNotifier;
 import com.mqtt.cloud.service.OtaProgressService;
 import com.mqtt.cloud.service.RealtimeBroadcaster;
 import com.mqtt.cloud.service.ShadowDeliveryService;
@@ -53,6 +54,7 @@ class IngestDispatcherTest {
     private CommandReplyService commandReplyService;
     private ShadowDeliveryService shadowDeliveryService;
     private OtaProgressService otaProgressService;
+    private DeviceLogNotifier deviceLogNotifier;
     private IngestDispatcher dispatcher;
 
     @BeforeEach
@@ -65,8 +67,10 @@ class IngestDispatcherTest {
         commandReplyService = mock(CommandReplyService.class);
         shadowDeliveryService = mock(ShadowDeliveryService.class);
         otaProgressService = mock(OtaProgressService.class);
+        deviceLogNotifier = mock(DeviceLogNotifier.class);
         dispatcher = new IngestDispatcher(webhookDispatcher, webhookConfigService, realtimeBroadcaster,
-                thingModelInterpretService, commandReplyService, shadowDeliveryService, otaProgressService);
+                thingModelInterpretService, commandReplyService, shadowDeliveryService, otaProgressService,
+                deviceLogNotifier);
     }
 
     @Test
@@ -74,7 +78,8 @@ class IngestDispatcherTest {
         dispatcher.dispatch(List.of());
 
         verifyNoInteractions(webhookDispatcher, webhookConfigService, realtimeBroadcaster,
-                thingModelInterpretService, commandReplyService, shadowDeliveryService, otaProgressService);
+                thingModelInterpretService, commandReplyService, shadowDeliveryService, otaProgressService,
+                deviceLogNotifier);
     }
 
     @Test
@@ -90,6 +95,17 @@ class IngestDispatcherTest {
         verify(commandReplyService).handle(events);
         verify(shadowDeliveryService).onIngest(events);
         verify(otaProgressService).handle(events);
+    }
+
+    @Test
+    void dispatch_should_notify_device_log_once_per_device() {
+        when(webhookConfigService.list(any(LambdaQueryWrapper.class))).thenReturn(List.of());
+        dispatcher.dispatch(List.of(
+                event(device(DEVICE_ID, USER_ID), "data", "{}"),
+                event(device(DEVICE_ID, USER_ID), "heartbeat", "{}"),
+                event(device(OTHER_DEVICE_ID, USER_ID), "data", "{}")));
+
+        verify(deviceLogNotifier, times(2)).notify(any(Device.class));
     }
 
     @Test

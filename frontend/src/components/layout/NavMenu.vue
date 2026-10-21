@@ -63,6 +63,7 @@ const navGroups = [
     items: [
       { path: '/workbench/dashboard', title: '概览', icon: 'dashboard' },
       { path: '/workbench/devices', title: '设备管理', icon: 'device' },
+      { path: '/workbench/shadows', title: '设备影子', icon: 'signal' },
       { path: '/workbench/devices/groups', title: '分组管理', icon: 'building' },
       { path: '/workbench/rules', title: '消息规则', icon: 'operation' },
       { path: '/workbench/products', title: '产品管理', icon: 'package' },
@@ -98,6 +99,7 @@ const navGroups = [
     key: 'access',
     label: '开发接入',
     items: [
+      { path: '/workbench/hmi', title: '上位机', icon: 'chart' },
       { path: '/workbench/access/api-keys', title: 'API 密钥', icon: 'settings' },
       { path: '/workbench/access/webhooks', title: 'Webhook', icon: 'documentation' },
       { path: '/workbench/access/notification-channels', title: '通知渠道', icon: 'message' }

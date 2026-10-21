@@ -101,11 +101,22 @@
               <div class="step-card__meta">
                 <span>延时 {{ step.delaySeconds ?? 0 }}s</span>
                 <span>尝试 {{ step.attemptCount ?? 0 }} 次</span>
+                <span v-if="step.actionType === 'LOOP' && step.loopIteration > 0">
+                  循环 {{ step.loopIteration + 1 }} 次
+                </span>
+                <span v-if="step.parallelSeq != null && step.actionType !== 'PARALLEL' && step.actionType !== 'JOIN'">
+                  并行分支 {{ Number(step.branchIndex ?? 0) + 1 }}
+                </span>
                 <span>耗时 {{ formatDuration(step.startedAt, step.finishedAt) }}</span>
               </div>
               <div class="step-card__times">
                 <span>开始 {{ formatDateTime(step.startedAt) }}</span>
                 <span>结束 {{ formatDateTime(step.finishedAt) }}</span>
+              </div>
+
+              <div v-if="step.flowResult" class="step-card__flow">
+                <span class="detail-label">流程结果</span>
+                <span class="step-card__flow-text">{{ step.flowResult }}</span>
               </div>
 
               <div v-if="step.errorMessage" class="step-card__error">{{ step.errorMessage }}</div>
@@ -304,6 +315,18 @@ async function handleRetry() {
 .step-card__error {
   font-size: var(--font-size-xs);
   color: var(--color-danger);
+  word-break: break-all;
+}
+
+.step-card__flow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.step-card__flow-text {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
   word-break: break-all;
 }
 

@@ -39,6 +39,9 @@ public interface SceneExecutionMapper extends BaseMapper<SceneExecution> {
     /** 进度自增：已完成（SUCCESS/SKIPPED）步骤数。 */
     int bumpFinishedSteps(@Param("id") Long id, @Param("delta") int delta);
 
+    /** 按步骤明细重算已完成步骤数（终态收口 / 循环重放后消除增量漂移，T-44）。 */
+    int recountFinishedSteps(@Param("id") Long id);
+
     /**
      * 手动重试重置：仅当记录为 {@code FAILED} 时置回 {@code RUNNING} 并清空失败原因。
      * <p>

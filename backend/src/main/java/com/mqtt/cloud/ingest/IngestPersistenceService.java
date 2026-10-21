@@ -4,11 +4,13 @@ import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceStatus;
 import com.mqtt.cloud.entity.Message;
+import com.mqtt.cloud.event.DeviceStatusChangedEvent;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.DeviceStatusHistoryMapper;
 import com.mqtt.cloud.mapper.MessageMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,7 @@ import java.util.stream.Collectors;
  * 批量落库：一次解析设备、一次插入消息、按设备聚合后批量更新状态。
  * <p>
  * 事务内只做 DB 操作；Webhook 与 SSE 推送由 {@link IngestDispatcher} 在事务提交后进行。
+ * 上下线状态事件在事务内发布，由场景监听器在提交后消费（T-43），回滚不触发。
  */
 @Slf4j
 @Service
@@ -40,6 +43,7 @@ public class IngestPersistenceService {
     private final MessageMapper messageMapper;
     private final DeviceStatusHistoryMapper statusHistoryMapper;
     private final IngestMetrics metrics;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Transactional(rollbackFor = Exception.class)
     public List<ResolvedEvent> persist(List<IngestRecord> batch) {
@@ -90,6 +94,7 @@ public class IngestPersistenceService {
 
         List<Device> updates = new ArrayList<>(latestByDevice.size());
         List<DeviceStatus> histories = new ArrayList<>();
+        List<DeviceStatusChangedEvent> statusEvents = new ArrayList<>();
         for (IngestRecord record : latestByDevice.values()) {
             Device device = devices.get(record.deviceKey());
             String target = resolveStatus(record.messageType());
@@ -116,6 +121,8 @@ public class IngestPersistenceService {
                 history.setStatus(target);
                 history.setTimestamp(record.receivedAt());
                 histories.add(history);
+                // target 只可能是 ONLINE / OFFLINE；提交后驱动场景上下线触发（T-43）
+                statusEvents.add(new DeviceStatusChangedEvent(device.getId(), target, record.receivedAt()));
             }
         }
 
@@ -125,6 +132,7 @@ public class IngestPersistenceService {
         if (!histories.isEmpty()) {
             statusHistoryMapper.insertBatch(histories);
         }
+        statusEvents.forEach(eventPublisher::publishEvent);
     }
 
     private String resolveStatus(String messageType) {

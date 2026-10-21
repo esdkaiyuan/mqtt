@@ -5,6 +5,7 @@ import com.mqtt.cloud.config.RuleProperties;
 import com.mqtt.cloud.config.SceneProperties;
 import com.mqtt.cloud.dto.request.BatchTargetRequest;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.entity.SceneExecution;
 import com.mqtt.cloud.entity.SceneStep;
@@ -69,6 +70,10 @@ class SceneActionExecutorImplTest {
     private static final Long STEP_ID = 50L;
     private static final Long STEP_RUN_ID = 500L;
     private static final Long NEXT_STEP_RUN_ID = 501L;
+    private static final Long PARALLEL_STEP_ID = 60L;
+    private static final Long BRANCH_A_RUN_ID = 601L;
+    private static final Long BRANCH_B_RUN_ID = 602L;
+    private static final Long JOIN_RUN_ID = 603L;
     private static final Long EXECUTION_ID = 900L;
     private static final Long DEVICE_ID = 100L;
     private static final Long SECOND_DEVICE_ID = 101L;
@@ -690,7 +695,245 @@ class SceneActionExecutorImplTest {
         assertThat(reasonCaptor.getValue()).hasSizeLessThanOrEqualTo(512);
     }
 
+    // ---------- 分支 / 循环（T-44） ----------
+
+    @Test
+    void branch_should_schedule_true_target_when_condition_matches() {
+        SceneStepRun run = flowStepRun(2, SceneConstants.STEP_BRANCH);
+        stubStepRun(run);
+        stubFlowContext(SceneConstants.STEP_BRANCH, 2,
+                "{\"identifier\":\"temperature\",\"operator\":\"GT\",\"threshold\":\"30\","
+                        + "\"trueSeq\":3,\"falseSeq\":null}");
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, PRODUCT_ID, USER_ID));
+        when(propertyLatestMapper.selectByIdentifiers(DEVICE_ID, List.of("temperature")))
+                .thenReturn(List.of(latest("temperature", "31")));
+        SceneStepRun target = pendingStepRun(3, NEXT_STEP_RUN_ID);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(run, target));
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).updateFlowResult(eq(STEP_RUN_ID), contains("跳转第 3 步"));
+        verify(stepRunMapper).markSuccess(eq(STEP_RUN_ID), any());
+        verify(stepRunMapper).scheduleNext(eq(NEXT_STEP_RUN_ID), any(), any());
+        verify(executionMapper, never()).markSuccess(eq(EXECUTION_ID), any());
+    }
+
+    @Test
+    void branch_should_schedule_false_target_when_condition_not_matched() {
+        SceneStepRun run = flowStepRun(2, SceneConstants.STEP_BRANCH);
+        stubStepRun(run);
+        stubFlowContext(SceneConstants.STEP_BRANCH, 2,
+                "{\"identifier\":\"temperature\",\"operator\":\"GT\",\"threshold\":\"30\","
+                        + "\"trueSeq\":4,\"falseSeq\":3}");
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, PRODUCT_ID, USER_ID));
+        when(propertyLatestMapper.selectByIdentifiers(DEVICE_ID, List.of("temperature")))
+                .thenReturn(List.of(latest("temperature", "20")));
+        SceneStepRun target = pendingStepRun(3, NEXT_STEP_RUN_ID);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(run, target));
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).updateFlowResult(eq(STEP_RUN_ID), contains("假，跳转第 3 步"));
+        verify(stepRunMapper).scheduleNext(eq(NEXT_STEP_RUN_ID), any(), any());
+    }
+
+    @Test
+    void branch_should_finish_and_skip_pending_when_target_is_empty() {
+        SceneStepRun run = flowStepRun(2, SceneConstants.STEP_BRANCH);
+        stubStepRun(run);
+        stubFlowContext(SceneConstants.STEP_BRANCH, 2,
+                "{\"identifier\":\"temperature\",\"operator\":\"GT\",\"threshold\":\"30\","
+                        + "\"trueSeq\":3,\"falseSeq\":null}");
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, PRODUCT_ID, USER_ID));
+        when(propertyLatestMapper.selectByIdentifiers(DEVICE_ID, List.of("temperature")))
+                .thenReturn(List.of(latest("temperature", "20")));
+        SceneStepRun sibling = pendingStepRun(3, NEXT_STEP_RUN_ID);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(run, sibling));
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).markSkipped(eq(NEXT_STEP_RUN_ID), any());
+        verify(executionMapper).recountFinishedSteps(EXECUTION_ID);
+        verify(executionMapper).markSuccess(eq(EXECUTION_ID), any());
+    }
+
+    @Test
+    void loop_should_reset_body_and_schedule_start_when_not_finished() {
+        SceneStepRun run = flowStepRun(3, SceneConstants.STEP_LOOP);
+        run.setLoopIteration(0);
+        stubStepRun(run);
+        stubFlowContext(SceneConstants.STEP_LOOP, 3, "{\"startSeq\":1,\"times\":2}");
+        SceneStepRun bodyStart = pendingStepRun(1, 600L);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(bodyStart, run));
+        when(stepRunMapper.resetLoopStep(eq(STEP_RUN_ID), eq(1), eq("第 2/2 次循环"))).thenReturn(1);
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).resetLoopBody(EXECUTION_ID, 1, 2);
+        verify(executionMapper).recountFinishedSteps(EXECUTION_ID);
+        verify(stepRunMapper).resetLoopStep(eq(STEP_RUN_ID), eq(1), eq("第 2/2 次循环"));
+        verify(stepRunMapper).scheduleNext(eq(600L), any(), any());
+        verify(sceneExecutor).execute(any(Runnable.class));
+        verify(stepRunMapper, never()).markSuccess(eq(STEP_RUN_ID), any());
+    }
+
+    @Test
+    void loop_should_advance_when_last_iteration_finished() {
+        SceneStepRun run = flowStepRun(3, SceneConstants.STEP_LOOP);
+        run.setLoopIteration(1);
+        stubStepRun(run);
+        stubFlowContext(SceneConstants.STEP_LOOP, 3, "{\"startSeq\":1,\"times\":2}");
+        SceneStepRun target = pendingStepRun(4, NEXT_STEP_RUN_ID);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(run, target));
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).updateFlowResult(STEP_RUN_ID, "循环完成（2 次）");
+        verify(stepRunMapper).markSuccess(eq(STEP_RUN_ID), any());
+        verify(stepRunMapper).scheduleNext(eq(NEXT_STEP_RUN_ID), any(), any());
+    }
+
+    @Test
+    void loop_should_retry_when_config_invalid() {
+        SceneStepRun run = flowStepRun(3, SceneConstants.STEP_LOOP);
+        stubStepRun(run);
+        stubFlowContext(SceneConstants.STEP_LOOP, 3, "{\"startSeq\":3,\"times\":2}");
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).markRetry(eq(STEP_RUN_ID), eq(1), any(),
+                contains("循环配置非法"));
+        verify(stepRunMapper, never()).markSuccess(any(), any());
+    }
+
     // ---------- 辅助 ----------
+
+    // ---------- 并行（T-49） ----------
+
+    @Test
+    void parallel_should_schedule_each_branch_start() {
+        SceneStepRun parallel = flowRun(600L, 1, SceneConstants.STEP_PARALLEL, null, null);
+        parallel.setStepId(PARALLEL_STEP_ID);
+        when(stepRunMapper.claimPending(600L)).thenReturn(1);
+        when(stepRunMapper.selectById(600L)).thenReturn(parallel);
+        when(executionMapper.selectById(EXECUTION_ID)).thenReturn(execution());
+        SceneStep parallelStep = sceneStep(SceneConstants.STEP_PARALLEL,
+                SceneConstants.TARGET_NONE, null, "{\"branches\":2}");
+        parallelStep.setId(PARALLEL_STEP_ID);
+        parallelStep.setSeq(1);
+        when(stepMapper.selectById(PARALLEL_STEP_ID)).thenReturn(parallelStep);
+        when(definitionMapper.selectById(SCENE_ID)).thenReturn(scene());
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(
+                parallel,
+                flowRun(BRANCH_A_RUN_ID, 2, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 0),
+                flowRun(BRANCH_B_RUN_ID, 3, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 1),
+                flowRun(JOIN_RUN_ID, 4, SceneConstants.STEP_JOIN, null, null)));
+
+        service.executeStep(600L);
+
+        verify(stepRunMapper).scheduleNext(eq(BRANCH_A_RUN_ID), any(), any());
+        verify(stepRunMapper).scheduleNext(eq(BRANCH_B_RUN_ID), any(), any());
+        verify(stepRunMapper, never()).scheduleNext(eq(JOIN_RUN_ID), any(), any());
+        verify(stepRunMapper).updateFlowResult(eq(600L), contains("并行 2 路"));
+        verify(executionMapper, never()).markSuccess(eq(EXECUTION_ID), any());
+    }
+
+    @Test
+    void parallel_branch_should_schedule_next_step_in_same_branch() {
+        SceneStepRun current = flowRun(STEP_RUN_ID, 2, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 0);
+        current.setStepId(STEP_ID);
+        current.setStatus(SceneConstants.STEP_SUCCESS);
+        stubStepRun(current);
+        stubTriggerContext(SceneConstants.ACTION_UPDATE_PROPERTY,
+                "{\"identifier\":\"switch\",\"value\":\"on\"}");
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, PRODUCT_ID, USER_ID));
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWith("switch", "rw"));
+        SceneStepRun sameBranchNext = flowRun(604L, 3, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 0);
+        SceneStepRun otherBranch = flowRun(BRANCH_B_RUN_ID, 4, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 1);
+        SceneStepRun parallelRun = flowRun(600L, 1, SceneConstants.STEP_PARALLEL, null, null);
+        parallelRun.setStepId(PARALLEL_STEP_ID);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(
+                parallelRun,
+                current,
+                sameBranchNext,
+                otherBranch,
+                flowRun(JOIN_RUN_ID, 5, SceneConstants.STEP_JOIN, null, null)));
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).scheduleNext(eq(604L), any(), any());
+        verify(stepRunMapper, never()).scheduleNext(eq(BRANCH_B_RUN_ID), any(), any());
+    }
+
+    @Test
+    void parallel_branch_end_should_wait_until_all_branches_complete() {
+        SceneStepRun current = flowRun(STEP_RUN_ID, 2, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 0);
+        current.setStepId(STEP_ID);
+        current.setStatus(SceneConstants.STEP_SUCCESS);
+        stubStepRun(current);
+        stubTriggerContext(SceneConstants.ACTION_UPDATE_PROPERTY,
+                "{\"identifier\":\"switch\",\"value\":\"on\"}");
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, PRODUCT_ID, USER_ID));
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWith("switch", "rw"));
+        SceneStep parallelStep = sceneStep(SceneConstants.STEP_PARALLEL,
+                SceneConstants.TARGET_NONE, null, "{\"branches\":2}");
+        parallelStep.setId(PARALLEL_STEP_ID);
+        parallelStep.setSeq(1);
+        when(stepMapper.selectById(PARALLEL_STEP_ID)).thenReturn(parallelStep);
+        SceneStepRun runningOther = flowRun(BRANCH_B_RUN_ID, 3, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 1);
+        runningOther.setStatus(SceneConstants.STEP_RUNNING);
+        SceneStepRun parallelRun = flowRun(600L, 1, SceneConstants.STEP_PARALLEL, null, null);
+        parallelRun.setStepId(PARALLEL_STEP_ID);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(
+                parallelRun,
+                current,
+                runningOther,
+                flowRun(JOIN_RUN_ID, 4, SceneConstants.STEP_JOIN, null, null)));
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper, never()).scheduleNext(eq(JOIN_RUN_ID), any(), any());
+    }
+
+    @Test
+    void parallel_branch_end_should_schedule_join_when_all_branches_complete() {
+        SceneStepRun current = flowRun(STEP_RUN_ID, 2, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 0);
+        current.setStepId(STEP_ID);
+        current.setStatus(SceneConstants.STEP_SUCCESS);
+        stubStepRun(current);
+        stubTriggerContext(SceneConstants.ACTION_UPDATE_PROPERTY,
+                "{\"identifier\":\"switch\",\"value\":\"on\"}");
+        when(deviceMapper.selectById(DEVICE_ID)).thenReturn(device(DEVICE_ID, PRODUCT_ID, USER_ID));
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWith("switch", "rw"));
+        SceneStep parallelStep = sceneStep(SceneConstants.STEP_PARALLEL,
+                SceneConstants.TARGET_NONE, null, "{\"branches\":2}");
+        parallelStep.setId(PARALLEL_STEP_ID);
+        parallelStep.setSeq(1);
+        when(stepMapper.selectById(PARALLEL_STEP_ID)).thenReturn(parallelStep);
+        SceneStepRun doneOther = flowRun(BRANCH_B_RUN_ID, 3, SceneConstants.ACTION_UPDATE_PROPERTY, 1, 1);
+        doneOther.setStatus(SceneConstants.STEP_SUCCESS);
+        SceneStepRun parallelRun = flowRun(600L, 1, SceneConstants.STEP_PARALLEL, null, null);
+        parallelRun.setStepId(PARALLEL_STEP_ID);
+        when(stepRunMapper.selectByExecutionId(EXECUTION_ID)).thenReturn(List.of(
+                parallelRun,
+                current,
+                doneOther,
+                flowRun(JOIN_RUN_ID, 4, SceneConstants.STEP_JOIN, null, null)));
+
+        service.executeStep(STEP_RUN_ID);
+
+        verify(stepRunMapper).scheduleNext(eq(JOIN_RUN_ID), any(), any());
+    }
+
+    private SceneStepRun flowRun(Long id, int seq, String actionType,
+                                 Integer parallelSeq, Integer branchIndex) {
+        SceneStepRun run = pendingStepRun(seq, id);
+        run.setActionType(actionType);
+        run.setParallelSeq(parallelSeq);
+        run.setBranchIndex(branchIndex);
+        run.setLoopIteration(0);
+        return run;
+    }
 
     private void stubSuccessfulUpdate() {
         stubStepRun(pendingStepRun());
@@ -730,6 +973,44 @@ class SceneActionExecutorImplTest {
         when(stepMapper.selectById(STEP_ID))
                 .thenReturn(sceneStep(actionType, targetType, targetConfig, actionConfig));
         when(definitionMapper.selectById(SCENE_ID)).thenReturn(scene());
+    }
+
+    private void stubFlowContext(String actionType, int seq, String actionConfig) {
+        when(executionMapper.selectById(EXECUTION_ID)).thenReturn(execution());
+        SceneStep step = sceneStep(actionType, SceneConstants.TARGET_NONE, null, actionConfig);
+        step.setSeq(seq);
+        when(stepMapper.selectById(STEP_ID)).thenReturn(step);
+        when(definitionMapper.selectById(SCENE_ID)).thenReturn(scene());
+    }
+
+    private SceneStepRun flowStepRun(int seq, String actionType) {
+        SceneStepRun run = pendingStepRun();
+        run.setSeq(seq);
+        run.setActionType(actionType);
+        run.setLoopIteration(0);
+        return run;
+    }
+
+    private SceneStepRun pendingStepRun(int seq, Long id) {
+        SceneStepRun run = new SceneStepRun();
+        run.setId(id);
+        run.setExecutionId(EXECUTION_ID);
+        run.setSceneId(SCENE_ID);
+        run.setStepId(STEP_ID + seq);
+        run.setSeq(seq);
+        run.setDelaySeconds(0);
+        run.setStatus(SceneConstants.STEP_PENDING);
+        run.setAttemptCount(0);
+        run.setLoopIteration(0);
+        return run;
+    }
+
+    private DevicePropertyLatest latest(String identifier, String valueText) {
+        DevicePropertyLatest row = new DevicePropertyLatest();
+        row.setDeviceId(DEVICE_ID);
+        row.setIdentifier(identifier);
+        row.setValueText(valueText);
+        return row;
     }
 
     private SceneStepRun pendingStepRun() {

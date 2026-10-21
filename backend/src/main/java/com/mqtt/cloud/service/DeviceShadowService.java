@@ -43,6 +43,14 @@ public interface DeviceShadowService {
     void applyDesired(Long deviceId, Map<String, String> desired);
 
     /**
+     * 期望值写入（带来源）：行为同 {@link #applyDesired(Long, Map)}，并把来源写入变更事件，
+     * 供场景影子触发过滤内部自动化（T-45）。
+     *
+     * @param source 命令来源（{@code CONSOLE} / {@code OPEN_API} / {@code SCENE} 等），可空
+     */
+    void applyDesired(Long deviceId, Map<String, String> desired, String source);
+
+    /**
      * 影子视图（对外响应体，见设计文档 §8.1）。
      */
     record DeviceShadowResponse(

@@ -50,6 +50,7 @@ describe('devicePointTable helpers', () => {
     it('默认值与后端 V18 建表默认一致', () => {
       const p = createEmptyPoint()
       expect(p.pointType).toBe('HOLDING_REGISTER')
+      expect(p.unitId).toBeNull()
       expect(p.dataType).toBe('float')
       expect(p.executor).toBe('EDGE')
       expect(p.readIntervalMs).toBe(60000)
@@ -108,6 +109,15 @@ describe('devicePointTable helpers', () => {
     it('保留显式指定的执行方', () => {
       const { points } = parsePointsJson('[{"pointKey":"a","executor":"PLATFORM"}]')
       expect(points[0].executor).toBe('PLATFORM')
+    })
+
+    it('兼容从站地址别名 unitId / slaveId / stationId', () => {
+      const { points } = parsePointsJson(JSON.stringify([
+        { pointKey: 'a', unitId: 2 },
+        { pointKey: 'b', slaveId: '3' },
+        { pointKey: 'c', stationId: 4 }
+      ]))
+      expect(points.map((p) => p.unitId)).toEqual([2, 3, 4])
     })
 
     it('enabled 为 false 或 0 时置为停用', () => {
@@ -169,9 +179,9 @@ describe('devicePointTable helpers', () => {
     })
 
     it('数据类型覆盖后端允许的全部值', () => {
-      // 后端 normalize 只接受这五个，多一个前端就会提交出 6288
+      // 后端 normalize 接受这九种，多一个前端就会提交出 6288
       expect(DATA_TYPE_OPTIONS.map((o) => o.value))
-        .toEqual(['int', 'float', 'double', 'bool', 'string'])
+        .toEqual(['int', 'int32', 'uint32', 'int64', 'uint64', 'float', 'double', 'bool', 'string'])
     })
 
     it('点位类型覆盖 PointTypeValue 的六种', () => {

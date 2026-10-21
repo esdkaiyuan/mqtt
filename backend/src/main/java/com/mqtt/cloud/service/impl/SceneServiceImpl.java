@@ -1,5 +1,6 @@
 package com.mqtt.cloud.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
@@ -11,12 +12,16 @@ import com.mqtt.cloud.dto.request.SceneQuery;
 import com.mqtt.cloud.dto.request.SceneRequest;
 import com.mqtt.cloud.dto.response.SceneConditionView;
 import com.mqtt.cloud.dto.response.SceneStepView;
+import com.mqtt.cloud.dto.response.SceneVersionVO;
 import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.entity.SceneStep;
+import com.mqtt.cloud.entity.SceneVersion;
 import com.mqtt.cloud.mapper.SceneDefinitionMapper;
 import com.mqtt.cloud.mapper.SceneStepMapper;
+import com.mqtt.cloud.mapper.SceneVersionMapper;
 import com.mqtt.cloud.service.SceneEvaluationService;
 import com.mqtt.cloud.service.SceneService;
+import com.mqtt.cloud.service.SceneSnapshot;
 import com.mqtt.cloud.util.SceneValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -24,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -43,7 +49,12 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
     private static final int DEFAULT_PAGE_SIZE = 10;
     private static final int MAX_PAGE_SIZE = 100;
 
+    private static final String VERSION_CREATE = "CREATE";
+    private static final String VERSION_UPDATE = "UPDATE";
+    private static final String VERSION_RESTORE = "RESTORE";
+
     private final SceneStepMapper sceneStepMapper;
+    private final SceneVersionMapper sceneVersionMapper;
     private final SceneValidator sceneValidator;
     private final SceneEvaluationService sceneEvaluationService;
     private final SceneExecutionLauncher sceneExecutionLauncher;
@@ -51,12 +62,14 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
     private final ObjectMapper objectMapper;
 
     public SceneServiceImpl(SceneStepMapper sceneStepMapper,
+                            SceneVersionMapper sceneVersionMapper,
                             SceneValidator sceneValidator,
                             SceneEvaluationService sceneEvaluationService,
                             SceneExecutionLauncher sceneExecutionLauncher,
                             SceneProperties properties,
                             ObjectMapper objectMapper) {
         this.sceneStepMapper = sceneStepMapper;
+        this.sceneVersionMapper = sceneVersionMapper;
         this.sceneValidator = sceneValidator;
         this.sceneEvaluationService = sceneEvaluationService;
         this.sceneExecutionLauncher = sceneExecutionLauncher;
@@ -99,6 +112,7 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
         scene.setUserId(userId);
         save(scene);
         insertSteps(scene.getId(), validated.steps());
+        saveVersion(scene.getId(), userId, VERSION_CREATE, scene, validated.steps());
         sceneEvaluationService.evictCache(userId);
         populateViews(scene);
         return scene;
@@ -117,6 +131,7 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
         updateById(updated);
         sceneStepMapper.deleteBySceneId(id);
         insertSteps(id, validated.steps());
+        saveVersion(id, userId, VERSION_UPDATE, updated, validated.steps());
         sceneEvaluationService.evictCache(userId);
         populateViews(updated);
         return updated;
@@ -128,6 +143,7 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
         getOwned(userId, id);
         removeById(id);
         sceneStepMapper.deleteBySceneId(id);
+        sceneVersionMapper.deleteBySceneId(id);
         sceneEvaluationService.evictCache(userId);
     }
 
@@ -157,6 +173,63 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
                 SceneConstants.SOURCE_MANUAL);
     }
 
+    @Override
+    public List<SceneVersionVO> listVersions(Long userId, Long sceneId) {
+        getOwned(userId, sceneId);
+        return sceneVersionMapper.selectBySceneId(sceneId).stream()
+                .map(this::toVersionVO)
+                .toList();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public SceneDefinition restoreVersion(Long userId, Long sceneId, Long versionId) {
+        getOwned(userId, sceneId);
+        SceneVersion version = versionId == null ? null : sceneVersionMapper.selectById(versionId);
+        if (version == null || !sceneId.equals(version.getSceneId())) {
+            throw new BusinessException(ResultCode.SCENE_VERSION_NOT_FOUND);
+        }
+        SceneSnapshot snapshot;
+        try {
+            snapshot = objectMapper.readValue(version.getSnapshot(), SceneSnapshot.class);
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.SCENE_INVALID, "版本快照损坏，无法回滚");
+        }
+        if (snapshot.name() == null || snapshot.name().isBlank()) {
+            throw new BusinessException(ResultCode.SCENE_INVALID, "版本快照缺少场景名称");
+        }
+        checkNameUnique(userId, snapshot.name(), sceneId);
+
+        // MyBatis-Plus 默认 NOT_NULL 更新无法清空 triggerDeviceId / cron 等字段，回滚必须显式 set null
+        LambdaUpdateWrapper<SceneDefinition> update = new LambdaUpdateWrapper<>();
+        update.eq(SceneDefinition::getId, sceneId)
+                .set(SceneDefinition::getName, snapshot.name())
+                .set(SceneDefinition::getDescription, snapshot.description())
+                .set(SceneDefinition::getTriggerType, snapshot.triggerType())
+                .set(SceneDefinition::getTriggerDeviceId, snapshot.triggerDeviceId())
+                .set(SceneDefinition::getTriggerIdentifier, snapshot.triggerIdentifier())
+                .set(SceneDefinition::getTriggerOperator, snapshot.triggerOperator())
+                .set(SceneDefinition::getTriggerThreshold, snapshot.triggerThreshold())
+                .set(SceneDefinition::getTriggerEventType, snapshot.triggerEventType())
+                .set(SceneDefinition::getTriggerShadowSide, snapshot.triggerShadowSide())
+                .set(SceneDefinition::getTimerCron, snapshot.timerCron())
+                .set(SceneDefinition::getConditionLogic, snapshot.conditionLogic())
+                .set(SceneDefinition::getConditionConfig, snapshot.conditionConfig())
+                .set(SceneDefinition::getCooldownSeconds, snapshot.cooldownSeconds())
+                .set(SceneDefinition::getEnabled, snapshot.enabled())
+                .set(SceneDefinition::getUpdatedAt, LocalDateTime.now());
+        baseMapper.update(null, update);
+
+        sceneStepMapper.deleteBySceneId(sceneId);
+        List<SceneStep> restoredSteps = snapshot.toSteps(sceneId);
+        insertSteps(sceneId, restoredSteps);
+        SceneDefinition restored = snapshot.toDefinition(sceneId, userId);
+        saveVersion(sceneId, userId, VERSION_RESTORE, restored, restoredSteps);
+        sceneEvaluationService.evictCache(userId);
+        populateViews(restored);
+        return restored;
+    }
+
     // ---------- 内部 ----------
 
     private SceneDefinition getOwned(Long userId, Long id) {
@@ -184,6 +257,42 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
             step.setSceneId(sceneId);
             sceneStepMapper.insert(step);
         }
+    }
+
+    private void saveVersion(Long sceneId, Long userId, String changeType,
+                             SceneDefinition scene, List<SceneStep> steps) {
+        int nextVersion = sceneVersionMapper.selectMaxVersionNo(sceneId) + 1;
+        SceneVersion version = new SceneVersion();
+        version.setSceneId(sceneId);
+        version.setVersionNo(nextVersion);
+        version.setChangeType(changeType);
+        version.setSceneName(scene.getName());
+        version.setTriggerType(scene.getTriggerType());
+        version.setStepCount(steps == null ? 0 : steps.size());
+        version.setOperatorId(userId);
+        try {
+            version.setSnapshot(objectMapper.writeValueAsString(SceneSnapshot.of(scene, steps)));
+        } catch (Exception e) {
+            throw new BusinessException(ResultCode.SCENE_INVALID, "场景版本快照序列化失败");
+        }
+        sceneVersionMapper.insert(version);
+        int threshold = nextVersion - SceneConstants.MAX_VERSIONS_PER_SCENE;
+        if (threshold > 0) {
+            sceneVersionMapper.deleteOlderThan(sceneId, threshold);
+        }
+    }
+
+    private SceneVersionVO toVersionVO(SceneVersion version) {
+        SceneVersionVO vo = new SceneVersionVO();
+        vo.setId(version.getId());
+        vo.setVersionNo(version.getVersionNo());
+        vo.setChangeType(version.getChangeType());
+        vo.setSceneName(version.getSceneName());
+        vo.setTriggerType(version.getTriggerType());
+        vo.setStepCount(version.getStepCount());
+        vo.setOperatorId(version.getOperatorId());
+        vo.setCreatedAt(version.getCreatedAt());
+        return vo;
     }
 
     /** 列表：仅解析条件组（不查步骤，避免 N+1）。 */
@@ -221,6 +330,8 @@ public class SceneServiceImpl extends ServiceImpl<SceneDefinitionMapper, SceneDe
         view.setTargetType(step.getTargetType());
         view.setTargetConfig(readTree(step.getTargetConfig()));
         view.setActionConfig(readTree(step.getActionConfig()));
+        view.setParallelSeq(step.getParallelSeq());
+        view.setBranchIndex(step.getBranchIndex());
         view.setEnabled(step.getEnabled());
         return view;
     }

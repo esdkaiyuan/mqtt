@@ -90,6 +90,15 @@ const THRESHOLD_RULE = {
   enabled: 1
 }
 
+const WINDOW_RULE = {
+  ...THRESHOLD_RULE,
+  id: 3,
+  name: '高温均值告警',
+  windowSeconds: 300,
+  aggregateType: 'AVG',
+  minSamples: 3
+}
+
 const OFFLINE_RULE = {
   id: 2,
   name: '设备离线',
@@ -301,6 +310,29 @@ describe('views/workbench/alert/AlertRules', () => {
     expect(text).toContain('全部设备')
     expect(text).toContain('300s')
     expect(text).toContain('默认')
+  })
+
+  it('窗口阈值展示聚合摘要并按原配置提交', async () => {
+    hooks.rules.value = [WINDOW_RULE]
+    wrapper = mountPage()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('300s 均值 · temperature > 80')
+
+    await buttonByText(wrapper, '编辑').trigger('click')
+    await nextTick()
+    const drawer = wrapper.find('.stub-drawer')
+    expect(drawer.text()).toContain('统计窗口')
+    expect(drawer.text()).toContain('聚合方式')
+    expect(drawer.text()).toContain('最少样本数')
+
+    await buttonByText(wrapper, '保存').trigger('click')
+    await flushPromises()
+    expect(hooks.updateRule.mock.calls[0][1]).toMatchObject({
+      windowSeconds: 300,
+      aggregateType: 'AVG',
+      minSamples: 3
+    })
   })
 
   it('启停开关以整条规则为基准提交 enabled', async () => {

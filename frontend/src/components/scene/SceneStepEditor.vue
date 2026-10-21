@@ -52,7 +52,25 @@
             />
           </el-select>
         </div>
-        <div class="step-editor__field step-editor__field--target">
+        <div
+          v-if="!isFlowStep(step.actionType) && parallelInfo(index)"
+          class="step-editor__field step-editor__field--branch"
+        >
+          <span class="step-editor__label">并行分支</span>
+          <el-select
+            :model-value="branchValue(step)"
+            class="step-editor__control"
+            @change="(value) => handleBranchChange(step, value)"
+          >
+            <el-option
+              v-for="branch in parallelInfo(index).branches"
+              :key="`branch-${branch}`"
+              :label="`分支 ${branch + 1}`"
+              :value="branch"
+            />
+          </el-select>
+        </div>
+        <div v-if="!isFlowStep(step.actionType)" class="step-editor__field step-editor__field--target">
           <span class="step-editor__label">目标</span>
           <el-select
             :model-value="effectiveTargetType(step)"
@@ -74,7 +92,10 @@
         </div>
       </div>
 
-      <p v-if="isForwardAction(step.actionType)" class="step-editor__note">
+      <p v-if="isFlowStep(step.actionType)" class="step-editor__note">
+        {{ flowStepNote(step.actionType) }}
+      </p>
+      <p v-else-if="isForwardAction(step.actionType)" class="step-editor__note">
         转发类动作仅下发一次，目标固定为「触发设备」。
       </p>
       <p v-else-if="timerSource" class="step-editor__note">
@@ -149,7 +170,119 @@
       </div>
 
       <div class="step-editor__config">
-        <template v-if="step.actionType === 'UPDATE_PROPERTY'">
+        <template v-if="step.actionType === 'BRANCH'">
+          <el-select
+            v-model="step.actionConfig.deviceId"
+            clearable
+            filterable
+            class="step-editor__config-item"
+            placeholder="取值设备（默认触发设备）"
+          >
+            <el-option
+              v-for="device in devices"
+              :key="device.id"
+              :label="device.deviceName || device.deviceKey"
+              :value="device.id"
+            />
+          </el-select>
+          <el-input
+            v-model="step.actionConfig.identifier"
+            class="step-editor__config-item"
+            maxlength="64"
+            placeholder="条件属性标识符，如 temperature"
+          />
+          <el-select v-model="step.actionConfig.operator" class="step-editor__config-item step-editor__config-item--operator">
+            <el-option
+              v-for="option in OPERATOR_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+          <el-input
+            v-model="step.actionConfig.threshold"
+            class="step-editor__config-item"
+            maxlength="255"
+            placeholder="条件阈值，如 30"
+          />
+          <el-select
+            :model-value="seqOrNull(step.actionConfig.trueSeq)"
+            clearable
+            class="step-editor__config-item"
+            placeholder="条件为真：选择跳转步骤"
+            @update:model-value="(value) => (step.actionConfig.trueSeq = seqOrNull(value))"
+          >
+            <el-option label="结束执行" :value="null" />
+            <el-option
+              v-for="seq in forwardSeqOptions(index)"
+              :key="`true-${seq}`"
+              :label="`第 ${seq} 步`"
+              :value="seq"
+            />
+          </el-select>
+          <el-select
+            :model-value="seqOrNull(step.actionConfig.falseSeq)"
+            clearable
+            class="step-editor__config-item"
+            placeholder="条件为假：选择跳转步骤"
+            @update:model-value="(value) => (step.actionConfig.falseSeq = seqOrNull(value))"
+          >
+            <el-option label="结束执行" :value="null" />
+            <el-option
+              v-for="seq in forwardSeqOptions(index)"
+              :key="`false-${seq}`"
+              :label="`第 ${seq} 步`"
+              :value="seq"
+            />
+          </el-select>
+        </template>
+
+        <template v-else-if="step.actionType === 'LOOP'">
+          <el-select
+            :model-value="seqOrNull(step.actionConfig.startSeq)"
+            class="step-editor__config-item"
+            placeholder="循环体起始步骤"
+            @update:model-value="(value) => (step.actionConfig.startSeq = seqOrNull(value))"
+          >
+            <el-option
+              v-for="seq in bodyStartOptions(index)"
+              :key="`loop-${seq}`"
+              :label="`从第 ${seq} 步开始`"
+              :value="seq"
+            />
+          </el-select>
+          <div class="step-editor__field step-editor__field--loop-times">
+            <span class="step-editor__label">循环次数</span>
+            <el-input-number
+              v-model="step.actionConfig.times"
+              :min="1"
+              :max="MAX_LOOP_TIMES"
+              controls-position="right"
+            />
+          </div>
+        </template>
+
+        <template v-else-if="step.actionType === 'PARALLEL'">
+          <div class="step-editor__field step-editor__field--parallel-branches">
+            <span class="step-editor__label">并行分支数</span>
+            <el-input-number
+              v-model="step.actionConfig.branches"
+              :min="MIN_PARALLEL_BRANCHES"
+              :max="MAX_PARALLEL_BRANCHES"
+              controls-position="right"
+              @change="syncMembership"
+            />
+          </div>
+          <p class="step-editor__note">
+            请为后续步骤选择所属分支，并在所有分支结束后添加「并行汇合」。
+          </p>
+        </template>
+
+        <template v-else-if="step.actionType === 'JOIN'">
+          <p class="step-editor__note">并行汇合不执行动作，所有分支完成后继续后续步骤。</p>
+        </template>
+
+        <template v-else-if="step.actionType === 'UPDATE_PROPERTY'">
           <el-input
             v-model="step.actionConfig.identifier"
             class="step-editor__config-item"
@@ -244,18 +377,29 @@ import { computed, watch } from 'vue'
 import SvgIcon from '@/components/Icon.vue'
 import {
   ACTION_TYPE_OPTIONS,
+  OPERATOR_OPTIONS,
   TARGET_TYPE_OPTIONS,
+  isFlowStep,
   isForwardAction,
   createTargetConfig,
   createActionConfig,
   createStep,
   normalizeStep,
-  withNormalizedSeq
+  normalizeParallelMembership,
+  parallelInfoAt,
+  remapFlowRefsAfterMove,
+  remapFlowRefsAfterRemove,
+  seqOrNull,
+  withNormalizedSeq,
+  MAX_PARALLEL_BRANCHES,
+  MIN_PARALLEL_BRANCHES
 } from '@/utils/scene'
 
 /** 与后端 app.rule 限制保持一致：单场景步骤数与单步最大延时（设计文档 §12）。 */
 const MAX_STEPS = 20
 const MAX_DELAY_SECONDS = 86400
+/** 与后端 SceneConstants.MAX_LOOP_TIMES 保持一致。 */
+const MAX_LOOP_TIMES = 20
 
 /** 分组树选择器字段映射（与设备列表保持一致）。 */
 const TREE_PROPS = { label: 'name', children: 'children' }
@@ -288,24 +432,45 @@ const steps = defineModel({ type: Array, required: true })
 
 const list = computed(() => steps.value || [])
 
-/** 转发类动作目标锁 TRIGGER；TIMER 源下其余动作锁 FIXED。 */
+/** 转发类动作目标锁 TRIGGER；TIMER 源下其余动作锁 FIXED；分支 / 循环无目标。 */
 function effectiveTargetType(step) {
+  if (isFlowStep(step.actionType)) return 'NONE'
   if (isForwardAction(step.actionType)) return 'TRIGGER'
   if (props.timerSource) return 'FIXED'
   return step.targetType
 }
 
 function targetTypeLocked(step) {
-  return isForwardAction(step.actionType) || props.timerSource
+  return isFlowStep(step.actionType) || isForwardAction(step.actionType) || props.timerSource
+}
+
+/** 分支只能向后跳转：可选项为当前步骤之后、已启用的步骤序号。 */
+function forwardSeqOptions(index) {
+  return list.value
+    .map((item, position) => ({ seq: position + 1, enabled: item.enabled }))
+    .slice(index + 1)
+    .filter((item) => item.enabled !== false)
+    .map((item) => item.seq)
+}
+
+/** 循环体必须位于循环步骤之前：可选项为当前步骤之前、已启用的步骤序号。 */
+function bodyStartOptions(index) {
+  return list.value
+    .map((item, position) => ({ seq: position + 1, enabled: item.enabled }))
+    .slice(0, index)
+    .filter((item) => item.enabled !== false)
+    .map((item) => item.seq)
 }
 
 function addStep() {
   if (list.value.length >= MAX_STEPS) return
-  steps.value = withNormalizedSeq([...list.value, createStep(props.timerSource)])
+  syncMembership(withNormalizedSeq([...list.value, createStep(props.timerSource)]))
 }
 
 function removeStep(index) {
-  steps.value = withNormalizedSeq(list.value.filter((_, i) => i !== index))
+  const next = [...list.value]
+  remapFlowRefsAfterRemove(next, index)
+  syncMembership(withNormalizedSeq(next.filter((_, i) => i !== index)))
 }
 
 function moveStep(index, offset) {
@@ -314,13 +479,47 @@ function moveStep(index, offset) {
   const next = [...list.value]
   const [moved] = next.splice(index, 1)
   next.splice(target, 0, moved)
-  steps.value = withNormalizedSeq(next)
+  remapFlowRefsAfterMove(next, index, target)
+  syncMembership(withNormalizedSeq(next))
 }
 
 function handleActionTypeChange(step, actionType) {
   step.actionType = actionType
   step.actionConfig = createActionConfig(actionType)
   normalizeStep(step, props.timerSource)
+  syncMembership()
+}
+
+function parallelInfo(index) {
+  return parallelInfoAt(list.value, index)
+}
+
+function branchValue(step) {
+  return Number.isInteger(step.branchIndex) ? step.branchIndex : 0
+}
+
+function handleBranchChange(step, branchIndex) {
+  step.branchIndex = branchIndex
+}
+
+function syncMembership(items = list.value) {
+  steps.value = normalizeParallelMembership([...items])
+  return steps.value
+}
+
+function flowStepNote(actionType) {
+  switch (actionType) {
+    case 'BRANCH':
+      return '分支步骤按属性条件选择后续步骤，不执行动作；目标只能向后跳转。'
+    case 'LOOP':
+      return '循环步骤标记循环体结束，重复执行其前的步骤；循环次数有上限。'
+    case 'PARALLEL':
+      return '并行开始把后续步骤分到多条分支并发执行，所有分支完成后由「并行汇合」继续。'
+    case 'JOIN':
+      return '并行汇合不执行动作，等待所有分支完成后继续后续步骤。'
+    default:
+      return ''
+  }
 }
 
 function handleTargetTypeChange(step, targetType) {
@@ -339,8 +538,8 @@ function handleTargetModeChange(step, mode) {
 watch(
   () => props.timerSource,
   () => {
-    steps.value = withNormalizedSeq([...list.value])
     list.value.forEach((step) => normalizeStep(step, props.timerSource))
+    syncMembership(withNormalizedSeq([...list.value]))
   }
 )
 </script>
@@ -420,6 +619,11 @@ watch(
 }
 
 .step-editor__field--delay .el-input-number {
+  width: 120px;
+}
+
+.step-editor__field--loop-times .el-input-number,
+.step-editor__field--parallel-branches .el-input-number {
   width: 120px;
 }
 

@@ -21,6 +21,13 @@ export const docsNav = [
     ]
   },
   {
+    group: '协议规范',
+    items: [
+      { id: 'd1', title: 'MQTT 主题与 ACL', path: '/docs/protocol/d1' },
+      { id: 'd2', title: '设备接入协议', path: '/docs/protocol/d2' }
+    ]
+  },
+  {
     group: '消息与数据',
     items: [
       { id: 'realtime', title: '实时消息（SSE）', path: '/docs/data/realtime' },

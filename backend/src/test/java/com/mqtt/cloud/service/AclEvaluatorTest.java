@@ -249,6 +249,19 @@ class AclEvaluatorTest {
         assertThat(evaluator.allow("esp32-fall.gateway-01", "publish", "iot/esp32-fall/sub-01/cmd/reboot")).isFalse();
     }
 
+    /** 子网关（SUB）也可以代理其直接子设备（T-47 多级拓扑）。 */
+    @Test
+    void sub_gateway_delegates_to_direct_child() {
+        when(deviceAccessGuard.resolve("esp32-fall", "sub-gw"))
+                .thenReturn(meta(2L, DeviceNodeType.SUB, GATEWAY_DEVICE_ID));
+        when(deviceAccessGuard.resolve("esp32-fall", "sub-02"))
+                .thenReturn(meta(3L, DeviceNodeType.SUB, 2L));
+
+        assertThat(evaluator.allow("esp32-fall.sub-gw", "publish", "device/sub-02/data")).isTrue();
+        assertThat(evaluator.allow("esp32-fall.sub-gw", "subscribe", "device/sub-02/cmd/#")).isTrue();
+        assertThat(evaluator.allow("esp32-fall.sub-gw", "publish", "device/sub-02/cmd/reboot")).isFalse();
+    }
+
     /** 网关 1L 与其子设备 2L 的拓扑快照：子设备的 parentId 指向网关 deviceId。 */
     private void stubGatewayWithSubDevice() {
         when(deviceAccessGuard.resolve("esp32-fall", "gateway-01"))

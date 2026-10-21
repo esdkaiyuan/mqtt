@@ -44,7 +44,11 @@ export const POINT_TYPE_OPTIONS = [
 
 /** 数据类型可选值。 */
 export const DATA_TYPE_OPTIONS = [
-  { label: '整数', value: 'int' },
+  { label: '整数（16 位）', value: 'int' },
+  { label: '整数（32 位有符号）', value: 'int32' },
+  { label: '整数（32 位无符号）', value: 'uint32' },
+  { label: '整数（64 位有符号）', value: 'int64' },
+  { label: '整数（64 位无符号）', value: 'uint64' },
   { label: '浮点', value: 'float' },
   { label: '双精度', value: 'double' },
   { label: '布尔', value: 'bool' },
@@ -63,6 +67,7 @@ export function createEmptyPoint(executor) {
     pointKey: '',
     pointType: 'HOLDING_REGISTER',
     address: '',
+    unitId: null,
     dataType: 'float',
     scale: null,
     offset: null,
@@ -120,6 +125,7 @@ export function parsePointsJson(text) {
     point.pointKey = String(pointKey)
     point.pointType = pick(item, ['pointType', 'point_type', 'type']) || 'HOLDING_REGISTER'
     point.address = stringifyAddress(pick(item, ['address', 'addr', 'register', 'reg']))
+    point.unitId = toIntegerOrNull(pick(item, ['unitId', 'unit_id', 'slaveId', 'slave_id', 'stationId']))
     point.dataType = pick(item, ['dataType', 'data_type']) || 'float'
     point.scale = toNumberOrNull(pick(item, ['scale', 'factor']))
     point.offset = toNumberOrNull(pick(item, ['offset']))
@@ -158,6 +164,11 @@ function toNumberOrNull(value) {
   }
   const n = Number(value)
   return Number.isFinite(n) ? n : null
+}
+
+function toIntegerOrNull(value) {
+  const n = toNumberOrNull(value)
+  return n !== null && Number.isInteger(n) ? n : null
 }
 
 /** 序列化点位表为可再次粘贴导入的 JSON，便于用户先导出再编辑。 */

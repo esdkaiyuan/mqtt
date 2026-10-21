@@ -17,6 +17,7 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -53,6 +54,9 @@ class AlertRuleServiceImplTest {
     @Mock
     private DeviceScopeService deviceScopeService;
 
+    @Mock
+    private AlertWindowAggregator windowAggregator;
+
     private AlertRuleServiceImpl service;
 
     @BeforeEach
@@ -60,7 +64,8 @@ class AlertRuleServiceImplTest {
         // LambdaQueryWrapper 需要实体的 TableInfo；纯单测无 MyBatis 上下文，手动初始化
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), AlertRule.class);
         // AlertRuleServiceImpl 用显式构造器，Mockito 不再做字段注入，需手动装配依赖与 baseMapper
-        service = new AlertRuleServiceImpl(deviceService, deviceScopeService, new ScopeJson(new ObjectMapper()));
+        service = new AlertRuleServiceImpl(deviceService, deviceScopeService,
+                new ScopeJson(new ObjectMapper()), windowAggregator);
         ReflectionTestUtils.setField(service, "baseMapper", alertRuleMapper);
         // 作用域校验以纯函数桩替代，只保留「档位推断」语义，避免单测引入分组 / 标签服务
         lenient().when(deviceScopeService.validateAndNormalize(any(), any(), any()))
@@ -97,6 +102,63 @@ class AlertRuleServiceImplTest {
         request.setThresholdValue("hot");
 
         assertCode(() -> service.create(USER_ID, request), ResultCode.ALERT_RULE_INVALID);
+    }
+
+    @Test
+    void create_should_persist_window_threshold_config() {
+        AlertRuleRequest request = thresholdRequest();
+        request.setWindowSeconds(300);
+        request.setAggregateType("avg");
+        request.setMinSamples(3);
+
+        service.create(USER_ID, request);
+
+        ArgumentCaptor<AlertRule> captor = ArgumentCaptor.forClass(AlertRule.class);
+        verify(alertRuleMapper).insert(captor.capture());
+        assertThat(captor.getValue().getWindowSeconds()).isEqualTo(300);
+        assertThat(captor.getValue().getAggregateType()).isEqualTo(AlertConstants.AGGREGATE_AVG);
+        assertThat(captor.getValue().getMinSamples()).isEqualTo(3);
+    }
+
+    @Test
+    void create_should_force_window_fields_off_for_event_rule() {
+        AlertRuleRequest request = thresholdRequest();
+        request.setSourceType(AlertConstants.SOURCE_EVENT);
+        request.setWindowSeconds(300);
+        request.setAggregateType(AlertConstants.AGGREGATE_MAX);
+        request.setMinSamples(5);
+
+        service.create(USER_ID, request);
+
+        ArgumentCaptor<AlertRule> captor = ArgumentCaptor.forClass(AlertRule.class);
+        verify(alertRuleMapper).insert(captor.capture());
+        assertThat(captor.getValue().getWindowSeconds()).isZero();
+        assertThat(captor.getValue().getAggregateType()).isNull();
+        assertThat(captor.getValue().getMinSamples()).isEqualTo(1);
+        assertThat(captor.getValue().getOperator()).isNull();
+        assertThat(captor.getValue().getThresholdValue()).isNull();
+    }
+
+    @Test
+    void create_should_reject_invalid_window_config() {
+        AlertRuleRequest tooLong = thresholdRequest();
+        tooLong.setWindowSeconds(86401);
+        assertCode(() -> service.create(USER_ID, tooLong), ResultCode.ALERT_RULE_INVALID);
+
+        AlertRuleRequest zeroSamples = thresholdRequest();
+        zeroSamples.setWindowSeconds(300);
+        zeroSamples.setMinSamples(0);
+        assertCode(() -> service.create(USER_ID, zeroSamples), ResultCode.ALERT_RULE_INVALID);
+
+        AlertRuleRequest badAggregate = thresholdRequest();
+        badAggregate.setWindowSeconds(300);
+        badAggregate.setAggregateType("MEDIAN");
+        assertCode(() -> service.create(USER_ID, badAggregate), ResultCode.ALERT_RULE_INVALID);
+
+        AlertRuleRequest nonNumeric = thresholdRequest();
+        nonNumeric.setWindowSeconds(300);
+        nonNumeric.setThresholdValue("hot");
+        assertCode(() -> service.create(USER_ID, nonNumeric), ResultCode.ALERT_RULE_INVALID);
     }
 
     @Test

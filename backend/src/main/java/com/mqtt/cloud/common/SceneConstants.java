@@ -24,9 +24,20 @@ public final class SceneConstants {
     public static final String TRIGGER_EVENT = "EVENT";
     /** 触发源：定时（cron）。 */
     public static final String TRIGGER_TIMER = "TIMER";
+    /** 触发源：设备上线（状态由非 ONLINE 变为 ONLINE，T-43）。 */
+    public static final String TRIGGER_ONLINE = "ONLINE";
+    /** 触发源：设备下线（状态由非 OFFLINE 变为 OFFLINE，T-43）。 */
+    public static final String TRIGGER_OFFLINE = "OFFLINE";
+    /** 触发源：设备影子变更（reported / desired，T-45）。 */
+    public static final String TRIGGER_SHADOW = "SHADOW";
 
     /** 全部触发源类型。 */
-    public static final Set<String> TRIGGERS = Set.of(TRIGGER_PROPERTY, TRIGGER_EVENT, TRIGGER_TIMER);
+    public static final Set<String> TRIGGERS =
+            Set.of(TRIGGER_PROPERTY, TRIGGER_EVENT, TRIGGER_TIMER, TRIGGER_ONLINE, TRIGGER_OFFLINE,
+                    TRIGGER_SHADOW);
+
+    /** 设备状态类触发源（仅需可选的触发设备，无标识符 / 阈值 / cron）。 */
+    public static final Set<String> STATUS_TRIGGERS = Set.of(TRIGGER_ONLINE, TRIGGER_OFFLINE);
 
     // ---------- 动作类型 ----------
 
@@ -42,6 +53,39 @@ public final class SceneConstants {
     /** 全部动作类型。 */
     public static final Set<String> ACTIONS = RuleConstants.ACTIONS;
 
+    // ---------- 流程步骤类型（T-44 / T-49） ----------
+
+    /** 步骤：条件分支（按属性条件选择向前跳转的步骤，不执行动作）。 */
+    public static final String STEP_BRANCH = "BRANCH";
+    /** 步骤：循环结束标记（重复执行其前的循环体，不执行动作）。 */
+    public static final String STEP_LOOP = "LOOP";
+    /** 步骤：并行开始（分叉到多条分支，T-49）。 */
+    public static final String STEP_PARALLEL = "PARALLEL";
+    /** 步骤：并行汇合（所有分支完成后继续，T-49）。 */
+    public static final String STEP_JOIN = "JOIN";
+
+    /** 全部流程步骤类型。 */
+    public static final Set<String> FLOW_STEPS = Set.of(STEP_BRANCH, STEP_LOOP, STEP_PARALLEL, STEP_JOIN);
+
+    /** 全部步骤类型（四类动作 + 分支 / 循环 / 并行）。 */
+    public static final Set<String> STEP_TYPES = Set.of(
+            ACTION_UPDATE_PROPERTY, ACTION_SEND_COMMAND, ACTION_FORWARD_MQTT, ACTION_FORWARD_HTTP,
+            STEP_BRANCH, STEP_LOOP, STEP_PARALLEL, STEP_JOIN);
+
+    /** 流程步骤使用的空目标类型（分支 / 循环 / 并行不执行动作）。 */
+    public static final String TARGET_NONE = "NONE";
+
+    /** 单个并行块的最大分支数。 */
+    public static final int MAX_PARALLEL_BRANCHES = 8;
+    /** 单个并行块的最小分支数。 */
+    public static final int MIN_PARALLEL_BRANCHES = 2;
+
+    /** 单循环最大重复次数（有界循环，避免死循环）。 */
+    public static final int MAX_LOOP_TIMES = 20;
+
+    /** 单次执行的最大步骤执行次数（含循环展开，防止嵌套循环放大）。 */
+    public static final int MAX_EXECUTION_STEPS = 200;
+
     /** 转发类动作（仅允许 {@code TRIGGER} 目标，单次出站）。 */
     public static final Set<String> FORWARD_ACTIONS = Set.of(ACTION_FORWARD_MQTT, ACTION_FORWARD_HTTP);
 
@@ -53,7 +97,7 @@ public final class SceneConstants {
     public static final String TARGET_FIXED = "FIXED";
 
     /** 全部目标类型。 */
-    public static final Set<String> TARGETS = Set.of(TARGET_TRIGGER, TARGET_FIXED);
+    public static final Set<String> TARGETS = Set.of(TARGET_TRIGGER, TARGET_FIXED, TARGET_NONE);
 
     // ---------- 条件逻辑 ----------
 
@@ -153,6 +197,8 @@ public final class SceneConstants {
     public static final int MAX_STEPS_PER_SCENE = 20;
     /** 单场景条件项数上限（默认值，运行时可被 {@code app.scene.max-conditions-per-scene} 覆盖）。 */
     public static final int MAX_CONDITIONS_PER_SCENE = 10;
+    /** 单场景保留的历史版本数（T-51）。 */
+    public static final int MAX_VERSIONS_PER_SCENE = 20;
     /** 单步骤最大延时（秒，默认值，运行时可被 {@code app.scene.max-step-delay-seconds} 覆盖）。 */
     public static final int MAX_STEP_DELAY_SECONDS = 86400;
 }

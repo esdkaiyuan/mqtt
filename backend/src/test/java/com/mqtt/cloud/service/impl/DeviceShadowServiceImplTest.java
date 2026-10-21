@@ -3,6 +3,7 @@ package com.mqtt.cloud.service.impl;
 import com.mqtt.cloud.config.ShadowProperties;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.DeviceShadow;
+import com.mqtt.cloud.event.DeviceShadowChangedEvent;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.mapper.DeviceShadowMapper;
 import com.mqtt.cloud.service.DeviceShadowService.DeviceShadowResponse;
@@ -11,6 +12,7 @@ import com.mqtt.cloud.service.ThingModelService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.context.ApplicationEventPublisher;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
@@ -46,6 +48,7 @@ class DeviceShadowServiceImplTest {
     private DevicePropertyLatestMapper propertyLatestMapper;
     private ThingModelService thingModelService;
     private ShadowProperties properties;
+    private ApplicationEventPublisher eventPublisher;
     private DeviceShadowServiceImpl service;
 
     @BeforeEach
@@ -54,8 +57,9 @@ class DeviceShadowServiceImplTest {
         propertyLatestMapper = mock(DevicePropertyLatestMapper.class);
         thingModelService = mock(ThingModelService.class);
         properties = new ShadowProperties();
+        eventPublisher = mock(ApplicationEventPublisher.class);
         service = new DeviceShadowServiceImpl(shadowMapper, propertyLatestMapper,
-                thingModelService, properties, new ObjectMapper());
+                thingModelService, properties, new ObjectMapper(), eventPublisher);
     }
 
     private DeviceShadow shadow(String desired, String reported, Long version) {
@@ -159,6 +163,34 @@ class DeviceShadowServiceImplTest {
         verifyNoInteractions(shadowMapper);
     }
 
+    @Test
+    void applyDesired_should_publish_changed_event_with_source() {
+        when(shadowMapper.selectOne(any())).thenReturn(shadow("{}", "{}", 1L));
+        when(shadowMapper.casUpdate(any(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(1);
+
+        service.applyDesired(DEVICE_ID, Map.of("power", "true"), "CONSOLE");
+
+        ArgumentCaptor<DeviceShadowChangedEvent> event =
+                ArgumentCaptor.forClass(DeviceShadowChangedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().side()).isEqualTo("DESIRED");
+        assertThat(event.getValue().source()).isEqualTo("CONSOLE");
+        assertThat(event.getValue().version()).isEqualTo(2L);
+        assertThat(event.getValue().changes()).containsEntry("power", "true");
+    }
+
+    @Test
+    void applyDesired_should_skip_event_when_value_unchanged() {
+        when(shadowMapper.selectOne(any())).thenReturn(shadow("{\"power\":\"true\"}", "{}", 3L));
+        when(shadowMapper.casUpdate(any(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(1);
+
+        service.applyDesired(DEVICE_ID, Map.of("power", "true"));
+
+        verify(eventPublisher, never()).publishEvent(any());
+    }
+
     // ---------- applyReported ----------
 
     @Test
@@ -175,6 +207,25 @@ class DeviceShadowServiceImplTest {
         verify(shadowMapper).casUpdate(eq(DEVICE_ID), anyString(), reported.capture(),
                 anyString(), eq(0L), any(LocalDateTime.class));
         assertThat(reported.getValue()).contains("\"temperature\":\"25\"");
+    }
+
+    @Test
+    void applyReported_should_publish_reported_event() {
+        when(shadowMapper.selectOne(any())).thenReturn(shadow("{}", "{\"temperature\":\"20\"}", 4L));
+        when(propertyLatestMapper.selectByIdentifiers(eq(DEVICE_ID), any()))
+                .thenReturn(List.of(latest("temperature", "25")));
+        when(shadowMapper.casUpdate(any(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(1);
+
+        service.applyReported(DEVICE_ID, List.of("temperature"));
+
+        ArgumentCaptor<DeviceShadowChangedEvent> event =
+                ArgumentCaptor.forClass(DeviceShadowChangedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertThat(event.getValue().side()).isEqualTo("REPORTED");
+        assertThat(event.getValue().source()).isEqualTo("INGEST");
+        assertThat(event.getValue().version()).isEqualTo(5L);
+        assertThat(event.getValue().changes()).containsEntry("temperature", "25");
     }
 
     @Test

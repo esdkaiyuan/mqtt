@@ -52,11 +52,35 @@ public class RuleRequest {
     /** 事件类型过滤（info / alert / fault），EVENT 可选，长度 ≤ 16。 */
     private String eventType;
 
+    /**
+     * 多条件组合逻辑（T-33 / G-6-7）：{@code AND} / {@code OR}，缺省 {@code AND}。
+     * <p>仅 {@link #conditions} 非空时有意义；单条件规则恒为 {@code AND}。
+     */
+    private String conditionLogic;
+
+    /**
+     * 多条件数组（T-33 / G-6-7），元素形如
+     * {@code {"identifier","operator","thresholdValue","eventType"}}，最多 {@value com.mqtt.cloud.common.RuleConstants#MAX_CONDITIONS} 项。
+     * <p>
+     * 为空时使用 {@link #identifier} / {@link #operator} / {@link #thresholdValue} / {@link #eventType} 单条件；
+     * 非空时单条件字段被忽略并由服务端取首个条件回填（保证列表筛选等仍读得到值）。
+     */
+    private List<JsonNode> conditions;
+
     /** 动作类型：UPDATE_PROPERTY / SEND_COMMAND / FORWARD_MQTT / FORWARD_HTTP，必填。 */
     private String actionType;
 
-    /** 动作配置对象（按 actionType 解释）。 */
+    /** 动作配置对象（按 actionType 解释）；{@link #actions} 非空时忽略。 */
     private JsonNode actionConfig;
+
+    /**
+     * 多动作数组（T-33 / G-6-7），元素形如 {@code {"actionType","actionConfig"}}，
+     * 最多 {@value com.mqtt.cloud.common.RuleConstants#MAX_ACTIONS} 项。
+     * <p>
+     * 为空时使用 {@link #actionType} / {@link #actionConfig} 单动作；非空时这两个字段被忽略，
+     * 服务端取首个动作回填（保持与旧列语义一致，便于存量读路径与列表展示）。
+     */
+    private List<JsonNode> actions;
 
     /** 触发冷却窗口（秒），缺省 0，取值 [0, 86400]。 */
     private Integer cooldownSeconds;

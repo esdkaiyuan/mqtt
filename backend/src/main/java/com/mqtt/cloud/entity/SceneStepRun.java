@@ -41,6 +41,14 @@ public class SceneStepRun {
     @TableField("seq")
     private Integer seq;
 
+    /** 并行块起始步骤序号快照（T-49） */
+    @TableField("parallel_seq")
+    private Integer parallelSeq;
+
+    /** 并行分支序号快照（T-49） */
+    @TableField("branch_index")
+    private Integer branchIndex;
+
     /** 动作类型快照 */
     @TableField("action_type")
     private String actionType;
@@ -72,6 +80,14 @@ public class SceneStepRun {
     /** 转发载荷快照（HTTP/MQTT 步骤，便于排障） */
     @TableField("forward_payload")
     private String forwardPayload;
+
+    /** 循环步骤当前迭代轮次（0 起；非循环步骤恒为 0，T-44） */
+    @TableField("loop_iteration")
+    private Integer loopIteration;
+
+    /** 分支 / 循环流程结果快照（T-44） */
+    @TableField("flow_result")
+    private String flowResult;
 
     /** 本步开始执行时间 */
     @TableField("started_at")

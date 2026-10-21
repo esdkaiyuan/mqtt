@@ -18,12 +18,37 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="标识符" required>
-          <el-input v-model="form.identifier" placeholder="待判定的属性 / 事件标识符" />
-        </el-form-item>
-        <el-form-item label="取值">
-          <el-input v-model="form.value" placeholder="数值比较符下填数字，可留空" />
-        </el-form-item>
+        <template v-if="shadowSource">
+          <el-form-item label="变更侧" required>
+            <el-select v-model="form.shadowSide" class="test-control">
+              <el-option
+                v-for="option in SHADOW_TEST_SIDE_OPTIONS"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="属性标识符（可选）">
+            <el-input v-model="form.identifier" placeholder="留空表示任意属性变更" />
+          </el-form-item>
+        </template>
+        <template v-else-if="statusSource">
+          <el-form-item label="待判定状态" required>
+            <el-select v-model="form.status" class="test-control">
+              <el-option label="上线（ONLINE）" value="ONLINE" />
+              <el-option label="下线（OFFLINE）" value="OFFLINE" />
+            </el-select>
+          </el-form-item>
+        </template>
+        <template v-else>
+          <el-form-item label="标识符" required>
+            <el-input v-model="form.identifier" placeholder="待判定的属性 / 事件标识符" />
+          </el-form-item>
+          <el-form-item label="取值">
+            <el-input v-model="form.value" placeholder="数值比较符下填数字，可留空" />
+          </el-form-item>
+        </template>
       </template>
       <p v-else class="test-hint">定时触发无需提供触发上下文，直接按当前时间评估条件组。</p>
     </el-form>
@@ -46,7 +71,7 @@
         <span class="test-value">{{ result.cooldownBlocked ? '是' : '否' }}</span>
       </div>
       <div class="test-row">
-        <span class="test-label">预计总耗时</span>
+        <span class="test-label">预计最长耗时</span>
         <span class="test-value">{{ result.estimatedDurationSeconds ?? 0 }} 秒</span>
       </div>
 
@@ -105,7 +130,14 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useSceneTestMutation } from '@/composables/useScenes'
-import { ACTION_TYPE_LABELS, TARGET_TYPE_LABELS, OPERATOR_LABELS } from '@/utils/scene'
+import {
+  ACTION_TYPE_LABELS,
+  TARGET_TYPE_LABELS,
+  OPERATOR_LABELS,
+  SHADOW_TEST_SIDE_OPTIONS,
+  isShadowTrigger,
+  isStatusTrigger
+} from '@/utils/scene'
 
 const props = defineProps({
   modelValue: {
@@ -121,6 +153,10 @@ const props = defineProps({
     type: String,
     default: 'PROPERTY'
   },
+  triggerShadowSide: {
+    type: String,
+    default: 'REPORTED'
+  },
   devices: {
     type: Array,
     default: () => []
@@ -132,8 +168,10 @@ const emit = defineEmits(['update:modelValue'])
 const { testing, testScene } = useSceneTestMutation()
 
 const timerSource = computed(() => props.triggerType === 'TIMER')
+const statusSource = computed(() => isStatusTrigger(props.triggerType))
+const shadowSource = computed(() => isShadowTrigger(props.triggerType))
 
-const form = reactive({ deviceId: null, identifier: '', value: '' })
+const form = reactive({ deviceId: null, identifier: '', value: '', status: 'ONLINE', shadowSide: 'REPORTED' })
 const result = ref(null)
 
 const conditions = computed(() => result.value?.conditions ?? [])
@@ -146,6 +184,8 @@ watch(
     form.deviceId = null
     form.identifier = ''
     form.value = ''
+    form.status = props.triggerType === 'OFFLINE' ? 'OFFLINE' : 'ONLINE'
+    form.shadowSide = props.triggerShadowSide === 'DESIRED' ? 'DESIRED' : 'REPORTED'
     result.value = null
   },
   { immediate: true }
@@ -161,18 +201,26 @@ async function handleTest() {
       ElMessage.warning('请选择触发设备')
       return
     }
-    if (!form.identifier.trim()) {
+    if (!statusSource.value && !shadowSource.value && !form.identifier.trim()) {
       ElMessage.warning('请填写标识符')
       return
     }
   }
   const payload = timerSource.value
     ? {}
-    : {
-        deviceId: form.deviceId,
-        identifier: form.identifier.trim(),
-        value: form.value.trim() === '' ? null : form.value.trim()
-      }
+    : shadowSource.value
+      ? {
+          deviceId: form.deviceId,
+          identifier: form.identifier.trim() || null,
+          value: form.shadowSide
+        }
+      : statusSource.value
+        ? { deviceId: form.deviceId, value: form.status }
+        : {
+            deviceId: form.deviceId,
+            identifier: form.identifier.trim(),
+            value: form.value.trim() === '' ? null : form.value.trim()
+          }
   try {
     result.value = await testScene(props.sceneId, payload)
   } catch {

@@ -71,7 +71,7 @@ describe('components/device/SubDevicePanel', () => {
   it('空列表展示空态文案', () => {
     const wrapper = mountPanel({ subDevices: [] })
 
-    expect(wrapper.text()).toContain('该网关下暂无子设备')
+    expect(wrapper.text()).toContain('该设备下暂无子设备')
     expect(wrapper.findAll('.sub-device-item')).toHaveLength(0)
   })
 

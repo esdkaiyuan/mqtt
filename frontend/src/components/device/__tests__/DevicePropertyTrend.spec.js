@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
+import { createPinia } from 'pinia'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import DevicePropertyTrend from '../DevicePropertyTrend.vue'
+import { useUiStore } from '@/stores/ui'
 
 const mocks = vi.hoisted(() => ({
   getThingModel: vi.fn(),
@@ -52,6 +54,14 @@ const STUBS = {
   ElSelect: ElSelectStub,
   ElOption: ElOptionStub,
   ElButton: { name: 'ElButton', template: '<button class="el-button-stub"><slot /></button>' },
+  ElSwitch: {
+    name: 'ElSwitch',
+    props: ['modelValue'],
+    emits: ['update:modelValue'],
+    template:
+      '<span class="el-switch-stub" @click="$emit(\'update:modelValue\', !modelValue)" />'
+  },
+  ElTooltip: { name: 'ElTooltip', template: '<span class="el-tooltip-stub"><slot /></span>' },
   PropertyTrendChart: PropertyTrendChartStub,
   EmptyState: EmptyStateStub
 }
@@ -74,7 +84,7 @@ describe('components/device/DevicePropertyTrend', () => {
     wrapper = mount(DevicePropertyTrend, {
       props: { deviceId: 1, deviceName: '车间温度计', productId: 5, ...props },
       global: {
-        plugins: [[VueQueryPlugin, { queryClient }]],
+        plugins: [createPinia(), [VueQueryPlugin, { queryClient }]],
         stubs: STUBS,
         directives: { loading: {} }
       }
@@ -102,6 +112,27 @@ describe('components/device/DevicePropertyTrend', () => {
     wrapper?.unmount()
     queryClient.clear()
     vi.clearAllMocks()
+  })
+
+  it('开启实时追加后把 property-trend 样本并入图表序列', async () => {
+    mountTrend({ deviceKey: 'dev-1' })
+    await settle()
+
+    wrapper.findComponent({ name: 'ElSwitch' }).vm.$emit('update:modelValue', true)
+    await nextTick()
+    useUiStore().events.push({
+      id: 1,
+      deviceKey: 'dev-1',
+      samples: [
+        { identifier: 'temperature', valueText: '30.5', reportedAt: '2026-10-21T10:00:00' }
+      ]
+    })
+    await nextTick()
+
+    const series = wrapper.findComponent(PropertyTrendChartStub).props('series')
+    expect(series).toHaveLength(1)
+    expect(series[0].identifier).toBe('temperature')
+    expect(series[0].points[0].avg).toBe(30.5)
   })
 
   it('属性下拉来自物模型，并默认选中首个属性发起查询', async () => {

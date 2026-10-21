@@ -285,7 +285,7 @@ const EmptyStateStub = {
 const dialogStub = (name) => ({
   name,
   props: ['modelValue', 'scene', 'sceneId', 'triggerType', 'devices', 'executionId'],
-  emits: ['update:modelValue', 'saved', 'retried'],
+  emits: ['update:modelValue', 'saved', 'retried', 'restored'],
   template: `<div v-if="modelValue" class="stub-dialog" data-name="${name}"></div>`
 })
 
@@ -307,6 +307,7 @@ const STUBS = {
   EmptyState: EmptyStateStub,
   SceneFormDialog: dialogStub('SceneFormDialog'),
   SceneTestDialog: dialogStub('SceneTestDialog'),
+  SceneVersionDialog: dialogStub('SceneVersionDialog'),
   SceneExecutionDrawer: dialogStub('SceneExecutionDrawer')
 }
 
@@ -400,6 +401,21 @@ describe('views/workbench/scene/SceneCenter', () => {
     expect(confirmMock).toHaveBeenCalled()
     expect(hooks.runScene).toHaveBeenCalledWith(1)
     expect(messageMock.success).toHaveBeenCalledWith('已提交执行，请到「执行记录」查看进度')
+  })
+
+  it('点击「版本」打开历史对话框，回滚后刷新场景列表', async () => {
+    hooks.scenes.value = [SCENE_PROPERTY]
+    wrapper = mountPage()
+    await flushPromises()
+
+    await buttonByText(wrapper, '版本').trigger('click')
+    const dialog = wrapper.findComponent({ name: 'SceneVersionDialog' })
+    expect(dialog.props('modelValue')).toBe(true)
+    expect(dialog.props('scene').id).toBe(1)
+
+    dialog.vm.$emit('restored')
+    await flushPromises()
+    expect(hooks.refresh).toHaveBeenCalled()
   })
 
   it('删除场景需二次确认后调用 deleteScene', async () => {

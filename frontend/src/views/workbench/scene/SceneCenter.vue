@@ -105,6 +105,7 @@
                     <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
                     <el-button link type="primary" @click="handleRun(row)">执行</el-button>
                     <el-button link type="primary" @click="openTest(row)">试运行</el-button>
+                    <el-button link type="primary" @click="openVersions(row)">版本</el-button>
                     <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
                   </template>
                 </el-table-column>
@@ -288,6 +289,11 @@
     </el-tabs>
 
     <SceneFormDialog v-model="formVisible" :scene="editingScene" @saved="handleSaved" />
+    <SceneVersionDialog
+      v-model="versionVisible"
+      :scene="versionScene"
+      @restored="handleVersionRestored"
+    />
     <SceneTestDialog
       v-model="testVisible"
       :scene-id="testSceneId"
@@ -310,6 +316,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import SceneFormDialog from '@/components/scene/SceneFormDialog.vue'
 import SceneTestDialog from '@/components/scene/SceneTestDialog.vue'
+import SceneVersionDialog from '@/components/scene/SceneVersionDialog.vue'
 import SceneExecutionDrawer from '@/components/scene/SceneExecutionDrawer.vue'
 import { deviceApi } from '@/api/device'
 import { sceneApi } from '@/api/scene'
@@ -360,6 +367,9 @@ const testVisible = ref(false)
 const testSceneId = ref(null)
 const testTriggerType = ref('PROPERTY')
 
+const versionVisible = ref(false)
+const versionScene = ref(null)
+
 function openCreate() {
   editingScene.value = null
   formVisible.value = true
@@ -376,7 +386,16 @@ function openTest(scene) {
   testVisible.value = true
 }
 
+function openVersions(scene) {
+  versionScene.value = scene
+  versionVisible.value = true
+}
+
 function handleSaved() {
+  refresh()
+}
+
+function handleVersionRestored() {
   refresh()
 }
 

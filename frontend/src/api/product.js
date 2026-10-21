@@ -34,6 +34,12 @@ export const productApi = {
   // ---------- 物模型（T-14） ----------
 
   /**
+   * 查询产品驱动配置（T-31 P4）：protocolType / driverId / driverConfig。
+   * driver_config 含现场内网地址，后端仅允许 ADMIN 读取。
+   */
+  getDriverConfig: (id) => api.get(`/products/${id}/driver-config`),
+
+  /**
    * 查询物模型；未建模时 data.thingModel 为 null、version 为 0
    */
   getThingModel: (id) => api.get(`/products/${id}/thing-model`),

@@ -75,6 +75,16 @@ public final class RuleConstants {
     /** 事件类型过滤取值（对应物模型事件 {@code eventType}）。 */
     public static final Set<String> EVENT_TYPES = Set.of("info", "alert", "fault");
 
+    // ---------- 多条件组合逻辑（T-33 / G-6-7） ----------
+
+    /** 多条件组合：全部满足。 */
+    public static final String LOGIC_AND = "AND";
+    /** 多条件组合：任一满足。 */
+    public static final String LOGIC_OR = "OR";
+
+    /** 全部组合逻辑取值。 */
+    public static final Set<String> LOGICS = Set.of(LOGIC_AND, LOGIC_OR);
+
     // ---------- 动作配置取值 ----------
 
     /** 转发 HTTP 支持的方法。 */
@@ -98,6 +108,11 @@ public final class RuleConstants {
     public static final int MAX_IDENTIFIER_LENGTH = 64;
     /** 比较阈值最大长度。 */
     public static final int MAX_THRESHOLD_LENGTH = 255;
+
+    /** 单条规则的条件数上限（T-33）。超过即拒绝，而不是静默截断——静默丢条件等于改了规则语义。 */
+    public static final int MAX_CONDITIONS = 10;
+    /** 单条规则的动作数上限（T-33）。同上，多余动作显式报错而非悄悄丢弃。 */
+    public static final int MAX_ACTIONS = 5;
     /** 事件类型最大长度。 */
     public static final int MAX_EVENT_TYPE_LENGTH = 16;
     /** 转发 MQTT Topic 最大长度。 */

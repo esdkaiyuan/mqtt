@@ -55,64 +55,99 @@
                 />
               </el-select>
             </el-form-item>
-            <el-form-item :label="form.triggerType === 'EVENT' ? '事件标识符' : '属性标识符'">
-              <el-input
-                :model-value="form.triggerIdentifier"
-                maxlength="64"
-                @update:model-value="(value) => update({ triggerIdentifier: value })"
-              />
-            </el-form-item>
 
-            <template v-if="form.triggerType === 'PROPERTY'">
-              <el-form-item label="触发判定">
-                <el-radio-group
-                  :model-value="form.thresholdEnabled"
-                  @change="(value) => update({ thresholdEnabled: value })"
+            <p v-if="statusTrigger" class="orch-hint">
+              设备状态变化时触发；不选设备表示账号下任意设备。
+            </p>
+
+            <template v-else-if="shadowTrigger">
+              <el-form-item label="变更侧">
+                <el-select
+                  :model-value="form.triggerShadowSide || 'REPORTED'"
+                  class="orch-field"
+                  @update:model-value="(value) => update({ triggerShadowSide: value })"
                 >
-                  <el-radio-button :value="false">任意上报即触发</el-radio-button>
-                  <el-radio-button :value="true">满足阈值时触发</el-radio-button>
-                </el-radio-group>
-              </el-form-item>
-              <template v-if="form.thresholdEnabled">
-                <el-form-item label="比较符">
-                  <el-select
-                    :model-value="form.triggerOperator"
-                    class="orch-field"
-                    @update:model-value="(value) => update({ triggerOperator: value })"
-                  >
-                    <el-option
-                      v-for="option in OPERATOR_OPTIONS"
-                      :key="option.value"
-                      :label="option.label"
-                      :value="option.value"
-                    />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="阈值">
-                  <el-input
-                    :model-value="form.triggerThreshold"
-                    @update:model-value="(value) => update({ triggerThreshold: value })"
+                  <el-option
+                    v-for="option in SHADOW_SIDE_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
                   />
-                </el-form-item>
-              </template>
+                </el-select>
+              </el-form-item>
+              <el-form-item label="属性标识符（可选）">
+                <el-input
+                  :model-value="form.triggerIdentifier"
+                  maxlength="64"
+                  placeholder="留空表示任意属性变更"
+                  @update:model-value="(value) => update({ triggerIdentifier: value })"
+                />
+              </el-form-item>
+              <p class="orch-hint">
+                影子属性值变化时触发；desired 仅外部写入触发，场景 / 规则内部写入不会自触发。
+              </p>
             </template>
 
-            <el-form-item v-else label="事件类型（可选）">
-              <el-select
-                :model-value="form.triggerEventType"
-                clearable
-                class="orch-field"
-                placeholder="不限事件类型"
-                @update:model-value="(value) => update({ triggerEventType: value ?? '' })"
-              >
-                <el-option
-                  v-for="option in EVENT_TYPE_OPTIONS"
-                  :key="option.value"
-                  :label="option.label"
-                  :value="option.value"
+            <template v-else>
+              <el-form-item :label="form.triggerType === 'EVENT' ? '事件标识符' : '属性标识符'">
+                <el-input
+                  :model-value="form.triggerIdentifier"
+                  maxlength="64"
+                  @update:model-value="(value) => update({ triggerIdentifier: value })"
                 />
-              </el-select>
-            </el-form-item>
+              </el-form-item>
+
+              <template v-if="form.triggerType === 'PROPERTY'">
+                <el-form-item label="触发判定">
+                  <el-radio-group
+                    :model-value="form.thresholdEnabled"
+                    @change="(value) => update({ thresholdEnabled: value })"
+                  >
+                    <el-radio-button :value="false">任意上报即触发</el-radio-button>
+                    <el-radio-button :value="true">满足阈值时触发</el-radio-button>
+                  </el-radio-group>
+                </el-form-item>
+                <template v-if="form.thresholdEnabled">
+                  <el-form-item label="比较符">
+                    <el-select
+                      :model-value="form.triggerOperator"
+                      class="orch-field"
+                      @update:model-value="(value) => update({ triggerOperator: value })"
+                    >
+                      <el-option
+                        v-for="option in OPERATOR_OPTIONS"
+                        :key="option.value"
+                        :label="option.label"
+                        :value="option.value"
+                      />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="阈值">
+                    <el-input
+                      :model-value="form.triggerThreshold"
+                      @update:model-value="(value) => update({ triggerThreshold: value })"
+                    />
+                  </el-form-item>
+                </template>
+              </template>
+
+              <el-form-item v-else label="事件类型（可选）">
+                <el-select
+                  :model-value="form.triggerEventType"
+                  clearable
+                  class="orch-field"
+                  placeholder="不限事件类型"
+                  @update:model-value="(value) => update({ triggerEventType: value ?? '' })"
+                >
+                  <el-option
+                    v-for="option in EVENT_TYPE_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+            </template>
           </template>
         </el-form>
       </template>
@@ -213,7 +248,7 @@
             </el-select>
           </el-form-item>
 
-          <el-form-item label="目标">
+          <el-form-item v-if="!isFlowStep(stepItem(node.id).actionType)" label="目标">
             <el-select
               :model-value="effectiveTargetType(stepItem(node.id))"
               class="orch-field"
@@ -303,8 +338,140 @@
             </el-form-item>
           </template>
 
-          <el-form-item label="动作配置">
-            <template v-if="stepItem(node.id).actionType === 'UPDATE_PROPERTY'">
+          <el-form-item
+            v-if="!isFlowStep(stepItem(node.id).actionType) && parallelInfo(node.id)"
+            label="并行分支"
+          >
+            <el-select
+              :model-value="stepItem(node.id).branchIndex ?? 0"
+              class="orch-field"
+              @update:model-value="(value) => update({ branchIndex: value })"
+            >
+              <el-option
+                v-for="branch in parallelInfo(node.id).branches"
+                :key="`branch-${branch}`"
+                :label="`分支 ${branch + 1}`"
+                :value="branch"
+              />
+            </el-select>
+          </el-form-item>
+
+          <el-form-item :label="isFlowStep(stepItem(node.id).actionType) ? '流程配置' : '动作配置'">
+            <template v-if="stepItem(node.id).actionType === 'PARALLEL'">
+              <el-form-item label="并行分支数">
+                <el-input-number
+                  :model-value="stepItem(node.id).actionConfig.branches"
+                  :min="MIN_PARALLEL_BRANCHES"
+                  :max="MAX_PARALLEL_BRANCHES"
+                  controls-position="right"
+                  class="orch-field"
+                  @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'branches', value ?? 2))"
+                />
+              </el-form-item>
+              <p class="orch-hint">为后续步骤选择所属分支，并在所有分支结束后添加「并行汇合」。</p>
+            </template>
+            <template v-else-if="stepItem(node.id).actionType === 'JOIN'">
+              <p class="orch-hint">并行汇合不执行动作，所有分支完成后继续后续步骤。</p>
+            </template>
+            <template v-else-if="stepItem(node.id).actionType === 'BRANCH'">
+              <el-select
+                :model-value="stepItem(node.id).actionConfig.deviceId"
+                clearable
+                filterable
+                class="orch-field"
+                placeholder="取值设备（默认触发设备）"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'deviceId', value || null))"
+              >
+                <el-option
+                  v-for="device in devices"
+                  :key="device.id"
+                  :label="device.deviceName || device.deviceKey"
+                  :value="device.id"
+                />
+              </el-select>
+              <el-input
+                :model-value="stepItem(node.id).actionConfig.identifier"
+                class="orch-field"
+                maxlength="64"
+                placeholder="条件属性标识符，如 temperature"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'identifier', value))"
+              />
+              <el-select
+                :model-value="stepItem(node.id).actionConfig.operator"
+                class="orch-field"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'operator', value))"
+              >
+                <el-option
+                  v-for="option in OPERATOR_OPTIONS"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+              <el-input
+                :model-value="stepItem(node.id).actionConfig.threshold"
+                class="orch-field"
+                maxlength="255"
+                placeholder="条件阈值，如 30"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'threshold', value))"
+              />
+              <el-select
+                :model-value="stepItem(node.id).actionConfig.trueSeq"
+                clearable
+                class="orch-field"
+                placeholder="条件为真：选择跳转步骤"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'trueSeq', seqOrNull(value)))"
+              >
+                <el-option label="结束执行" :value="null" />
+                <el-option
+                  v-for="seq in forwardSeqOptions(node.id)"
+                  :key="`true-${seq}`"
+                  :label="`第 ${seq} 步`"
+                  :value="seq"
+                />
+              </el-select>
+              <el-select
+                :model-value="stepItem(node.id).actionConfig.falseSeq"
+                clearable
+                class="orch-field"
+                placeholder="条件为假：选择跳转步骤"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'falseSeq', seqOrNull(value)))"
+              >
+                <el-option label="结束执行" :value="null" />
+                <el-option
+                  v-for="seq in forwardSeqOptions(node.id)"
+                  :key="`false-${seq}`"
+                  :label="`第 ${seq} 步`"
+                  :value="seq"
+                />
+              </el-select>
+            </template>
+
+            <template v-else-if="stepItem(node.id).actionType === 'LOOP'">
+              <el-select
+                :model-value="stepItem(node.id).actionConfig.startSeq"
+                class="orch-field"
+                placeholder="循环体起始步骤"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'startSeq', seqOrNull(value)))"
+              >
+                <el-option
+                  v-for="seq in bodyStartOptions(node.id)"
+                  :key="`loop-${seq}`"
+                  :label="`从第 ${seq} 步开始`"
+                  :value="seq"
+                />
+              </el-select>
+              <el-input-number
+                :model-value="stepItem(node.id).actionConfig.times"
+                :min="1"
+                :max="MAX_LOOP_TIMES"
+                controls-position="right"
+                class="orch-field"
+                @update:model-value="(value) => update(actionPatch(stepItem(node.id), 'times', value ?? 1))"
+              />
+            </template>
+
+            <template v-else-if="stepItem(node.id).actionType === 'UPDATE_PROPERTY'">
               <el-input
                 :model-value="stepItem(node.id).actionConfig.identifier"
                 class="orch-field"
@@ -438,8 +605,16 @@ import {
   OPERATOR_OPTIONS,
   TARGET_TYPE_OPTIONS,
   TRIGGER_SOURCE_OPTIONS,
+  SHADOW_SIDE_OPTIONS,
   createTargetConfig,
-  isForwardAction
+  isForwardAction,
+  isFlowStep,
+  isShadowTrigger,
+  isStatusTrigger,
+  parallelInfoAt,
+  seqOrNull,
+  MAX_PARALLEL_BRANCHES,
+  MIN_PARALLEL_BRANCHES
 } from '@/utils/scene'
 import { applySceneEvent, projectScene } from './orchestration'
 
@@ -478,12 +653,16 @@ const props = defineProps({
 
 /** 与后端 app.rule 限制保持一致：单步最大延时（场景设计文档 §12）。 */
 const MAX_DELAY_SECONDS = 86400
+/** 与后端 SceneConstants.MAX_LOOP_TIMES 保持一致。 */
+const MAX_LOOP_TIMES = 20
 /** 分组树选择器字段映射（与设备列表保持一致）。 */
 const TREE_PROPS = { label: 'name', children: 'children' }
 
 const canvasRef = ref(null)
 
 const timerSource = computed(() => props.form.triggerType === 'TIMER')
+const statusTrigger = computed(() => isStatusTrigger(props.form.triggerType))
+const shadowTrigger = computed(() => isShadowTrigger(props.form.triggerType))
 const hasSteps = computed(() => Array.isArray(props.form.steps) && props.form.steps.length > 0)
 
 const nodes = computed(() => projectScene(props.form).nodes)
@@ -515,13 +694,42 @@ function stepItem(id) {
   return index >= 0 ? (props.form.steps?.[index] ?? null) : null
 }
 
+/** 分支只能向后跳转：可选项为当前步骤之后、已启用的步骤序号。 */
+function forwardSeqOptions(id) {
+  const index = parseIndex(id, NODE_TYPE.STEP)
+  if (index < 0) return []
+  return (props.form.steps || [])
+    .map((item, position) => ({ seq: position + 1, enabled: item.enabled }))
+    .slice(index + 1)
+    .filter((item) => item.enabled !== false)
+    .map((item) => item.seq)
+}
+
+/** 循环体必须位于循环步骤之前：可选项为当前步骤之前、已启用的步骤序号。 */
+function bodyStartOptions(id) {
+  const index = parseIndex(id, NODE_TYPE.STEP)
+  if (index < 0) return []
+  return (props.form.steps || [])
+    .map((item, position) => ({ seq: position + 1, enabled: item.enabled }))
+    .slice(0, index)
+    .filter((item) => item.enabled !== false)
+    .map((item) => item.seq)
+}
+
 function targetConfigOf(id) {
   return stepItem(id)?.targetConfig ?? createTargetConfig()
 }
 
-/** 转发类动作目标锁 TRIGGER；TIMER 源下其余动作锁 FIXED（与 SceneStepEditor 同口径）。 */
+function parallelInfo(id) {
+  const index = parseIndex(id, NODE_TYPE.STEP)
+  if (index < 0) return null
+  return parallelInfoAt(props.form.steps || [], index)
+}
+
+/** 分支 / 循环无目标；转发类动作目标锁 TRIGGER；TIMER 源下其余动作锁 FIXED（与 SceneStepEditor 同口径）。 */
 function effectiveTargetType(step) {
   if (!step) return 'TRIGGER'
+  if (isFlowStep(step.actionType)) return 'NONE'
   if (isForwardAction(step.actionType)) return 'TRIGGER'
   if (timerSource.value) return 'FIXED'
   return step.targetType
@@ -529,7 +737,7 @@ function effectiveTargetType(step) {
 
 function targetTypeLocked(step) {
   if (!step) return true
-  return isForwardAction(step.actionType) || timerSource.value
+  return isFlowStep(step.actionType) || isForwardAction(step.actionType) || timerSource.value
 }
 
 function actionPatch(step, key, value) {
@@ -601,6 +809,13 @@ defineExpose({ focusError })
 
 .orch-field {
   width: 100%;
+}
+
+.orch-hint {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
 }
 
 .scene-orch__empty {

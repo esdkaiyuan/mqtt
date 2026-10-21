@@ -1,6 +1,8 @@
 package com.mqtt.cloud.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.SceneConstants;
@@ -10,10 +12,14 @@ import com.mqtt.cloud.dto.request.SceneQuery;
 import com.mqtt.cloud.dto.request.SceneRequest;
 import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.entity.SceneStep;
+import com.mqtt.cloud.entity.SceneVersion;
 import com.mqtt.cloud.mapper.SceneDefinitionMapper;
 import com.mqtt.cloud.mapper.SceneStepMapper;
+import com.mqtt.cloud.mapper.SceneVersionMapper;
 import com.mqtt.cloud.service.SceneEvaluationService;
+import com.mqtt.cloud.service.SceneSnapshot;
 import com.mqtt.cloud.util.SceneValidator;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -48,10 +54,12 @@ class SceneServiceImplTest {
     private static final Long USER_ID = 10L;
     private static final Long OTHER_USER_ID = 20L;
     private static final Long SCENE_ID = 5L;
+    private static final Long VERSION_ID = 700L;
     private static final Long EXECUTION_ID = 900L;
 
     private SceneDefinitionMapper definitionMapper;
     private SceneStepMapper stepMapper;
+    private SceneVersionMapper versionMapper;
     private SceneValidator validator;
     private SceneEvaluationService evaluationService;
     private SceneExecutionLauncher launcher;
@@ -60,13 +68,16 @@ class SceneServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), SceneDefinition.class);
         definitionMapper = mock(SceneDefinitionMapper.class);
         stepMapper = mock(SceneStepMapper.class);
+        versionMapper = mock(SceneVersionMapper.class);
         validator = mock(SceneValidator.class);
         evaluationService = mock(SceneEvaluationService.class);
         launcher = mock(SceneExecutionLauncher.class);
         properties = new SceneProperties();
-        service = new SceneServiceImpl(stepMapper, validator, evaluationService, launcher,
+        service = new SceneServiceImpl(stepMapper, versionMapper, validator, evaluationService, launcher,
                 properties, new ObjectMapper());
         ReflectionTestUtils.setField(service, "baseMapper", definitionMapper);
         // 插入时回填主键，模拟自增 ID
@@ -176,6 +187,25 @@ class SceneServiceImplTest {
         assertThat(created.getStepsView()).hasSize(2);
     }
 
+    @Test
+    void createScene_should_save_initial_version_and_trim_old_versions() {
+        when(validator.validate(eq(USER_ID), any())).thenReturn(validated("回家场景", List.of(step(1), step(2))));
+        when(stepMapper.selectBySceneId(SCENE_ID)).thenReturn(List.of(step(1), step(2)));
+        when(versionMapper.selectMaxVersionNo(SCENE_ID)).thenReturn(20);
+
+        service.createScene(USER_ID, new SceneRequest());
+
+        ArgumentCaptor<SceneVersion> captor = ArgumentCaptor.forClass(SceneVersion.class);
+        verify(versionMapper).insert(captor.capture());
+        SceneVersion version = captor.getValue();
+        assertThat(version.getVersionNo()).isEqualTo(21);
+        assertThat(version.getChangeType()).isEqualTo("CREATE");
+        assertThat(version.getStepCount()).isEqualTo(2);
+        assertThat(version.getSceneName()).isEqualTo("回家场景");
+        assertThat(version.getSnapshot()).contains("回家场景");
+        verify(versionMapper).deleteOlderThan(SCENE_ID, 1);
+    }
+
     // ---------- 更新 / 删除 / 启停 ----------
 
     @Test
@@ -194,6 +224,89 @@ class SceneServiceImplTest {
         verify(stepMapper).deleteBySceneId(SCENE_ID);
         verify(stepMapper).insert(any(SceneStep.class));
         verify(evaluationService).evictCache(USER_ID);
+    }
+
+    @Test
+    void listVersions_should_reject_foreign_scene() {
+        when(definitionMapper.selectById(SCENE_ID)).thenReturn(scene(SCENE_ID, OTHER_USER_ID));
+
+        assertCode(() -> service.listVersions(USER_ID, SCENE_ID), ResultCode.FORBIDDEN);
+        verifyNoInteractions(versionMapper);
+    }
+
+    @Test
+    void listVersions_should_return_version_summaries() {
+        when(definitionMapper.selectById(SCENE_ID)).thenReturn(scene(SCENE_ID, USER_ID));
+        SceneVersion version = new SceneVersion();
+        version.setId(VERSION_ID);
+        version.setVersionNo(3);
+        version.setChangeType("UPDATE");
+        version.setSceneName("场景");
+        version.setTriggerType(SceneConstants.TRIGGER_PROPERTY);
+        version.setStepCount(2);
+        version.setOperatorId(USER_ID);
+        when(versionMapper.selectBySceneId(SCENE_ID)).thenReturn(List.of(version));
+
+        var versions = service.listVersions(USER_ID, SCENE_ID);
+
+        assertThat(versions).hasSize(1);
+        assertThat(versions.get(0).getVersionNo()).isEqualTo(3);
+        assertThat(versions.get(0).getStepCount()).isEqualTo(2);
+    }
+
+    @Test
+    void restoreVersion_should_apply_snapshot_and_generate_restore_version() throws Exception {
+        SceneDefinition current = scene(SCENE_ID, USER_ID);
+        current.setName("当前名称");
+        when(definitionMapper.selectById(SCENE_ID)).thenReturn(current);
+        SceneDefinition old = scene(SCENE_ID, USER_ID);
+        old.setName("历史名称");
+        old.setDescription("历史描述");
+        List<SceneStep> oldSteps = List.of(step(1), step(2));
+        SceneVersion version = new SceneVersion();
+        version.setId(VERSION_ID);
+        version.setSceneId(SCENE_ID);
+        version.setSnapshot(new ObjectMapper().writeValueAsString(SceneSnapshot.of(old, oldSteps)));
+        when(versionMapper.selectById(VERSION_ID)).thenReturn(version);
+        when(definitionMapper.countByUserAndName(USER_ID, "历史名称", SCENE_ID)).thenReturn(0);
+        when(stepMapper.selectBySceneId(SCENE_ID)).thenReturn(oldSteps);
+        when(versionMapper.selectMaxVersionNo(SCENE_ID)).thenReturn(3);
+
+        SceneDefinition restored = service.restoreVersion(USER_ID, SCENE_ID, VERSION_ID);
+
+        assertThat(restored.getName()).isEqualTo("历史名称");
+        assertThat(restored.getStepsView()).hasSize(2);
+        verify(definitionMapper).update(isNull(), any());
+        verify(stepMapper).deleteBySceneId(SCENE_ID);
+        verify(stepMapper, times(2)).insert(any(SceneStep.class));
+        ArgumentCaptor<SceneVersion> captor = ArgumentCaptor.forClass(SceneVersion.class);
+        verify(versionMapper).insert(captor.capture());
+        assertThat(captor.getValue().getChangeType()).isEqualTo("RESTORE");
+        assertThat(captor.getValue().getVersionNo()).isEqualTo(4);
+        verify(evaluationService).evictCache(USER_ID);
+    }
+
+    @Test
+    void restoreVersion_should_reject_missing_version() {
+        when(definitionMapper.selectById(SCENE_ID)).thenReturn(scene(SCENE_ID, USER_ID));
+        when(versionMapper.selectById(VERSION_ID)).thenReturn(null);
+
+        assertCode(() -> service.restoreVersion(USER_ID, SCENE_ID, VERSION_ID),
+                ResultCode.SCENE_VERSION_NOT_FOUND);
+        verify(stepMapper, never()).deleteBySceneId(any());
+    }
+
+    @Test
+    void restoreVersion_should_reject_corrupt_snapshot() {
+        when(definitionMapper.selectById(SCENE_ID)).thenReturn(scene(SCENE_ID, USER_ID));
+        SceneVersion version = new SceneVersion();
+        version.setId(VERSION_ID);
+        version.setSceneId(SCENE_ID);
+        version.setSnapshot("{bad");
+        when(versionMapper.selectById(VERSION_ID)).thenReturn(version);
+
+        assertCode(() -> service.restoreVersion(USER_ID, SCENE_ID, VERSION_ID),
+                ResultCode.SCENE_INVALID);
     }
 
     @Test

@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   createTask: vi.fn(),
   retryTask: vi.fn(),
   removeTask: vi.fn(),
+  pauseTask: vi.fn(),
+  resumeTask: vi.fn(),
+  advanceTask: vi.fn(),
   getDevices: vi.fn()
 }))
 
@@ -37,7 +40,10 @@ vi.mock('@/api/ota', () => ({
     listFirmwares: mocks.listFirmwares,
     createTask: mocks.createTask,
     retryTask: mocks.retryTask,
-    removeTask: mocks.removeTask
+    removeTask: mocks.removeTask,
+    pauseTask: mocks.pauseTask,
+    resumeTask: mocks.resumeTask,
+    advanceTask: mocks.advanceTask
   }
 }))
 
@@ -208,6 +214,8 @@ const STUBS = {
   ElRadioButton: passthrough('ElRadioButton'),
   ElTreeSelect: passthrough('ElTreeSelect'),
   ElInput: ElInputStub,
+  ElInputNumber: passthrough('ElInputNumber'),
+  ElDivider: passthrough('ElDivider'),
   ElProgress: ElProgressStub,
   ElTag: ElTagStub,
   ElDialog: ElDialogStub,
@@ -250,6 +258,20 @@ const SUCCESS_TASK = {
   successCount: 4,
   failedCount: 0
 }
+/** T-32：灰度任务，尚有未下发批次。 */
+const BATCHED_TASK = {
+  ...PARTIAL_TASK,
+  id: 24,
+  name: '灰度分批升级',
+  status: 'RUNNING',
+  batchMode: 'BATCHED',
+  batchSize: 2,
+  batchTotal: 3,
+  currentBatchNo: 1,
+  batchIntervalMs: 0
+}
+/** T-32：已暂停的灰度任务。 */
+const PAUSED_TASK = { ...BATCHED_TASK, id: 25, name: '已暂停灰度', status: 'PAUSED' }
 
 async function settle() {
   await flushPromises()
@@ -499,5 +521,119 @@ describe('views/workbench/ota/UpgradeTasks', () => {
     await settle()
 
     expect(mocks.removeTask).not.toHaveBeenCalled()
+  })
+
+  /* ---------- T-32 灰度与互斥 ---------- */
+
+  it('灰度任务展示批次进度并提供暂停与推进', async () => {
+    mocks.listTasks.mockResolvedValue({ code: 200, data: { records: [BATCHED_TASK], total: 1 } })
+    mountPage()
+    await settle()
+
+    expect(wrapper.text()).toContain('灰度 1/3')
+    const buttons = wrapper.findAll('button').map((b) => b.text().trim())
+    expect(buttons).toContain('暂停')
+    expect(buttons).toContain('推进下一批')
+    // 一次性全量任务不该出现灰度控制
+    expect(buttons).not.toContain('终止')
+  })
+
+  it('点击「暂停」确认后调用暂停接口', async () => {
+    mocks.listTasks.mockResolvedValue({ code: 200, data: { records: [BATCHED_TASK], total: 1 } })
+    mountPage()
+    await settle()
+
+    await buttonByText('暂停').trigger('click')
+    await settle()
+
+    expect(mocks.pauseTask).toHaveBeenCalledWith(24)
+  })
+
+  it('取消暂停时不调用接口', async () => {
+    mocks.listTasks.mockResolvedValue({ code: 200, data: { records: [BATCHED_TASK], total: 1 } })
+    mocks.confirm.mockRejectedValueOnce(new Error('cancel'))
+    mountPage()
+    await settle()
+
+    await buttonByText('暂停').trigger('click')
+    await settle()
+
+    expect(mocks.pauseTask).not.toHaveBeenCalled()
+  })
+
+  it('已暂停任务展示「恢复」而非「暂停」', async () => {
+    mocks.listTasks.mockResolvedValue({ code: 200, data: { records: [PAUSED_TASK], total: 1 } })
+    mountPage()
+    await settle()
+
+    const buttons = wrapper.findAll('button').map((b) => b.text().trim())
+    expect(buttons).toContain('恢复')
+    expect(buttons).not.toContain('暂停')
+  })
+
+  it('已暂停任务禁用删除', async () => {
+    mocks.listTasks.mockResolvedValue({ code: 200, data: { records: [PAUSED_TASK], total: 1 } })
+    mountPage()
+    await settle()
+
+    // 暂停中仍有设备在刷固件，删任务会让在途设备的上报失去归属
+    expect(buttonByText('删除').attributes('disabled')).toBeDefined()
+  })
+
+  it('已终止任务禁用重投', async () => {
+    mocks.listTasks.mockResolvedValue({
+      code: 200,
+      data: { records: [{ ...BATCHED_TASK, status: 'ABORTED' }], total: 1 }
+    })
+    mountPage()
+    await settle()
+
+    expect(buttonByText('重投').attributes('disabled')).toBeDefined()
+  })
+
+  it('展示被互斥剔除的台数并提示', async () => {
+    mocks.createTask.mockResolvedValue({ code: 200, data: { ...BATCHED_TASK, conflictSkippedCount: 3 } })
+    mountPage()
+    await settle()
+    await openDialog()
+
+    await wrapper.find('input.stub-input').setValue('灰度升级')
+    chooseFirmware(11)
+    await flushPromises()
+
+    await dialogButton('创建').trigger('click')
+    await settle()
+
+    expect(mocks.createTask).toHaveBeenCalledTimes(1)
+    expect(mocks.message.success).toHaveBeenCalledWith(
+      '升级任务已创建；3 台设备正在其他升级任务中，已自动跳过'
+    )
+  })
+
+  it('灰度策略会把批次参数带进创建请求', async () => {
+    mocks.createTask.mockResolvedValue({ code: 200, data: BATCHED_TASK })
+    mountPage()
+    await settle()
+    await openDialog()
+
+    await wrapper.find('input.stub-input').setValue('灰度升级')
+    chooseFirmware(11)
+    await flushPromises()
+    // 切到「分批灰度」：该弹窗有两个 radio-group，灰度方式的是最后一个
+    const radioGroups = wrapper.findAllComponents({ name: 'ElRadioGroup' })
+    radioGroups[radioGroups.length - 1].vm.$emit('update:modelValue', 'BATCHED')
+    await flushPromises()
+
+    await dialogButton('创建').trigger('click')
+    await settle()
+
+    expect(mocks.createTask).toHaveBeenCalledWith({
+      name: '灰度升级',
+      firmwareId: 11,
+      target: { productIds: [3] },
+      batchMode: 'BATCHED',
+      batchSize: 10,
+      batchIntervalMs: 0
+    })
   })
 })

@@ -29,6 +29,22 @@ export const STATUS_LABELS = {
   RECOVERED: '已恢复'
 }
 
+export const AGGREGATE_LABELS = {
+  AVG: '均值',
+  MIN: '最小值',
+  MAX: '最大值',
+  SUM: '求和',
+  COUNT: '计数'
+}
+
+export const AGGREGATE_OPTIONS = [
+  { value: 'AVG', label: '均值（AVG）' },
+  { value: 'MIN', label: '最小值（MIN）' },
+  { value: 'MAX', label: '最大值（MAX）' },
+  { value: 'SUM', label: '求和（SUM）' },
+  { value: 'COUNT', label: '计数（COUNT）' }
+]
+
 export const OPERATOR_LABELS = {
   GT: '>',
   GTE: '≥',
@@ -75,8 +91,14 @@ export const STATUS_OPTIONS = [
 export function formatRuleCondition(rule) {
   if (!rule) return '—'
   switch (rule.sourceType) {
-    case 'THRESHOLD':
-      return `${rule.identifier ?? '—'} ${OPERATOR_LABELS[rule.operator] ?? rule.operator ?? ''} ${rule.thresholdValue ?? '—'}`
+    case 'THRESHOLD': {
+      const condition = `${rule.identifier ?? '—'} ${OPERATOR_LABELS[rule.operator] ?? rule.operator ?? ''} ${rule.thresholdValue ?? '—'}`
+      if (rule.windowSeconds > 0) {
+        const aggregate = AGGREGATE_LABELS[rule.aggregateType] || '均值'
+        return `${rule.windowSeconds}s ${aggregate} · ${condition}`
+      }
+      return condition
+    }
     case 'OFFLINE':
       return rule.offlineSeconds > 0 ? `离线超过 ${rule.offlineSeconds}s` : '变为离线即告警'
     case 'EVENT':

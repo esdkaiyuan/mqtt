@@ -75,6 +75,12 @@ export const deviceApi = {
   getDeviceShadow: (deviceKey) => api.get(`/devices/${deviceKey}/shadow`),
 
   /**
+   * 多设备影子聚合（T-42）：不传 deviceIds 返回本人全部设备，显式传入最多 200 台。
+   * 返回 DeviceShadowSummaryVO[]，供影子总览页横向对比。
+   */
+  getShadowSummary: (params) => api.get('/devices/shadow-summary', { params }),
+
+  /**
    * 写入影子期望值：等价于 type=property_set 命令
    * 在线设备返回 SENT 命令记录，离线设备返回 QUEUED 并在上线后自动补发
    */

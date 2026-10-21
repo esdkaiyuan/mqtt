@@ -4,10 +4,14 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mqtt.cloud.common.constant.OtaStatusValue;
+import com.mqtt.cloud.config.OtaProperties;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.entity.OtaFirmware;
 import com.mqtt.cloud.entity.OtaUpgradeRecord;
 import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.ingest.ResolvedEvent;
+import com.mqtt.cloud.mapper.OtaFirmwareMapper;
+import com.mqtt.cloud.mapper.OtaUpgradeBatchMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeRecordMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeTaskMapper;
 import com.mqtt.cloud.service.OtaProgressPayload;
@@ -47,6 +51,9 @@ class OtaProgressServiceImplTest {
 
     private OtaUpgradeRecordMapper recordMapper;
     private OtaUpgradeTaskMapper taskMapper;
+    private OtaUpgradeBatchMapper batchMapper;
+    private OtaFirmwareMapper firmwareMapper;
+    private OtaProperties properties;
     private ObjectMapper objectMapper;
     private OtaProgressServiceImpl service;
 
@@ -55,8 +62,12 @@ class OtaProgressServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), OtaUpgradeRecord.class);
         recordMapper = mock(OtaUpgradeRecordMapper.class);
         taskMapper = mock(OtaUpgradeTaskMapper.class);
+        batchMapper = mock(OtaUpgradeBatchMapper.class);
+        firmwareMapper = mock(OtaFirmwareMapper.class);
+        properties = new OtaProperties();
         objectMapper = new ObjectMapper();
-        service = new OtaProgressServiceImpl(recordMapper, taskMapper, objectMapper);
+        service = new OtaProgressServiceImpl(recordMapper, taskMapper, batchMapper, firmwareMapper,
+                properties, objectMapper);
     }
 
     // ---------- 事件分发 ----------

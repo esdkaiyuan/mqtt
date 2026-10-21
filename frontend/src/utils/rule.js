@@ -159,3 +159,93 @@ export function normalizeRuleScope(form) {
   if (form.scopeType !== 'GROUP') form.groupIds = []
   if (form.scopeType !== 'TAG') form.tagIds = []
 }
+
+/* ---------- 多条件 / 多动作（T-33 / G-6-7） ---------- */
+
+export const CONDITION_LOGIC_LABELS = {
+  AND: '全部满足（AND）',
+  OR: '任一满足（OR）'
+}
+
+/** 条件数 / 动作数上限，与后端 RuleConstants 保持一致。 */
+export const MAX_CONDITIONS = 10
+export const MAX_ACTIONS = 5
+
+/**
+ * 空条件项。附加条件与动作都从它克隆，保证结构与首项完全一致。
+ */
+export function emptyCondition(sourceType = 'PROPERTY') {
+  return {
+    identifier: '',
+    operator: 'GT',
+    thresholdValue: '',
+    eventType: '',
+    sourceType
+  }
+}
+
+/**
+ * 空动作项。动作配置仍复用表单上的扁平字段（targetIdentifier / topic / url ...），
+ * 这样附加动作与首个动作共用同一套 buildRuleActionConfig，配置约束自然一致。
+ */
+export function emptyAction(actionType = 'UPDATE_PROPERTY') {
+  return {
+    actionType,
+    targetIdentifier: '',
+    targetValue: '',
+    commandType: 'property_set',
+    commandParams: '',
+    topic: '',
+    qos: 1,
+    url: '',
+    method: 'POST',
+    headers: '',
+    payloadTemplate: ''
+  }
+}
+
+/** 动作类型 → 中文文案（校验提示用）。 */
+export function actionLabel(actionType) {
+  return ACTION_TYPE_LABELS[actionType] || actionType || '未知动作'
+}
+
+/** 校验单个条件，返回错误文案；通过则返回空串。 */
+export function validateCondition(condition, numericOperators, index) {
+  const at = `第 ${index + 1} 个条件`
+  if (!String(condition.identifier || '').trim()) return `${at}：请填写标识符`
+  if (condition.sourceType !== 'EVENT') {
+    const threshold = String(condition.thresholdValue || '').trim()
+    if (!threshold) return `${at}：请填写阈值`
+    if (numericOperators.has(condition.operator) && Number.isNaN(Number(threshold))) {
+      return `${at}：数值比较符下阈值必须是数字`
+    }
+  }
+  return ''
+}
+
+/** 校验单个动作，返回错误文案；通过则返回空串。复用与首个动作完全相同的约束。 */
+export function validateAction(action) {
+  switch (action.actionType) {
+    case 'UPDATE_PROPERTY':
+      if (!String(action.targetIdentifier || '').trim()) return '请填写目标属性标识符'
+      if (!String(action.targetValue || '').trim()) return '请填写写入值'
+      return ''
+    case 'SEND_COMMAND':
+      if (!String(action.targetIdentifier || '').trim()) return '请填写目标标识符'
+      return ''
+    case 'FORWARD_MQTT':
+      if (!String(action.topic || '').trim()) return '请填写目标 Topic'
+      if (action.topic.includes('#') || action.topic.includes('+')) {
+        return 'Topic 不允许包含通配符 # / +'
+      }
+      return ''
+    case 'FORWARD_HTTP':
+      if (!String(action.url || '').trim()) return '请填写目标 URL'
+      if (!/^https?:\/\//.test(String(action.url).trim())) {
+        return 'URL 必须以 http:// 或 https:// 开头'
+      }
+      return ''
+    default:
+      return ''
+  }
+}

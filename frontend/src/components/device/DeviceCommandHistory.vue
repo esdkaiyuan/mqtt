@@ -1,7 +1,20 @@
 <template>
   <div class="device-command-history">
-    <h3 class="card-title">命令记录</h3>
-    <p class="card-desc">每次下发的完整生命周期，按创建时间倒序</p>
+    <div class="device-command-history__header">
+      <div>
+        <h3 class="card-title">命令记录</h3>
+        <p class="card-desc">每次下发的完整生命周期，按创建时间倒序</p>
+      </div>
+      <el-button
+        v-if="canExport"
+        :loading="exporting"
+        :disabled="!deviceKey"
+        size="small"
+        @click="handleExport"
+      >
+        导出 CSV
+      </el-button>
+    </div>
 
     <el-table v-loading="loading" :data="records" border stripe size="small">
       <el-table-column label="时间" min-width="170">
@@ -78,20 +91,39 @@
 
 <script setup>
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import EmptyState from '@/components/common/EmptyState.vue'
+import { exportApi } from '@/api/export'
+import { downloadResponse } from '@/utils/download'
 
-defineProps({
+const props = defineProps({
   records: { type: Array, default: () => [] },
   total: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
   page: { type: Number, default: 1 },
-  size: { type: Number, default: 10 }
+  size: { type: Number, default: 10 },
+  deviceKey: { type: String, default: '' },
+  /** 共享设备不提供 CSV 导出（导出接口仍按所有者鉴权）。 */
+  canExport: { type: Boolean, default: true }
 })
 
 defineEmits(['page-change'])
 
 const detailVisible = ref(false)
 const detail = ref(null)
+const exporting = ref(false)
+
+async function handleExport() {
+  if (!props.deviceKey) return
+  exporting.value = true
+  try {
+    const response = await exportApi.commands(props.deviceKey, { page: 1 })
+    const name = downloadResponse(response, 'device-commands.csv')
+    ElMessage.success(`已导出 ${name}`)
+  } finally {
+    exporting.value = false
+  }
+}
 
 function openDetail(row) {
   detail.value = row
@@ -139,6 +171,13 @@ function pretty(value) {
 </script>
 
 <style scoped>
+.device-command-history__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+}
+
 .card-title {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);

@@ -75,48 +75,79 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item :label="form.triggerType === 'EVENT' ? '事件标识符' : '属性标识符'" required>
-          <el-input
-            v-model="form.triggerIdentifier"
-            maxlength="64"
-            :placeholder="form.triggerType === 'EVENT' ? '如：door_open' : '如：temperature'"
-          />
-        </el-form-item>
 
-        <template v-if="form.triggerType === 'PROPERTY'">
-          <el-form-item label="触发判定">
-            <el-radio-group v-model="form.thresholdEnabled">
-              <el-radio-button :value="false">任意上报即触发</el-radio-button>
-              <el-radio-button :value="true">满足阈值时触发</el-radio-button>
-            </el-radio-group>
+        <p v-if="statusTrigger" class="form-hint form-hint--block">
+          设备状态变化时触发（上线 = ONLINE，下线 = OFFLINE）；不选设备表示账号下任意设备。
+        </p>
+
+        <template v-else-if="shadowTrigger">
+          <el-form-item label="变更侧" required>
+            <el-select v-model="form.triggerShadowSide" class="form-control">
+              <el-option
+                v-for="option in SHADOW_SIDE_OPTIONS"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
           </el-form-item>
-          <div v-if="form.thresholdEnabled" class="form-row">
-            <el-form-item label="比较符" required>
-              <el-select v-model="form.triggerOperator" class="form-control">
-                <el-option
-                  v-for="option in OPERATOR_OPTIONS"
-                  :key="option.value"
-                  :label="option.label"
-                  :value="option.value"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="阈值" required>
-              <el-input v-model="form.triggerThreshold" placeholder="如：30" />
-            </el-form-item>
-          </div>
+          <el-form-item label="属性标识符（可选）">
+            <el-input
+              v-model="form.triggerIdentifier"
+              maxlength="64"
+              placeholder="留空表示任意属性变更"
+            />
+          </el-form-item>
+          <p class="form-hint form-hint--block">
+            影子版本更新且属性值确有变化时触发；desired 变更仅控制台 / 开放 API / 上位机等外部写入触发，
+            场景与规则内部写入不会自触发。
+          </p>
         </template>
 
-        <el-form-item v-else label="事件类型（可选）">
-          <el-select v-model="form.triggerEventType" clearable class="form-control" placeholder="不限事件类型">
-            <el-option
-              v-for="option in EVENT_TYPE_OPTIONS"
-              :key="option.value"
-              :label="option.label"
-              :value="option.value"
+        <template v-else>
+          <el-form-item :label="form.triggerType === 'EVENT' ? '事件标识符' : '属性标识符'" required>
+            <el-input
+              v-model="form.triggerIdentifier"
+              maxlength="64"
+              :placeholder="form.triggerType === 'EVENT' ? '如：door_open' : '如：temperature'"
             />
-          </el-select>
-        </el-form-item>
+          </el-form-item>
+
+          <template v-if="form.triggerType === 'PROPERTY'">
+            <el-form-item label="触发判定">
+              <el-radio-group v-model="form.thresholdEnabled">
+                <el-radio-button :value="false">任意上报即触发</el-radio-button>
+                <el-radio-button :value="true">满足阈值时触发</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+            <div v-if="form.thresholdEnabled" class="form-row">
+              <el-form-item label="比较符" required>
+                <el-select v-model="form.triggerOperator" class="form-control">
+                  <el-option
+                    v-for="option in OPERATOR_OPTIONS"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="阈值" required>
+                <el-input v-model="form.triggerThreshold" placeholder="如：30" />
+              </el-form-item>
+            </div>
+          </template>
+
+          <el-form-item v-else label="事件类型（可选）">
+            <el-select v-model="form.triggerEventType" clearable class="form-control" placeholder="不限事件类型">
+              <el-option
+                v-for="option in EVENT_TYPE_OPTIONS"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+          </el-form-item>
+        </template>
       </template>
 
       <div class="form-section-title">② 条件组</div>
@@ -164,6 +195,7 @@
     v-model="testVisible"
     :scene-id="editingId"
     :trigger-type="form.triggerType"
+    :trigger-shadow-side="form.triggerShadowSide"
     :devices="devices"
   />
 </template>
@@ -184,11 +216,20 @@ import { useSceneMutations } from '@/composables/useScenes'
 import { unwrapResult } from '@/utils/result'
 import {
   TRIGGER_SOURCE_OPTIONS,
+  SHADOW_SIDE_OPTIONS,
   OPERATOR_OPTIONS,
   EVENT_TYPE_OPTIONS,
   isForwardAction,
+  isFlowStep,
+  isShadowTrigger,
+  isStatusTrigger,
+  normalizeParallelMembership,
   normalizeTriggerSource,
-  parseJsonObject
+  parseJsonObject,
+  seqOrNull,
+  validateParallelStructure,
+  MAX_PARALLEL_BRANCHES,
+  MIN_PARALLEL_BRANCHES
 } from '@/utils/scene'
 
 const props = defineProps({
@@ -214,6 +255,8 @@ const { saving, createScene, updateScene } = useSceneMutations()
 
 const editingId = computed(() => props.scene?.id ?? null)
 const timerSource = computed(() => form.triggerType === 'TIMER')
+const statusTrigger = computed(() => isStatusTrigger(form.triggerType))
+const shadowTrigger = computed(() => isShadowTrigger(form.triggerType))
 
 const viewMode = ref(DEFAULT_VIEW_MODE)
 const canvasViewRef = ref(null)
@@ -248,6 +291,7 @@ function emptyForm() {
     triggerThreshold: '',
     thresholdEnabled: false,
     triggerEventType: '',
+    triggerShadowSide: 'REPORTED',
     timerCron: '',
     conditionLogic: 'AND',
     conditions: [],
@@ -265,6 +309,28 @@ function toEditorStep(step) {
   const targetConfig = step.targetConfig && typeof step.targetConfig === 'object' ? step.targetConfig : null
   let actionConfig
   switch (step.actionType) {
+    case 'BRANCH':
+      actionConfig = {
+        deviceId: config.deviceId ?? null,
+        identifier: config.identifier || '',
+        operator: config.operator || 'GT',
+        threshold: config.threshold ?? '',
+        trueSeq: seqOrNull(config.trueSeq),
+        falseSeq: seqOrNull(config.falseSeq)
+      }
+      break
+    case 'LOOP':
+      actionConfig = {
+        startSeq: seqOrNull(config.startSeq),
+        times: config.times ?? 3
+      }
+      break
+    case 'PARALLEL':
+      actionConfig = { branches: Number(config.branches) || 2 }
+      break
+    case 'JOIN':
+      actionConfig = {}
+      break
     case 'SEND_COMMAND':
       actionConfig = {
         commandType: config.commandType || 'property_set',
@@ -311,6 +377,8 @@ function toEditorStep(step) {
     targetConfig:
       targetConfig || { deviceIds: [], productIds: [], groupIds: [], tagIds: [] },
     actionConfig,
+    parallelSeq: step.parallelSeq ?? null,
+    branchIndex: Number.isInteger(step.branchIndex) ? step.branchIndex : null,
     enabled: step.enabled === 1 || step.enabled === true
   }
 }
@@ -340,6 +408,7 @@ function fillForm(scene) {
     triggerThreshold: scene.triggerThreshold ?? '',
     thresholdEnabled: hasThreshold,
     triggerEventType: scene.triggerEventType || '',
+    triggerShadowSide: scene.triggerShadowSide || 'REPORTED',
     timerCron: scene.timerCron || '',
     conditionLogic: scene.conditionLogic || 'AND',
     cooldownSeconds: scene.cooldownSeconds ?? 0,
@@ -406,6 +475,45 @@ function validateStepActionConfig(step, index) {
   const label = `第 ${index + 1} 步`
   const config = step.actionConfig || {}
   switch (step.actionType) {
+    case 'BRANCH': {
+      if (!String(config.identifier || '').trim()) return `${label}：请填写分支条件属性标识符`
+      if (!config.operator) return `${label}：请选择分支条件比较符`
+      if (!String(config.threshold ?? '').trim()) return `${label}：请填写分支条件阈值`
+      if (NUMERIC_OPERATORS.has(config.operator) && Number.isNaN(Number(config.threshold))) {
+        return `${label}：数值比较符下分支条件阈值必须是数字`
+      }
+      const trueSeq = seqOrNull(config.trueSeq)
+      const falseSeq = seqOrNull(config.falseSeq)
+      if (trueSeq == null && falseSeq == null) {
+        return `${label}：请至少设置一个分支跳转目标`
+      }
+      for (const [name, target] of [['为真', trueSeq], ['为假', falseSeq]]) {
+        if (target == null) continue
+        if (target <= index + 1) {
+          return `${label}：条件${name}的跳转目标必须大于当前步骤`
+        }
+      }
+      break
+    }
+    case 'LOOP': {
+      const startSeq = seqOrNull(config.startSeq)
+      if (startSeq == null || startSeq < 1 || startSeq > index) {
+        return `${label}：请选择当前步骤之前的循环体起始步骤`
+      }
+      if (!Number.isInteger(config.times) || config.times < 1 || config.times > 20) {
+        return `${label}：循环次数需在 1 ~ 20`
+      }
+      break
+    }
+    case 'PARALLEL': {
+      const branches = Number(config.branches)
+      if (!Number.isInteger(branches) || branches < MIN_PARALLEL_BRANCHES || branches > MAX_PARALLEL_BRANCHES) {
+        return `${label}：并行分支数需在 ${MIN_PARALLEL_BRANCHES} ~ ${MAX_PARALLEL_BRANCHES}`
+      }
+      break
+    }
+    case 'JOIN':
+      break
     case 'UPDATE_PROPERTY':
       if (!String(config.identifier || '').trim()) return `${label}：请填写目标属性标识符`
       if (!String(config.value ?? '').trim()) return `${label}：请填写写入值`
@@ -450,23 +558,31 @@ function targetConfigIsEmpty(config) {
 function validateSteps() {
   if (form.steps.length === 0) return '请至少添加一个执行步骤'
   if (form.steps.length > MAX_STEPS) return `每个场景最多 ${MAX_STEPS} 个步骤`
+  normalizeParallelMembership(form.steps)
   for (let index = 0; index < form.steps.length; index += 1) {
     const step = form.steps[index]
     const label = `第 ${index + 1} 步`
     if (step.delaySeconds < 0 || step.delaySeconds > 86400) {
       return `${label}：延时需在 0 ~ 86400 秒`
     }
-    const targetType = isForwardAction(step.actionType) ? 'TRIGGER' : timerSource.value ? 'FIXED' : step.targetType
-    if (!isForwardAction(step.actionType) && timerSource.value && targetType !== 'FIXED') {
+    const flowStep = isFlowStep(step.actionType)
+    const targetType = flowStep
+      ? 'NONE'
+      : isForwardAction(step.actionType)
+        ? 'TRIGGER'
+        : timerSource.value
+          ? 'FIXED'
+          : step.targetType
+    if (!flowStep && !isForwardAction(step.actionType) && timerSource.value && targetType !== 'FIXED') {
       return `${label}：定时触发下目标必须指定设备`
     }
-    if (targetType === 'FIXED' && targetConfigIsEmpty(step.targetConfig)) {
+    if (!flowStep && targetType === 'FIXED' && targetConfigIsEmpty(step.targetConfig)) {
       return `${label}：请至少选择一个目标`
     }
     const configError = validateStepActionConfig(step, index)
     if (configError) return configError
   }
-  return ''
+  return validateParallelStructure(form.steps)
 }
 
 function validateForm() {
@@ -475,7 +591,12 @@ function validateForm() {
   if (form.triggerType === 'TIMER') {
     if (!String(form.timerCron || '').trim()) return '请填写 Cron 表达式'
     if (!isValidCron(form.timerCron)) return 'Cron 表达式需为合法 5 字段'
-  } else {
+  } else if (shadowTrigger.value) {
+    if (!['REPORTED', 'DESIRED', 'ANY'].includes(form.triggerShadowSide)) {
+      return '请选择影子变更侧'
+    }
+    if (form.triggerIdentifier.trim().length > 64) return '属性标识符不能超过 64 个字符'
+  } else if (!statusTrigger.value) {
     if (!form.triggerIdentifier.trim()) {
       return form.triggerType === 'EVENT' ? '请填写事件标识符' : '请填写属性标识符'
     }
@@ -497,6 +618,21 @@ function validateForm() {
 function buildStepActionConfig(step) {
   const config = step.actionConfig || {}
   switch (step.actionType) {
+    case 'BRANCH':
+      return {
+        deviceId: config.deviceId || null,
+        identifier: String(config.identifier).trim(),
+        operator: config.operator,
+        threshold: String(config.threshold ?? '').trim(),
+        trueSeq: seqOrNull(config.trueSeq),
+        falseSeq: seqOrNull(config.falseSeq)
+      }
+    case 'LOOP':
+      return { startSeq: seqOrNull(config.startSeq), times: Number(config.times) }
+    case 'PARALLEL':
+      return { branches: Number(config.branches) }
+    case 'JOIN':
+      return {}
     case 'UPDATE_PROPERTY':
       return { identifier: String(config.identifier).trim(), value: String(config.value).trim() }
     case 'SEND_COMMAND': {
@@ -521,29 +657,41 @@ function buildStepActionConfig(step) {
 }
 
 function buildStepPayload(step, index) {
-  const targetType = isForwardAction(step.actionType)
-    ? 'TRIGGER'
-    : timerSource.value
-      ? 'FIXED'
-      : step.targetType
+  const flowStep = isFlowStep(step.actionType)
+  const targetType = flowStep
+    ? 'NONE'
+    : isForwardAction(step.actionType)
+      ? 'TRIGGER'
+      : timerSource.value
+        ? 'FIXED'
+        : step.targetType
   return {
     seq: index + 1,
     delaySeconds: Number(step.delaySeconds ?? 0),
     actionType: step.actionType,
     targetType,
-    targetConfig: targetType === 'FIXED' ? { ...step.targetConfig } : null,
+    targetConfig: !flowStep && targetType === 'FIXED' ? { ...step.targetConfig } : null,
     actionConfig: buildStepActionConfig(step),
+    parallelSeq: flowStep ? null : step.parallelSeq ?? null,
+    branchIndex: flowStep ? null : step.branchIndex ?? null,
     enabled: Boolean(step.enabled)
   }
 }
 
 function buildPayload() {
+  normalizeParallelMembership(form.steps)
   const payload = {
     name: form.name.trim(),
     description: form.description.trim() || null,
     triggerType: form.triggerType,
     triggerDeviceId: form.triggerType === 'TIMER' ? null : form.triggerDeviceId ?? null,
-    triggerIdentifier: form.triggerType === 'TIMER' ? null : form.triggerIdentifier.trim(),
+    triggerIdentifier:
+      form.triggerType === 'TIMER' || statusTrigger.value
+        ? null
+        : shadowTrigger.value
+          ? (form.triggerIdentifier.trim() || null)
+          : form.triggerIdentifier.trim(),
+    triggerShadowSide: shadowTrigger.value ? form.triggerShadowSide : null,
     triggerOperator: null,
     triggerThreshold: null,
     triggerEventType: null,
@@ -687,6 +835,13 @@ onMounted(() => {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
   line-height: 1.5;
+}
+
+.form-hint--block {
+  margin: 0 0 var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-bg);
+  border-radius: var(--border-radius);
 }
 
 /* 画布视图：内容区撑满抽屉，交由画布自身滚动 / 缩放 */

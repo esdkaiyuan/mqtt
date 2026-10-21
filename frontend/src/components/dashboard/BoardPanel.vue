@@ -11,6 +11,7 @@
       :device-names="deviceNames"
       :chart-type="panel.chartType"
       :aggregation="panel.aggregation"
+      :dark="dark"
     />
   </div>
 </template>
@@ -29,7 +30,11 @@ const props = defineProps({
   /** DashboardConfig.Panel：title / deviceIds / identifier / bucket / rangeDays / chartType / aggregation */
   panel: { type: Object, required: true },
   /** 设备 id → 设备名，用于图例；缺省时图表回退为「设备 {id}」 */
-  deviceNames: { type: Object, default: () => ({}) }
+  deviceNames: { type: Object, default: () => ({}) },
+  /** 自动刷新间隔（秒），0 表示不自动刷新（大屏用）。 */
+  refreshInterval: { type: Number, default: 0 },
+  /** 大屏深色模式。 */
+  dark: { type: Boolean, default: false }
 })
 
 /**
@@ -49,7 +54,8 @@ const params = computed(() =>
 const panelQuery = useQuery({
   queryKey: computed(() => ['board-panel-history', params.value]),
   queryFn: async () => unwrapResult(await propertyHistoryApi.query(params.value), EMPTY),
-  enabled: computed(() => Boolean(props.panel.deviceIds?.length && props.panel.identifier))
+  enabled: computed(() => Boolean(props.panel.deviceIds?.length && props.panel.identifier)),
+  refetchInterval: computed(() => (props.refreshInterval > 0 ? props.refreshInterval * 1000 : false))
 })
 
 const series = computed(() => panelQuery.data.value ?? EMPTY)

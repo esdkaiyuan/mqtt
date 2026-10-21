@@ -5,38 +5,73 @@
 
     <!-- T-22 设计文档 §7.1：补投候选查询与活跃记录查询。
          selectDispatchCandidates 命中 idx_status（status 等值 + 主键升序）；
-         selectLatestActiveByDevice 命中 idx_device（device_id 等值 + 主键降序）。 -->
+         selectLatestActiveByDevice 命中 idx_device（device_id 等值 + 主键降序）。
+         T-32：recordColumns 补 batch_no / verify_status / reported_md5 三列（V19 新增，列清单必须同步，
+         否则这些字段在所有走 recordColumns 的查询里恒为 null）。 -->
 
     <sql id="recordColumns">
-        id, task_id, device_id, firmware_id, version, status, progress, message,
-        command_id, dispatched_at, last_report_at, created_at, updated_at
+        id, task_id, device_id, firmware_id, version, batch_no, status, progress,
+        verify_status, reported_md5, message, command_id, dispatched_at, last_report_at,
+        created_at, updated_at
     </sql>
 
     <!-- 同 recordColumns，但带 r. 前缀，供 JOIN device 的查询使用，避免 id 等同名列歧义。 -->
     <sql id="recordColumnsAliased">
-        r.id, r.task_id, r.device_id, r.firmware_id, r.version, r.status, r.progress, r.message,
-        r.command_id, r.dispatched_at, r.last_report_at, r.created_at, r.updated_at
+        r.id, r.task_id, r.device_id, r.firmware_id, r.version, r.batch_no, r.status, r.progress,
+        r.verify_status, r.reported_md5, r.message, r.command_id, r.dispatched_at, r.last_report_at,
+        r.created_at, r.updated_at
     </sql>
 
     <!-- 补投候选：仅取仍待下发（status = 'PENDING'）且设备在线、未逻辑删除的记录，按主键升序分批。
-         device.status = 'ONLINE' 与 DeviceStatusValue.ONLINE 一致；device 有 deleted 列，需过滤 d.deleted = 0。 -->
+         device.status = 'ONLINE' 与 DeviceStatusValue.ONLINE 一致；device 有 deleted 列，需过滤 d.deleted = 0。
+         T-32：额外排除所属任务已 ABORTED 的记录 —— 终止任务的 PENDING 记录由 abort 一次性置 SKIPPED，
+         但若 abort 与补投并发，补投查询必须不会把已终止任务的设备重新拉起来下发。 -->
     <select id="selectDispatchCandidates" resultType="com.mqtt.cloud.entity.OtaUpgradeRecord">
         SELECT <include refid="recordColumnsAliased"/>
         FROM ota_upgrade_record r
         JOIN device d ON d.id = r.device_id AND d.deleted = 0
-        WHERE r.status = #{status} AND d.status = 'ONLINE'
+        JOIN ota_upgrade_task t ON t.id = r.task_id
+        WHERE r.status = #{status}
+          AND d.status = 'ONLINE'
+          AND t.status &lt;&gt; 'ABORTED'
         ORDER BY r.id ASC
         LIMIT #{limit}
     </select>
 
-    <!-- 设备最近一条进行中记录：上行进度不带任务标识，以此归位。 -->
+    <!-- 设备最近一条进行中记录：上行进度不带任务标识，以此归位。
+         T-32：非终态集合补 VERIFYING —— 设备报 verifying 时该记录正处校验中，
+         若漏了它，进度报文会归位到更早的一条 PENDING 记录上，导致校验结果写错行。 -->
     <select id="selectLatestActiveByDevice" resultType="com.mqtt.cloud.entity.OtaUpgradeRecord">
         SELECT <include refid="recordColumns"/>
         FROM ota_upgrade_record
         WHERE device_id = #{deviceId}
-          AND status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING')
+          AND status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING', 'VERIFYING')
         ORDER BY id DESC
         LIMIT 1
+    </select>
+
+    <!-- T-32 / G-11-4：取给定设备集合中「在别的任务里仍非终态」的 device_id，用于设备级任务互斥。
+         命中 idx_device(device_id)；excludeTaskId 传入当前任务自身，使同任务的既有记录不被误判为冲突
+         （暂停后手动推进、以及 retry 重投本任务未成功设备时都会命中这条）。 -->
+    <select id="selectActiveDeviceIdsExcludingTask" resultType="java.lang.Long">
+        SELECT DISTINCT r.device_id
+        FROM ota_upgrade_record r
+        JOIN ota_upgrade_task t ON t.id = r.task_id
+        WHERE r.device_id IN
+        <foreach collection="deviceIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+          AND r.status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING', 'VERIFYING')
+          AND r.task_id &lt;&gt; #{excludeTaskId}
+          AND t.status IN ('RUNNING', 'PAUSED')
+        ORDER BY r.device_id ASC
+    </select>
+
+    <!-- T-32：取某任务全部未下发的记录主键，供 abort 批量置 SKIPPED。
+         命中 idx_task_status(task_id, status)。 -->
+    <select id="selectPendingIdsByTask" resultType="java.lang.Long">
+        SELECT id
+        FROM ota_upgrade_record
+        WHERE task_id = #{taskId} AND status = 'PENDING'
+        ORDER BY id ASC
     </select>
 
 </mapper>

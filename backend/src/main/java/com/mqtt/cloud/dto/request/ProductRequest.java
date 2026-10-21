@@ -24,6 +24,18 @@ public class ProductRequest {
      */
     private String authMode;
 
+    /**
+     * 接入协议（T-30 / T-31 P4）：MQTT / HTTP / MODBUS / OPC_UA / GATEWAY_MQTT。
+     * 创建时缺省 MQTT；更新时缺省表示保持原值，避免旧客户端编辑产品把 MODBUS 意外改回 MQTT。
+     */
+    private String protocolType;
+
+    /** 平台侧驱动标识（MODBUS 默认 modbus-tcp）；仅 MODBUS / OPC_UA 生效 */
+    private String driverId;
+
+    /** 驱动配置 JSON（MODBUS：host / port / unitId / 超时等）；仅 MODBUS / OPC_UA 生效 */
+    private String driverConfig;
+
     private String topicPrefix;
 
     private String payloadFormat;

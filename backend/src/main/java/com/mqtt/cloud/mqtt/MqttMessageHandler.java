@@ -117,10 +117,20 @@ public class MqttMessageHandler implements MqttCallback {
             return;
         }
 
+        // 订阅过滤器由产品模板生成（支持 device/{key}、{productKey}/{key} 等），
+        // 但消息类型固定在前缀末尾追加，故 deviceKey 永远是倒数第二段。
+        // 历史上这里写死 parts[1]/parts[2]，自定义模板会把 productKey 当成 deviceKey。
+        String deviceKey = parts[parts.length - 2];
+        String messageType = parts[parts.length - 1];
+        if (deviceKey.isBlank() || !MESSAGE_TYPE_QOS.containsKey(messageType)) {
+            log.warn("忽略未知消息类型或空设备标识的 Topic: {}", topic);
+            return;
+        }
+
         // T-30 E1：MQTT 无上游 traceId，按 deviceKey + 时间戳派生一个可读且可反查的标识
-        String traceId = "mqtt-" + parts[1] + "-" + System.currentTimeMillis();
+        String traceId = "mqtt-" + deviceKey + "-" + System.currentTimeMillis();
         IngestRecord record = new IngestRecord(
-                parts[1], topic, parts[2], payload, mqttMessage.getQos(), LocalDateTime.now(), traceId);
+                deviceKey, topic, messageType, payload, mqttMessage.getQos(), LocalDateTime.now(), traceId);
 
         if (!ingestProperties.isEnabled()) {
             legacySyncHandle(record);

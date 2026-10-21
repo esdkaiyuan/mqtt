@@ -3,16 +3,19 @@ package com.mqtt.cloud.mqtt;
 import com.mqtt.cloud.entity.Product;
 import com.mqtt.cloud.ingest.IngestPipeline;
 import com.mqtt.cloud.ingest.IngestProperties;
+import com.mqtt.cloud.ingest.IngestRecord;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.MessageService;
 import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.RealtimeStreamService;
 import com.mqtt.cloud.service.TopicPrefixResolver;
 import com.mqtt.cloud.service.WebhookDispatcher;
+import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -115,6 +118,41 @@ class MqttMessageHandlerTest {
                 "$share/mqtt-backend/esp32-fall/+/lwt",
                 "$share/mqtt-backend/esp32-fall/+/reply",
                 "$share/mqtt-backend/esp32-fall/+/ota");
+    }
+
+    /** 自定义模板下 deviceKey 位于倒数第二段，不能被当成 productKey。 */
+    @Test
+    void custom_topic_template_should_extract_device_key_from_last_two_segments() {
+        MqttMessageHandler handler = new MqttMessageHandler(clientManager, new MqttProperties(), deviceService,
+                messageService, webhookDispatcher, realtimeStreamService, ingestPipeline, ingestProperties,
+                productService, new TopicPrefixResolver());
+        MqttMessage message = new MqttMessage("{\"method\":\"thing.event.property.post\",\"params\":{}}"
+                .getBytes(StandardCharsets.UTF_8));
+        message.setQos(1);
+
+        handler.messageArrived("esp32-fall/sensor-01/data", message);
+
+        ArgumentCaptor<IngestRecord> captor = ArgumentCaptor.forClass(IngestRecord.class);
+        verify(ingestPipeline).submit(captor.capture());
+        assertThat(captor.getValue().deviceKey()).isEqualTo("sensor-01");
+        assertThat(captor.getValue().messageType()).isEqualTo("data");
+        assertThat(captor.getValue().topic()).isEqualTo("esp32-fall/sensor-01/data");
+    }
+
+    /** 默认模板仍按原语义解析。 */
+    @Test
+    void default_topic_template_should_still_extract_device_key() {
+        MqttMessageHandler handler = new MqttMessageHandler(clientManager, new MqttProperties(), deviceService,
+                messageService, webhookDispatcher, realtimeStreamService, ingestPipeline, ingestProperties,
+                productService, new TopicPrefixResolver());
+        MqttMessage message = new MqttMessage("{}".getBytes(StandardCharsets.UTF_8));
+
+        handler.messageArrived("device/sensor-01/heartbeat", message);
+
+        ArgumentCaptor<IngestRecord> captor = ArgumentCaptor.forClass(IngestRecord.class);
+        verify(ingestPipeline).submit(captor.capture());
+        assertThat(captor.getValue().deviceKey()).isEqualTo("sensor-01");
+        assertThat(captor.getValue().messageType()).isEqualTo("heartbeat");
     }
 
     /** 无启用产品时不生成任何订阅，避免订阅到已停用产品的主题。 */

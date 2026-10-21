@@ -89,7 +89,7 @@
           <el-radio-button value="async">异步</el-radio-button>
           <el-radio-button value="sync">同步等待回执</el-radio-button>
         </el-radio-group>
-        <el-button type="primary" :loading="sending" :disabled="!canSubmit" @click="submit">
+        <el-button type="primary" :loading="sending" :disabled="!canSubmit || !canOperate" @click="submit">
           下发命令
         </el-button>
       </div>
@@ -113,7 +113,9 @@ const props = defineProps({
   capability: { type: Object, required: true },
   deviceKey: { type: String, default: '' },
   loading: { type: Boolean, default: false },
-  sending: { type: Boolean, default: false }
+  sending: { type: Boolean, default: false },
+  /** 共享分组 VIEW 成员或 VIEWER 角色只能查看能力，不能下发。 */
+  canOperate: { type: Boolean, default: true }
 })
 
 const emit = defineEmits(['send'])

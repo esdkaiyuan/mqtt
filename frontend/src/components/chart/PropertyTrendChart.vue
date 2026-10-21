@@ -1,5 +1,5 @@
 <template>
-  <chart-card :title="title" :subtitle="subtitle" full-width>
+  <chart-card :title="title" :subtitle="subtitle" full-width :dark="dark">
     <echart-chart :option="option" :height="height" />
   </chart-card>
 </template>
@@ -22,7 +22,9 @@ const props = defineProps({
   chartType: { type: String, default: 'line' },
   /** 聚合口径：avg / min / max / count。 */
   aggregation: { type: String, default: 'avg' },
-  height: { type: String, default: '320px' }
+  height: { type: String, default: '320px' },
+  /** 大屏深色模式（T-46）。 */
+  dark: { type: Boolean, default: false }
 })
 
 /** 多序列配色，取自设计系统图表色板。 */
@@ -38,6 +40,25 @@ const SERIES_COLORS = [
 const hasData = computed(() => props.series.some((item) => item.points?.length))
 
 const subtitle = computed(() => (hasData.value ? '' : '该时间段无上报数据'))
+
+/** 深色大屏下的坐标轴 / 图例 / tooltip 配色。 */
+const palette = computed(() =>
+  props.dark
+    ? {
+        text: '#94A3B8',
+        axis: 'rgba(148, 163, 184, 0.45)',
+        split: 'rgba(148, 163, 184, 0.14)',
+        tooltipBg: 'rgba(15, 23, 42, 0.95)',
+        tooltipText: '#E2E8F0'
+      }
+    : {
+        text: CHART_COLORS.textTertiary,
+        axis: CHART_COLORS.border,
+        split: CHART_COLORS.borderLight,
+        tooltipBg: CHART_COLORS.white,
+        tooltipText: CHART_COLORS.textPrimary
+      }
+)
 
 /** 所有序列桶起点的并集，升序，作为共享类目轴。 */
 const axisTimes = computed(() => {
@@ -104,12 +125,17 @@ const option = computed(() => {
   })
 
   return {
-    tooltip: { trigger: 'axis', axisPointer: { type: isBar ? 'shadow' : 'line' } },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: isBar ? 'shadow' : 'line' },
+      backgroundColor: palette.value.tooltipBg,
+      textStyle: { color: palette.value.tooltipText }
+    },
     legend: {
       show: multi,
       top: 0,
       type: 'scroll',
-      textStyle: { fontSize: 11, color: CHART_COLORS.textTertiary }
+      textStyle: { fontSize: 11, color: palette.value.text }
     },
     grid: { left: 60, right: 20, top: multi ? 40 : 20, bottom: 40 },
     dataZoom: [{ type: 'inside', throttle: 50 }],
@@ -117,15 +143,15 @@ const option = computed(() => {
       type: 'category',
       boundaryGap: isBar,
       data: times,
-      axisLine: { lineStyle: { color: CHART_COLORS.border } },
-      axisLabel: { fontSize: 11, color: CHART_COLORS.textTertiary }
+      axisLine: { lineStyle: { color: palette.value.axis } },
+      axisLabel: { fontSize: 11, color: palette.value.text }
     },
     yAxis: {
       type: 'value',
       axisLine: { show: false },
       axisTick: { show: false },
-      splitLine: { lineStyle: { color: CHART_COLORS.borderLight } },
-      axisLabel: { fontSize: 11, color: CHART_COLORS.textTertiary }
+      splitLine: { lineStyle: { color: palette.value.split } },
+      axisLabel: { fontSize: 11, color: palette.value.text }
     },
     series: dataSeries
   }

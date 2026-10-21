@@ -3,7 +3,10 @@ package com.mqtt.cloud.service;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mqtt.cloud.dto.request.SceneQuery;
 import com.mqtt.cloud.dto.request.SceneRequest;
+import com.mqtt.cloud.dto.response.SceneVersionVO;
 import com.mqtt.cloud.entity.SceneDefinition;
+
+import java.util.List;
 
 /**
  * 场景联动服务（T-23 设计文档 §7 / §10.1）。
@@ -57,6 +60,17 @@ public interface SceneService {
      * @return 新建的执行记录 ID
      */
     Long runManually(Long userId, Long id);
+
+    /**
+     * 场景版本历史（T-51）：仅本人场景，按版本号倒序返回摘要；场景不存在 / 越权抛 6240 / 403。
+     */
+    List<SceneVersionVO> listVersions(Long userId, Long sceneId);
+
+    /**
+     * 回滚到指定历史版本（T-51）：覆盖定义与步骤流，并生成新的 RESTORE 版本。
+     * 版本不存在 / 不属于该场景抛 6312；快照损坏或恢复后重名抛 6241。
+     */
+    SceneDefinition restoreVersion(Long userId, Long sceneId, Long versionId);
 
     /**
      * 主动失效本副本的场景定义缓存（T-23 设计文档 §8.2）。

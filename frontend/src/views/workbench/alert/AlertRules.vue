@@ -153,6 +153,37 @@
               <el-input v-model="form.thresholdValue" placeholder="如：80" />
             </el-form-item>
           </div>
+          <el-form-item label="统计窗口（秒）">
+            <el-input-number
+              v-model="form.windowSeconds"
+              :min="0"
+              :max="86400"
+              controls-position="right"
+              style="width: 100%"
+            />
+            <p class="form-hint">0 表示按最新值实时判断；大于 0 时按窗口内聚合值判断</p>
+          </el-form-item>
+          <div v-if="form.windowSeconds > 0" class="form-row">
+            <el-form-item label="聚合方式" required>
+              <el-select v-model="form.aggregateType" style="width: 100%">
+                <el-option
+                  v-for="option in AGGREGATE_OPTIONS"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="最少样本数" required>
+              <el-input-number
+                v-model="form.minSamples"
+                :min="1"
+                :max="1000"
+                controls-position="right"
+                style="width: 100%"
+              />
+            </el-form-item>
+          </div>
         </template>
 
         <template v-else-if="form.sourceType === 'OFFLINE'">
@@ -273,6 +304,7 @@ import {
   SEVERITY_OPTIONS,
   OPERATOR_OPTIONS,
   EVENT_TYPE_OPTIONS,
+  AGGREGATE_OPTIONS,
   formatRuleCondition
 } from '@/utils/alert'
 
@@ -305,6 +337,9 @@ const form = reactive({
   identifier: '',
   operator: 'GT',
   thresholdValue: '',
+  windowSeconds: 0,
+  aggregateType: 'AVG',
+  minSamples: 1,
   eventType: '',
   offlineSeconds: 0,
   suppressWindowSeconds: 0,
@@ -359,6 +394,9 @@ function resetForm() {
     identifier: '',
     operator: 'GT',
     thresholdValue: '',
+    windowSeconds: 0,
+    aggregateType: 'AVG',
+    minSamples: 1,
     eventType: '',
     offlineSeconds: 0,
     suppressWindowSeconds: 0,
@@ -381,6 +419,9 @@ function openEditDrawer(rule) {
     identifier: rule.identifier || '',
     operator: rule.operator || 'GT',
     thresholdValue: rule.thresholdValue || '',
+    windowSeconds: rule.windowSeconds ?? 0,
+    aggregateType: rule.aggregateType || 'AVG',
+    minSamples: rule.minSamples ?? 1,
     eventType: rule.eventType || '',
     offlineSeconds: rule.offlineSeconds ?? 0,
     suppressWindowSeconds: rule.suppressWindowSeconds ?? 0,
@@ -403,6 +444,9 @@ function buildPayload() {
     payload.identifier = form.identifier.trim()
     payload.operator = form.operator
     payload.thresholdValue = String(form.thresholdValue).trim()
+    payload.windowSeconds = form.windowSeconds ?? 0
+    payload.aggregateType = payload.windowSeconds > 0 ? form.aggregateType : null
+    payload.minSamples = payload.windowSeconds > 0 ? (form.minSamples ?? 1) : 1
   } else if (form.sourceType === 'OFFLINE') {
     payload.offlineSeconds = form.offlineSeconds ?? 0
   } else {
@@ -421,8 +465,19 @@ function validateForm() {
     if (!form.identifier.trim()) return '请填写属性标识符'
     const threshold = String(form.thresholdValue).trim()
     if (!threshold) return '请填写阈值'
-    if (NUMERIC_OPERATORS.has(form.operator) && Number.isNaN(Number(threshold))) {
-      return '数值比较符下阈值必须是数字'
+    const windowSeconds = Number(form.windowSeconds ?? 0)
+    if (!Number.isInteger(windowSeconds) || windowSeconds < 0 || windowSeconds > 86400) {
+      return '统计窗口需在 0 ~ 86400 秒'
+    }
+    if (windowSeconds > 0) {
+      if (!form.aggregateType) return '请选择聚合方式'
+      const minSamples = Number(form.minSamples ?? 1)
+      if (!Number.isInteger(minSamples) || minSamples < 1 || minSamples > 1000) {
+        return '最少样本数需在 1 ~ 1000'
+      }
+    }
+    if ((NUMERIC_OPERATORS.has(form.operator) || windowSeconds > 0) && Number.isNaN(Number(threshold))) {
+      return windowSeconds > 0 ? '窗口聚合阈值必须是数字' : '数值比较符下阈值必须是数字'
     }
   }
   if (form.sourceType === 'EVENT' && !form.identifier.trim()) return '请填写事件标识符'
@@ -472,6 +527,9 @@ function ruleToPayload(rule) {
     identifier: rule.identifier,
     operator: rule.operator,
     thresholdValue: rule.thresholdValue,
+    windowSeconds: rule.windowSeconds ?? 0,
+    aggregateType: rule.aggregateType ?? null,
+    minSamples: rule.minSamples ?? 1,
     eventType: rule.eventType,
     offlineSeconds: rule.offlineSeconds ?? 0,
     suppressWindowSeconds: rule.suppressWindowSeconds ?? 0,

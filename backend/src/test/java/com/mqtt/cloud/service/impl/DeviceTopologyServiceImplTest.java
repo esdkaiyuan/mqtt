@@ -61,7 +61,7 @@ class DeviceTopologyServiceImplTest {
     @Mock
     private DeviceAuthCacheService authCacheService;
 
-    /** 用真实实例做间谍：构造注入拿到的是带默认值（maxDepth=2 / 上限 200）的属性对象，无需逐例打桩。 */
+    /** 用真实实例做间谍：构造注入拿到的是带默认值（maxDepth=5 / 上限 200）的属性对象，无需逐例打桩。 */
     @Spy
     private DeviceTopologyProperties topologyProperties = new DeviceTopologyProperties();
 
@@ -120,6 +120,7 @@ class DeviceTopologyServiceImplTest {
         child.setParentId(GATEWAY_ID);
         when(deviceMapper.findActiveById(GATEWAY_ID)).thenReturn(gateway);
         when(deviceMapper.findActiveById(CHILD_ID)).thenReturn(child);
+        when(deviceMapper.countByParentId(CHILD_ID)).thenReturn(0L);
         when(productService.requireById(PRODUCT_ID)).thenReturn(product(PRODUCT_KEY));
 
         service.detach(GATEWAY_ID, CHILD_ID);
@@ -129,6 +130,24 @@ class DeviceTopologyServiceImplTest {
         // 失去最后一个子设备后角色不回落：角色代表「具备网关能力」
         assertThat(gateway.getNodeType()).isEqualTo(DeviceNodeType.GATEWAY);
         verify(deviceMapper, times(1)).updateById(child);
+        verify(authCacheService, times(2)).evict(eq(PRODUCT_KEY), anyString());
+    }
+
+    @Test
+    void detach_should_promote_sub_gateway_with_children() {
+        Device gateway = device(GATEWAY_ID, PRODUCT_ID, DeviceNodeType.GATEWAY);
+        Device child = device(CHILD_ID, PRODUCT_ID, DeviceNodeType.SUB);
+        child.setParentId(GATEWAY_ID);
+        when(deviceMapper.findActiveById(GATEWAY_ID)).thenReturn(gateway);
+        when(deviceMapper.findActiveById(CHILD_ID)).thenReturn(child);
+        when(deviceMapper.countByParentId(CHILD_ID)).thenReturn(1L);
+        when(productService.requireById(PRODUCT_ID)).thenReturn(product(PRODUCT_KEY));
+
+        service.detach(GATEWAY_ID, CHILD_ID);
+
+        assertThat(child.getParentId()).isNull();
+        // 带下级的子网关解绑后成为根网关，保住子树
+        assertThat(child.getNodeType()).isEqualTo(DeviceNodeType.GATEWAY);
         verify(authCacheService, times(2)).evict(eq(PRODUCT_KEY), anyString());
     }
 
@@ -162,11 +181,63 @@ class DeviceTopologyServiceImplTest {
     }
 
     @Test
-    void attach_should_reject_sub_device_as_parent() {
+    void attach_should_allow_sub_gateway_as_parent() {
         Device parent = device(GATEWAY_ID, PRODUCT_ID, DeviceNodeType.SUB);
+        parent.setParentId(99L);
+        Device ancestor = device(99L, PRODUCT_ID, DeviceNodeType.GATEWAY);
+        Device child = device(CHILD_ID, PRODUCT_ID, DeviceNodeType.DIRECT);
         when(deviceMapper.findActiveById(GATEWAY_ID)).thenReturn(parent);
+        when(deviceMapper.findActiveById(CHILD_ID)).thenReturn(child);
+        when(deviceMapper.findActiveById(99L)).thenReturn(ancestor);
+        when(deviceMapper.countByParentId(CHILD_ID)).thenReturn(0L);
+        when(deviceMapper.countByParentId(GATEWAY_ID)).thenReturn(0L);
+        when(productService.requireById(PRODUCT_ID)).thenReturn(product(PRODUCT_KEY));
 
-        assertCode(() -> service.attach(GATEWAY_ID, CHILD_ID), ResultCode.DEVICE_PARENT_KIND_INVALID);
+        Device result = service.attach(GATEWAY_ID, CHILD_ID);
+
+        assertThat(result).isSameAs(child);
+        assertThat(child.getNodeType()).isEqualTo(DeviceNodeType.SUB);
+        assertThat(child.getParentId()).isEqualTo(GATEWAY_ID);
+        // 子网关保持 SUB，不会被降级或提升
+        assertThat(parent.getNodeType()).isEqualTo(DeviceNodeType.SUB);
+        verify(deviceMapper, times(1)).updateById(any(Device.class));
+        verify(authCacheService, times(2)).evict(eq(PRODUCT_KEY), anyString());
+    }
+
+    @Test
+    void attach_should_reject_when_depth_exceeded() {
+        topologyProperties.setMaxDepth(2);
+        Device parent = device(GATEWAY_ID, PRODUCT_ID, DeviceNodeType.SUB);
+        parent.setParentId(99L);
+        Device ancestor = device(99L, PRODUCT_ID, DeviceNodeType.GATEWAY);
+        Device child = device(CHILD_ID, PRODUCT_ID, DeviceNodeType.DIRECT);
+        when(deviceMapper.findActiveById(GATEWAY_ID)).thenReturn(parent);
+        when(deviceMapper.findActiveById(CHILD_ID)).thenReturn(child);
+        when(deviceMapper.findActiveById(99L)).thenReturn(ancestor);
+        when(deviceMapper.countByParentId(CHILD_ID)).thenReturn(0L);
+
+        assertCode(() -> service.attach(GATEWAY_ID, CHILD_ID), ResultCode.DEVICE_TOPOLOGY_DEPTH_EXCEEDED);
+
+        verify(deviceMapper, never()).updateById(any(Device.class));
+    }
+
+    @Test
+    void attach_should_evict_previous_parent_when_reparented() {
+        Device gateway = device(GATEWAY_ID, PRODUCT_ID, DeviceNodeType.GATEWAY);
+        Device previous = device(77L, PRODUCT_ID, DeviceNodeType.GATEWAY);
+        Device child = device(CHILD_ID, PRODUCT_ID, DeviceNodeType.SUB);
+        child.setParentId(77L);
+        when(deviceMapper.findActiveById(GATEWAY_ID)).thenReturn(gateway);
+        when(deviceMapper.findActiveById(CHILD_ID)).thenReturn(child);
+        when(deviceMapper.findActiveById(77L)).thenReturn(previous);
+        when(deviceMapper.countByParentId(CHILD_ID)).thenReturn(0L);
+        when(deviceMapper.countByParentId(GATEWAY_ID)).thenReturn(0L);
+        when(productService.requireById(PRODUCT_ID)).thenReturn(product(PRODUCT_KEY));
+
+        service.attach(GATEWAY_ID, CHILD_ID);
+
+        assertThat(child.getParentId()).isEqualTo(GATEWAY_ID);
+        verify(authCacheService, times(3)).evict(eq(PRODUCT_KEY), anyString());
     }
 
     @Test

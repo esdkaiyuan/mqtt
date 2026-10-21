@@ -8,7 +8,12 @@ const shared = vi.hoisted(() => ({
   tree: null,
   tags: null,
   refreshTree: vi.fn(),
-  refreshTags: vi.fn()
+  refreshTags: vi.fn(),
+  routerPush: vi.fn()
+}))
+
+vi.mock('vue-router', () => ({
+  useRouter: () => ({ push: shared.routerPush })
 }))
 
 vi.mock('@/composables/useDeviceGroups', async () => {
@@ -208,7 +213,8 @@ const STUBS = {
   PageHeader: PageHeaderStub,
   EmptyState: EmptyStateStub,
   BatchCommandDialog: true,
-  BatchResultDrawer: true
+  BatchResultDrawer: true,
+  DeviceGroupMemberDialog: true
 }
 
 const TREE = [
@@ -228,6 +234,7 @@ describe('views/workbench/device/DeviceGroups', () => {
     tags.value = [{ id: 9, name: '重点设备', color: '#f56c6c' }]
     refreshTree.mockClear()
     refreshTags.mockClear()
+    shared.routerPush.mockReset()
     deviceGroupApi.pageDevices.mockResolvedValue({
       code: 200,
       data: { records: [{ id: 'd-1', deviceName: '温湿度传感器', deviceKey: 'sensor-1', status: 'ONLINE', tags: [] }], total: 1 }
@@ -305,5 +312,55 @@ describe('views/workbench/device/DeviceGroups', () => {
     const wrapper = mountPage()
 
     expect(wrapper.text()).toContain('暂无标签，点击「新建标签」开始')
+  })
+
+  it('共享分组展示只读标记并隐藏分组写操作', () => {
+    tree.value = [{
+      id: 3,
+      name: '共享车间',
+      description: '他人共享',
+      deviceCount: 1,
+      parentId: null,
+      shared: true,
+      sharedPermission: 'VIEW'
+    }]
+    const wrapper = mountPage()
+    const node = wrapper.find('.stub-tree-node')
+
+    expect(node.text()).toContain('共享·只读')
+    expect(node.findAll('.stub-button')).toHaveLength(0)
+    expect(node.text()).not.toContain('新建子分组')
+    expect(node.text()).not.toContain('编辑')
+  })
+
+  it('共享可操作分组仍隐藏批量与移出操作', async () => {
+    tree.value = [{
+      id: 4,
+      name: '共享可操作',
+      description: '',
+      deviceCount: 1,
+      parentId: null,
+      shared: true,
+      sharedPermission: 'OPERATE'
+    }]
+    const wrapper = mountPage()
+
+    await wrapper.find('.stub-tree-node').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('共享·可操作')
+    expect(wrapper.findAll('.stub-button').some((button) => button.text().includes('批量下发命令'))).toBe(false)
+    expect(wrapper.text()).not.toContain('移出')
+  })
+
+  it('分组设备详情入口跳转设备详情', async () => {
+    const wrapper = mountPage()
+
+    await wrapper.findAll('.stub-tree-node')[0].trigger('click')
+    await flushPromises()
+    const detailButton = wrapper.findAll('.stub-button').find((button) => button.text().includes('详情'))
+    await detailButton.trigger('click')
+
+    expect(shared.routerPush).toHaveBeenCalledWith('/workbench/devices/d-1')
   })
 })

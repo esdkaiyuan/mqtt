@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia } from 'pinia'
 import { QueryClient, VueQueryPlugin } from '@tanstack/vue-query'
 import DeviceLog from '../DeviceLog.vue'
+import { useUiStore } from '@/stores/ui'
 
 // 共享替身：vi.mock 会被提升，用 vi.hoisted 保证工厂执行时函数已就绪。
 const mocks = vi.hoisted(() => ({
@@ -75,6 +77,19 @@ const ElDatePickerStub = {
   template: '<div class="stub-date-picker" />'
 }
 
+const ElSwitchStub = {
+  name: 'ElSwitch',
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template:
+    '<span class="stub-switch" @click="$emit(\'update:modelValue\', !modelValue)" />'
+}
+const ElAlertStub = {
+  name: 'ElAlert',
+  props: ['title', 'type'],
+  template: '<div class="stub-alert"><slot /></div>'
+}
+
 const DeviceLogTimelineStub = {
   name: 'DeviceLogTimeline',
   props: {
@@ -108,6 +123,8 @@ const STUBS = {
   ElOption: ElOptionStub,
   ElInput: ElInputStub,
   ElDatePicker: ElDatePickerStub,
+  ElSwitch: ElSwitchStub,
+  ElAlert: ElAlertStub,
   DeviceLogTimeline: DeviceLogTimelineStub,
   PageHeader: PageHeaderStub,
   SvgIcon: SvgIconStub
@@ -134,7 +151,7 @@ describe('views/workbench/device/DeviceLog', () => {
   function mountPage() {
     wrapper = mount(DeviceLog, {
       global: {
-        plugins: [[VueQueryPlugin, { queryClient }]],
+        plugins: [createPinia(), [VueQueryPlugin, { queryClient }]],
         stubs: STUBS,
         directives: { loading: {} }
       }
@@ -156,7 +173,10 @@ describe('views/workbench/device/DeviceLog', () => {
       defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } }
     })
     mocks.routerPush.mockReset()
-    mocks.fetchDeviceById.mockReset().mockResolvedValue({ deviceName: '温湿度传感器' })
+    mocks.fetchDeviceById.mockReset().mockResolvedValue({
+      deviceName: '温湿度传感器',
+      deviceKey: 'dev-1'
+    })
     mocks.getDeviceLogs.mockReset().mockResolvedValue(logPage([{ logId: 'l-1' }], 1))
     ElMessage.warning.mockClear()
   })
@@ -191,6 +211,21 @@ describe('views/workbench/device/DeviceLog', () => {
     expect(params).not.toHaveProperty('keyword')
     expect(wrapper.text()).toContain('共 1 条记录')
     expect(wrapper.find('.stub-timeline').attributes('data-count')).toBe('1')
+  })
+
+  it('非首页收到 device-log 事件时提示新日志', async () => {
+    mocks.getDeviceLogs.mockResolvedValue(logPage([{ logId: 'l-1' }], 40))
+    mountPage()
+    await settle()
+
+    await wrapper.find('.stub-timeline__next').trigger('click')
+    await settle()
+    wrapper.findComponent({ name: 'ElSwitch' }).vm.$emit('update:modelValue', true)
+    await nextTick()
+    useUiStore().events.push({ id: 1, eventName: 'device-log', deviceKey: 'dev-1' })
+    await nextTick()
+
+    expect(wrapper.text()).toContain('有 1 条新日志')
   })
 
   it('无记录时展示空态与「共 0 条记录」', async () => {

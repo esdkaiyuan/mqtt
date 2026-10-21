@@ -23,11 +23,20 @@ public class OtaRecordVO {
     /** 目标固件版本。 */
     private String version;
 
-    /** 记录状态：PENDING / DISPATCHED / DOWNLOADING / FLASHING / SUCCESS / FAILED / TIMEOUT。 */
+    /** 所属批号（T-32）。 */
+    private Integer batchNo;
+
+    /** 记录状态：PENDING / DISPATCHED / DOWNLOADING / FLASHING / VERIFYING / SUCCESS / FAILED / TIMEOUT / SKIPPED。 */
     private String status;
 
     /** 进度百分比 0~100。 */
     private Integer progress;
+
+    /** 固件校验结果（T-32）：NOT_REPORTED / VERIFYING / PASSED / MISMATCHED。 */
+    private String verifyStatus;
+
+    /** 设备回传的固件 md5（T-32），与平台固件 md5 不一致时状态为 FAILED。 */
+    private String reportedMd5;
 
     /** 设备回传或系统填写的信息。 */
     private String message;

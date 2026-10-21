@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.config.CommandProperties;
+import com.mqtt.cloud.service.CommandGuardService;
+import com.mqtt.cloud.service.CommandQuotaService;
 import com.mqtt.cloud.config.ShadowProperties;
 import com.mqtt.cloud.dto.response.ThingModelResponse;
 import com.mqtt.cloud.entity.Device;
@@ -17,10 +19,12 @@ import com.mqtt.cloud.service.DeviceAccessGuard;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.DeviceLogNotifier;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
+import com.mqtt.cloud.service.TopicPrefixResolver;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -65,7 +69,6 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
     /** 单次巡检批量上限，避免一次扫全表。 */
     static final int SWEEP_LIMIT = 500;
 
-    private static final String TOPIC_SUFFIX = "/cmd/down";
     private static final String METHOD_PROPERTY_SET = "thing.service.property.set";
     private static final String METHOD_PREFIX = "thing.service.";
     private static final String ALINK_VERSION = "1.0";
@@ -95,14 +98,18 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
 
     private final DeviceService deviceService;
     private final ProductService productService;
+    private final TopicPrefixResolver topicPrefixResolver;
     private final DeviceAccessGuard accessGuard;
     private final ThingModelService thingModelService;
     private final DeviceCommandRecordMapper commandMapper;
     private final MqttClientManager mqttClientManager;
     private final CommandProperties properties;
+    private final CommandGuardService commandGuardService;
+    private final CommandQuotaService commandQuotaService;
     private final ShadowProperties shadowProperties;
     private final DeviceShadowService deviceShadowService;
     private final ObjectMapper objectMapper;
+    private final DeviceLogNotifier deviceLogNotifier;
 
     @Override
     public CommandCapability getCapability(Long productId) {
@@ -122,6 +129,12 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
         String commandType = normalizeType(command.commandType());
         String callType = normalizeCallType(command.callType());
 
+        // T-34：权限与配额都必须在**落库之前**判定。
+        // 若放在 insert 之后，被拒绝的命令会留下一条 FAILED/无主记录 —— 用户看到「明明拒绝了却有下发记录」，
+        // 排障方向会被带偏；而且执行记录表会被无意义地灌满。
+        commandGuardService.checkPermission(command.source(), commandType, command.identifier());
+        commandQuotaService.consume(command.operatorId(), callType);
+
         Device device = requireDevice(command.deviceId());
         requireInvocable(device);
 
@@ -138,21 +151,29 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
 
         if (TYPE_PROPERTY_SET.equals(commandType)) {
             // T-16 §9.1：期望值先落影子 desired（无论在线与否），delta 由服务端计算。
-            applyDesired(definition, device.getId(), params);
+            applyDesired(definition, device.getId(), params, command.source());
             if (!isDeliverable(device)) {
                 // 设备离线：不发布、不抛错，入队等待上线补发；同步调用也不等待（尚未下发）。
                 enqueue(record, LocalDateTime.now());
+                notifyDeviceLog(device);
                 return record;
             }
         } else if (isQueueableService(commandType, command.identifier()) && !isDeliverable(device)) {
             // T-31 P3：点表下发是幂等配置同步，设备离线时入队而非报错（语义见 QUEUEABLE_SERVICES 注释）。
             enqueue(record, LocalDateTime.now());
+            notifyDeviceLog(device);
             return record;
         }
 
         publish(record, device, commandType, params);
 
-        return CALL_TYPE_SYNC.equals(callType) ? awaitTerminal(record) : record;
+        if (CALL_TYPE_SYNC.equals(callType)) {
+            DeviceCommandRecord terminal = awaitTerminal(record);
+            notifyDeviceLog(device);
+            return terminal;
+        }
+        notifyDeviceLog(device);
+        return record;
     }
 
     @Override
@@ -199,8 +220,13 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
         return record;
     }
 
+    /** 设备日志实时通知：命令记录已落库 / 状态已推进后触发，前端按事件刷新时间线。 */
+    private void notifyDeviceLog(Device device) {
+        deviceLogNotifier.notify(device);
+    }
+
     private void publish(DeviceCommandRecord record, Device device, String commandType, JsonNode params) {
-        String topic = "device/" + device.getDeviceKey() + TOPIC_SUFFIX;
+        String topic = commandTopic(device);
         String payload = buildPayload(record.getCommandId(), commandType, record.getIdentifier(), params);
         LocalDateTime now = LocalDateTime.now();
         try {
@@ -246,7 +272,7 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
     }
 
     /** 属性设置期望值：按物模型归一化为 {@code identifier -> 文本} 后写入影子 {@code desired}。 */
-    private void applyDesired(ThingModelDefinition definition, Long deviceId, JsonNode params) {
+    private void applyDesired(ThingModelDefinition definition, Long deviceId, JsonNode params, String source) {
         Map<String, String> desired = new LinkedHashMap<>();
         for (Map.Entry<String, JsonNode> entry : params.properties()) {
             ThingModelDefinition.PropertySpec spec = definition.properties().get(entry.getKey());
@@ -258,7 +284,7 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
                 desired.put(entry.getKey(), normalized);
             }
         }
-        deviceShadowService.applyDesired(deviceId, desired);
+        deviceShadowService.applyDesired(deviceId, desired, source);
     }
 
     /** {@inheritDoc} */
@@ -340,7 +366,13 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
             handleResendFailure(record, now, new IllegalStateException("params 非法"));
             return false;
         }
-        String topic = "device/" + device.getDeviceKey() + TOPIC_SUFFIX;
+        String topic;
+        try {
+            topic = commandTopic(device);
+        } catch (Exception e) {
+            handleResendFailure(record, now, e);
+            return false;
+        }
         String payload = buildPayload(record.getCommandId(), record.getCommandType(), record.getIdentifier(), params);
         try {
             mqttClientManager.publish(topic, payload, PUBLISH_QOS);
@@ -383,6 +415,18 @@ public class DeviceCommandServiceImpl implements DeviceCommandService {
     }
 
     /** Alink 下行载荷：{@code {id, version, method, params}}；{@code id} 即回执关联键。 */
+    /**
+     * 下行主题按产品模板解析：自定义 {@code topic_prefix} 的设备订阅的是
+     * {@code {prefix}cmd/...}，若仍写死 {@code device/{key}/cmd/down}，ACL 会拒绝该订阅，
+     * 表现为命令记录 SENT 但设备永远收不到。默认模板解析结果与旧硬编码逐字一致。
+     */
+    private String commandTopic(Device device) {
+        Product product = productService.requireById(device.getProductId());
+        String prefix = topicPrefixResolver.resolve(product.getTopicPrefix(),
+                product.getProductKey(), device.getDeviceKey());
+        return prefix + "cmd/down";
+    }
+
     private String buildPayload(String commandId, String commandType, String identifier, JsonNode params) {
         ObjectNode root = objectMapper.createObjectNode();
         root.put("id", commandId);

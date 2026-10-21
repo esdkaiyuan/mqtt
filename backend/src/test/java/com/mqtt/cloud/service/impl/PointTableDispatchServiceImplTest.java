@@ -111,11 +111,13 @@ class PointTableDispatchServiceImplTest {
 
         JsonNode first = params.get("points").get(0);
         assertThat(fieldNamesOf(first)).containsExactlyInAnyOrder(
-                "pointKey", "pointType", "address", "dataType", "scale", "offset", "unit", "readIntervalMs");
+                "pointKey", "pointType", "address", "dataType", "unitId", "scale", "offset", "unit",
+                "readIntervalMs");
         assertThat(first.get("pointKey").asText()).isEqualTo("temp");
         assertThat(first.get("pointType").asText()).isEqualTo("HOLDING_REGISTER");
         assertThat(first.get("address").asText()).isEqualTo("40001");
         assertThat(first.get("dataType").asText()).isEqualTo("float");
+        assertThat(first.get("unitId").asInt()).isEqualTo(2);
         assertThat(first.get("scale").asText()).isEqualTo("0.1");
         assertThat(first.get("offset").asText()).isEqualTo("-5");
         assertThat(first.get("unit").asText()).isEqualTo("C");
@@ -134,6 +136,7 @@ class PointTableDispatchServiceImplTest {
         assertThat(first.has("scale")).isFalse();
         assertThat(first.has("offset")).isFalse();
         assertThat(first.has("unit")).isFalse();
+        assertThat(first.has("unitId")).isFalse();
         assertThat(first.has("address")).isFalse();
         assertThat(first.get("pointKey").asText()).isEqualTo("tag1");
     }
@@ -332,6 +335,7 @@ class PointTableDispatchServiceImplTest {
         point.setPointKey(pointKey);
         point.setPointType("HOLDING_REGISTER");
         point.setAddress(address);
+        point.setUnitId(2);
         point.setDataType("float");
         point.setScale(new BigDecimal("0.1"));
         point.setOffset(new BigDecimal("-5"));

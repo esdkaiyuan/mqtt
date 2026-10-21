@@ -86,32 +86,52 @@ public class SceneExecutionServiceImpl implements SceneExecutionService {
         List<SceneStepRun> steps = stepRunMapper.selectByExecutionId(id);
         Integer firstSeq = null;
         Long firstStepRunId = null;
-        int skipped = 0;
+        SceneStepRun firstReplayable = null;
         for (SceneStepRun step : steps) {
             boolean replayable = SceneConstants.STEP_FAILED.equals(step.getStatus())
                     || SceneConstants.STEP_SKIPPED.equals(step.getStatus());
-            if (SceneConstants.STEP_SKIPPED.equals(step.getStatus())) {
-                skipped++;
-            }
             if (replayable && step.getSeq() != null && (firstSeq == null || step.getSeq() < firstSeq)) {
                 firstSeq = step.getSeq();
                 firstStepRunId = step.getId();
+                firstReplayable = step;
             }
         }
         if (firstSeq == null) {
             throw conflict("无可重试的失败步骤");
         }
+        // 失败步骤位于并行块内时，从并行开始步骤整体重放该块及之后的并行块
+        Integer resetFrom = firstReplayable.getParallelSeq() == null
+                ? firstSeq : firstReplayable.getParallelSeq();
         if (executionMapper.resetForRetry(id) == 0) {
             throw conflict("执行记录状态已变更，请刷新后重试");
         }
-        stepRunMapper.resetForRetry(id, firstSeq, LocalDateTime.now());
-        if (skipped > 0) {
-            executionMapper.bumpFinishedSteps(id, -skipped);
-        }
+        LocalDateTime now = LocalDateTime.now();
+        stepRunMapper.resetForRetry(id, resetFrom, now);
+        stepRunMapper.resetParallelFrom(id, resetFrom);
         Long deliverId = firstStepRunId;
-        if (deliverId != null) {
-            afterCommit(() -> dispatch(deliverId));
+        SceneStepRun resetStart = findBySeq(steps, resetFrom);
+        if (resetStart != null && SceneConstants.STEP_PARALLEL.equals(resetStart.getActionType())) {
+            stepRunMapper.scheduleNext(resetStart.getId(), now, now);
+            deliverId = resetStart.getId();
         }
+        // 按重置后的明细重算进度，避免循环 / 分支 / 并行场景的手工增量漂移
+        executionMapper.recountFinishedSteps(id);
+        Long finalDeliverId = deliverId;
+        if (finalDeliverId != null) {
+            afterCommit(() -> dispatch(finalDeliverId));
+        }
+    }
+
+    private static SceneStepRun findBySeq(List<SceneStepRun> steps, Integer seq) {
+        if (seq == null) {
+            return null;
+        }
+        for (SceneStepRun step : steps) {
+            if (seq.equals(step.getSeq())) {
+                return step;
+            }
+        }
+        return null;
     }
 
     private SceneExecution getOwned(Long userId, Long id) {

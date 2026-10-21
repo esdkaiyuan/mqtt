@@ -129,12 +129,14 @@ public class AclEvaluator {
     }
 
     /**
-     * 网关代理判定（T-26 §5.3）：仅在「主题中的目标设备确为当前设备的子设备」时按委托语义放行。
+     * 网关 / 子网关代理判定（T-26 §5.3，T-47 多级拓扑）：仅在「主题中的目标设备确为当前设备的
+     * 直接子设备」时按委托语义放行。
      * <p>
      * 目标设备键由产品模板反解得到（多段模板下段位随占位符走，不写死下标），再以
      * {@code (productKey, targetDeviceKey)} 复用同一份 {@code AuthMeta} 取拓扑：
-     * 当前设备须为 {@code GATEWAY}，目标须为未禁用的 {@code SUB}，且其 {@code parentId}
-     * 恰为当前设备。三者任一不成立即拒绝 —— 非本人子设备、已解绑、任一侧被禁用都落在拒绝侧。
+     * 当前设备须为 {@code GATEWAY} 或已挂载的 {@code SUB}（子网关），目标须为未禁用的
+     * {@code SUB}，且其 {@code parentId} 恰为当前设备。三者任一不成立即拒绝 ——
+     * 非本人子设备、已解绑、任一侧被禁用都落在拒绝侧。多级链路逐级委托，不做跨级直连。
      * 委托方自身的准入（产品启用、设备启用）已由调用方先行判定，此处不重复。
      */
     private boolean allowDelegated(String productKey, String deviceKey, String topicPrefix,
@@ -145,8 +147,9 @@ public class AclEvaluator {
             return false;
         }
         DeviceAuthCacheService.AuthMeta gatewayMeta = deviceAccessGuard.resolve(productKey, deviceKey);
-        if (gatewayMeta == null || !DeviceNodeType.GATEWAY.equals(gatewayMeta.nodeType())
-                || gatewayMeta.deviceId() == null) {
+        if (gatewayMeta == null || gatewayMeta.deviceId() == null
+                || (!DeviceNodeType.GATEWAY.equals(gatewayMeta.nodeType())
+                    && !DeviceNodeType.SUB.equals(gatewayMeta.nodeType()))) {
             return false;
         }
         DeviceAuthCacheService.AuthMeta targetMeta =

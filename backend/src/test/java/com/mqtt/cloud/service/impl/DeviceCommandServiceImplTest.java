@@ -3,6 +3,8 @@ package com.mqtt.cloud.service.impl;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.config.CommandProperties;
+import com.mqtt.cloud.service.CommandGuardService;
+import com.mqtt.cloud.service.CommandQuotaService;
 import com.mqtt.cloud.config.ShadowProperties;
 import com.mqtt.cloud.dto.response.ThingModelResponse;
 import com.mqtt.cloud.entity.Device;
@@ -14,9 +16,11 @@ import com.mqtt.cloud.service.DeviceAccessGuard;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.DeviceLogNotifier;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.ThingModelService;
+import com.mqtt.cloud.service.TopicPrefixResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -78,8 +82,11 @@ class DeviceCommandServiceImplTest {
     private DeviceCommandRecordMapper commandMapper;
     private MqttClientManager mqttClientManager;
     private CommandProperties properties;
+    private CommandGuardService commandGuardService;
+    private CommandQuotaService commandQuotaService;
     private ShadowProperties shadowProperties;
     private DeviceShadowService deviceShadowService;
+    private DeviceLogNotifier deviceLogNotifier;
     private DeviceCommandServiceImpl service;
 
     @BeforeEach
@@ -92,12 +99,19 @@ class DeviceCommandServiceImplTest {
         mqttClientManager = mock(MqttClientManager.class);
         shadowProperties = new ShadowProperties();
         deviceShadowService = mock(DeviceShadowService.class);
+        commandGuardService = mock(CommandGuardService.class);
+        commandQuotaService = mock(CommandQuotaService.class);
+        deviceLogNotifier = mock(DeviceLogNotifier.class);
         properties = new CommandProperties();
         properties.setPollIntervalMs(1);
         properties.setSyncTimeoutMs(40);
-        service = new DeviceCommandServiceImpl(deviceService, productService, accessGuard,
-                thingModelService, commandMapper, mqttClientManager, properties,
-                shadowProperties, deviceShadowService, new ObjectMapper());
+        // T-34：命令级权限守卫与调用配额；默认配置下两者均不拦截，
+        // 让既有用例继续验证「命令下发本体」而不被新门禁改变语义。
+        // 参数顺序 = 字段声明顺序：两个 T-34 守卫紧随 properties 之后声明
+        service = new DeviceCommandServiceImpl(deviceService, productService, new TopicPrefixResolver(),
+                accessGuard, thingModelService, commandMapper, mqttClientManager, properties,
+                commandGuardService, commandQuotaService,
+                shadowProperties, deviceShadowService, new ObjectMapper(), deviceLogNotifier);
 
         when(deviceService.getById(DEVICE_ID)).thenReturn(device(1));
         when(productService.requireById(PRODUCT_ID)).thenReturn(product());
@@ -206,6 +220,20 @@ class DeviceCommandServiceImplTest {
         assertThat(body.get("params").get("power").asBoolean()).isTrue();
 
         verify(commandMapper).markSent(eq(result.getCommandId()), any());
+        verify(deviceLogNotifier).notify(any(Device.class));
+    }
+
+    @Test
+    void invoke_should_publish_to_custom_topic_prefix() throws Exception {
+        Product product = product();
+        product.setTopicPrefix("{productKey}/{deviceKey}");
+        when(productService.requireById(PRODUCT_ID)).thenReturn(product);
+
+        service.invoke(propertySet("{\"power\":true}"));
+
+        ArgumentCaptor<String> topic = ArgumentCaptor.forClass(String.class);
+        verify(mqttClientManager).publish(topic.capture(), anyString(), eq(1));
+        assertThat(topic.getValue()).isEqualTo(PRODUCT_KEY + "/" + DEVICE_KEY + "/cmd/down");
     }
 
     @Test
@@ -396,7 +424,7 @@ class DeviceCommandServiceImplTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> desired = ArgumentCaptor.forClass(Map.class);
-        verify(deviceShadowService).applyDesired(eq(DEVICE_ID), desired.capture());
+        verify(deviceShadowService).applyDesired(eq(DEVICE_ID), desired.capture(), any());
         assertThat(desired.getValue()).containsEntry("power", "true");
     }
 
@@ -418,7 +446,7 @@ class DeviceCommandServiceImplTest {
         service.invoke(propertySet("{\"power\":true}"));
 
         verify(commandMapper, never()).markQueued(anyString(), any(), any());
-        verify(deviceShadowService).applyDesired(eq(DEVICE_ID), any());
+        verify(deviceShadowService).applyDesired(eq(DEVICE_ID), any(), any());
     }
 
     /** 服务类型不受离线入队影响：设备离线时仍照常发布（是否可达由设备自身决定）。 */

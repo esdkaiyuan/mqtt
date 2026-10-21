@@ -1,6 +1,6 @@
 <template>
   <div class="product-list-page page">
-    <PageHeader title="产品管理" desc="设备类型模板，定义认证方式、主题前缀与物模型">
+    <PageHeader title="产品管理" desc="设备类型模板，定义接入协议、认证方式、主题前缀与物模型">
       <template #actions>
         <el-button type="primary" :disabled="!canWrite" @click="openCreateDialog">
           <svg-icon name="add" :size="16" />
@@ -18,6 +18,13 @@
         </el-table-column>
         <el-table-column prop="productName" label="名称" min-width="150" />
         <el-table-column prop="authMode" label="认证方式" width="110" />
+        <el-table-column label="接入协议" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.protocolType === 'MODBUS' ? 'warning' : 'info'">
+              {{ row.protocolType || 'MQTT' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="topicPrefix" label="主题前缀" min-width="180">
           <template #default="{ row }">
             <span class="product-table__mono">{{ row.topicPrefix }}</span>

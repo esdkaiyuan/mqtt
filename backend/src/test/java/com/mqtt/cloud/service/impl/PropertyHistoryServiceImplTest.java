@@ -2,6 +2,7 @@ package com.mqtt.cloud.service.impl;
 
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.config.PropertyHistoryProperties;
+import com.mqtt.cloud.service.RealtimeStreamService;
 import com.mqtt.cloud.dto.request.PropertyHistoryQueryDTO;
 import com.mqtt.cloud.dto.response.PropertyHistoryAggregate;
 import com.mqtt.cloud.dto.response.PropertySeriesVO;
@@ -10,6 +11,7 @@ import com.mqtt.cloud.entity.DevicePropertyHistory;
 import com.mqtt.cloud.filter.UserPrincipal;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.DevicePropertyHistoryMapper;
+import com.mqtt.cloud.service.DeviceAccessService;
 import com.mqtt.cloud.service.PropertyHistoryService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
@@ -73,6 +75,8 @@ class PropertyHistoryServiceImplTest {
     private DevicePropertyHistoryMapper historyMapper;
     private ThingModelService thingModelService;
     private PropertyHistoryProperties properties;
+    private RealtimeStreamService realtimeStreamService;
+    private DeviceAccessService deviceAccessService;
     private PropertyHistoryServiceImpl service;
 
     @BeforeEach
@@ -80,8 +84,13 @@ class PropertyHistoryServiceImplTest {
         deviceMapper = mock(DeviceMapper.class);
         historyMapper = mock(DevicePropertyHistoryMapper.class);
         thingModelService = mock(ThingModelService.class);
+        realtimeStreamService = mock(RealtimeStreamService.class);
+        deviceAccessService = mock(DeviceAccessService.class);
         properties = new PropertyHistoryProperties();
-        service = new PropertyHistoryServiceImpl(deviceMapper, historyMapper, thingModelService, properties);
+        // T-36：新增趋势实时流依赖；默认 streamEnabled=false 时不推送，
+        // 既有 append 用例的断言（只关心落库）不受影响
+        service = new PropertyHistoryServiceImpl(deviceMapper, historyMapper, thingModelService,
+                properties, realtimeStreamService, deviceAccessService);
     }
 
     @AfterEach
@@ -196,6 +205,21 @@ class PropertyHistoryServiceImplTest {
     void query_should_allow_admin_to_read_other_owner_device() {
         authenticateAsAdmin();
         givenDeviceOf(OTHER_USER);
+        givenProperty("temp", "double");
+
+        List<PropertySeriesVO> result =
+                service.query(USER_ID, query(List.of(DEVICE_ID), List.of("temp"), START, END, null));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).getDeviceId()).isEqualTo(DEVICE_ID);
+    }
+
+    @Test
+    void query_should_allow_shared_view_member() {
+        authenticateAs(USER_ID, "VIEWER");
+        givenDeviceOf(OTHER_USER);
+        when(deviceAccessService.resolveDeviceLevel(USER_ID, "VIEWER", DEVICE_ID))
+                .thenReturn(com.mqtt.cloud.common.constant.GroupPermission.VIEW);
         givenProperty("temp", "double");
 
         List<PropertySeriesVO> result =
@@ -485,6 +509,12 @@ class PropertyHistoryServiceImplTest {
 
     private void authenticateAsAdmin() {
         UserPrincipal principal = new UserPrincipal(1L, "admin", "ADMIN");
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
+    }
+
+    private void authenticateAs(Long userId, String role) {
+        UserPrincipal principal = new UserPrincipal(userId, "user-" + userId, role);
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities()));
     }

@@ -20,10 +20,10 @@ public class SceneStepView {
     /** 本步骤执行前延时（秒）。 */
     private Integer delaySeconds;
 
-    /** 动作类型：UPDATE_PROPERTY / SEND_COMMAND / FORWARD_MQTT / FORWARD_HTTP。 */
+    /** 步骤类型：UPDATE_PROPERTY / SEND_COMMAND / FORWARD_MQTT / FORWARD_HTTP / BRANCH / LOOP / PARALLEL / JOIN。 */
     private String actionType;
 
-    /** 目标类型：TRIGGER / FIXED。 */
+    /** 目标类型：TRIGGER / FIXED / NONE（分支 / 循环步骤无目标）。 */
     private String targetType;
 
     /** 固定目标集合（已解析对象）；仅 FIXED 时有值。 */
@@ -31,6 +31,12 @@ public class SceneStepView {
 
     /** 动作配置（已解析对象，形状同 T-19 §5.2）。 */
     private Object actionConfig;
+
+    /** 所属并行块起始步骤序号（T-49）。 */
+    private Integer parallelSeq;
+
+    /** 并行分支序号（T-49，0 起）。 */
+    private Integer branchIndex;
 
     /** 是否启用：1/0。 */
     private Integer enabled;

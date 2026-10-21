@@ -12,7 +12,10 @@ import java.util.List;
  * 因此这里不做 Bean Validation 注解，避免校验错误码被全局处理器改写为 {@code 400}。
  * <p>
  * 触发源语义见 §5.2：{@code PROPERTY} / {@code EVENT} 需 {@code triggerIdentifier}；
- * {@code TIMER} 需 {@code timerCron} 且触发设备 / 标识符必须为空。
+ * {@code TIMER} 需 {@code timerCron} 且触发设备 / 标识符必须为空；
+ * {@code ONLINE} / {@code OFFLINE}（T-43）只允许可选的 {@code triggerDeviceId}；
+ * {@code SHADOW}（T-45）允许可选的 {@code triggerDeviceId} / {@code triggerIdentifier}
+ * （空标识符表示任意属性）与 {@code triggerShadowSide}（缺省 REPORTED）。
  */
 @Data
 public class SceneRequest {
@@ -23,13 +26,13 @@ public class SceneRequest {
     /** 描述，可空，长度 ≤ 255。 */
     private String description;
 
-    /** 触发源：PROPERTY / EVENT / TIMER，必填。 */
+    /** 触发源：PROPERTY / EVENT / TIMER / ONLINE / OFFLINE / SHADOW，必填。 */
     private String triggerType;
 
     /** 触发限定设备ID，可空表示该用户全部设备；非空时必须属于当前用户。TIMER 源必须为空。 */
     private Long triggerDeviceId;
 
-    /** 触发属性 / 事件标识符；PROPERTY / EVENT 必填，TIMER 必须为空。 */
+    /** 触发属性 / 事件 / 影子属性标识符；PROPERTY / EVENT 必填，TIMER / ONLINE / OFFLINE 必须为空；SHADOW 可空。 */
     private String triggerIdentifier;
 
     /** 触发比较符：GT / GTE / LT / LTE / EQ / NE；PROPERTY 源可空（空=任意上报即触发）。 */
@@ -40,6 +43,9 @@ public class SceneRequest {
 
     /** 事件类型过滤（info / alert / fault），EVENT 源可空。 */
     private String triggerEventType;
+
+    /** 影子变更侧：REPORTED / DESIRED / ANY，仅 SHADOW 源允许；缺省 REPORTED。 */
+    private String triggerShadowSide;
 
     /** 定时触发 cron（5 字段，分钟级），仅 TIMER 源允许非空。 */
     private String timerCron;

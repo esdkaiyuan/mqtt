@@ -12,6 +12,13 @@ describe('router/routes 分区与兼容', () => {
     }
   })
 
+  it('公开大屏分享路由无需登录', () => {
+    const route = byPath('/display/:token')
+    expect(route).toBeTruthy()
+    expect(route.name).toBe('DisplayBoard')
+    expect(route.meta?.requiresAuth).toBe(false)
+  })
+
   it('工作台父路由要求登录并默认跳概览', () => {
     const workbench = byPath('/workbench')
     expect(workbench.meta?.requiresAuth).toBe(true)
@@ -26,9 +33,11 @@ describe('router/routes 分区与兼容', () => {
       'DeviceList',
       'DeviceGroups',
       'DeviceBatchRegister',
+      'ShadowOverview',
       'DeviceDetail',
       'DevicePointTable',
       'DeviceLog',
+      'DeviceDebug',
       'ProductList',
       'ProductThingModel',
       'MessageMonitor',
@@ -36,6 +45,9 @@ describe('router/routes 分区与兼容', () => {
       'ApiKeyManagement',
       'WebhookManagement',
       'NotificationChannels',
+      'HmiList',
+      'HmiCreate',
+      'HmiDetail',
       'AlertList',
       'AlertRules',
       'AlertEscalations',
@@ -51,9 +63,9 @@ describe('router/routes 分区与兼容', () => {
     const groups = new Set(children.map((child) => child.meta?.group))
     expect(groups).toEqual(new Set(['monitor', 'access', 'alert', 'fleet', 'automation']))
 
-    // 设备详情 / 设备日志 / 物模型 / 看板详情 / 升级详情不在导航中展示
-    for (const name of ['DeviceDetail', 'DeviceLog', 'DevicePointTable',
-      'ProductThingModel', 'BoardDetail', 'UpgradeTaskDetail']) {
+    // 设备详情 / 设备日志 / 调试 / 物模型 / 看板详情 / 上位机子页 / 升级详情不在导航中展示
+    for (const name of ['DeviceDetail', 'DeviceLog', 'DeviceDebug', 'DevicePointTable',
+      'ProductThingModel', 'BoardDetail', 'HmiCreate', 'HmiDetail', 'UpgradeTaskDetail']) {
       const hidden = children.find((child) => child.name === name)
       expect(hidden.meta?.hidden).toBe(true)
     }
@@ -62,6 +74,19 @@ describe('router/routes 分区与兼容', () => {
     const productList = children.find((child) => child.name === 'ProductList')
     expect(productList.path).toBe('products')
     expect(productList.meta?.group).toBe('monitor')
+  })
+
+  it('上位机列表归入开发接入分区，新建与详情为隐藏子页', () => {
+    const children = byPath('/workbench').children
+    const list = children.find((child) => child.name === 'HmiList')
+    expect(list.path).toBe('hmi')
+    expect(list.meta?.group).toBe('access')
+    expect(list.meta?.hidden).toBeFalsy()
+
+    const newIndex = children.findIndex((child) => child.name === 'HmiCreate')
+    const detailIndex = children.findIndex((child) => child.name === 'HmiDetail')
+    expect(newIndex).toBeGreaterThan(-1)
+    expect(newIndex).toBeLessThan(detailIndex)
   })
 
   it('场景联动路由归入自动化分区且未 hidden', () => {
@@ -136,6 +161,9 @@ describe('router/routes 分区与兼容', () => {
     expect(docs.children.map((child) => child.name)).toEqual([
       'DocsGettingStarted',
       'DocsDeviceAccess',
+      'DocsProtocol',
+      'DocsProtocolD1',
+      'DocsProtocolD2',
       'DocsDataMessage',
       'DocsApiReference',
       'DocsOps'

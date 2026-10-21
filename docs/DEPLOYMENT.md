@@ -1014,6 +1014,9 @@ docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud -e "SELECT versio
 | `PROPERTY_HISTORY_CLEANUP_BATCH_SIZE` | `1000` | 单批删除行数 |
 | `DASHBOARD_MAX_COUNT` | `20` | 每用户看板数量上限；超限返回 `6230` |
 | `DASHBOARD_MAX_PANELS` | `12` | 单看板面板数上限；超限返回 `6229` |
+| `DASHBOARD_MAX_SHARES` | `20` | 每用户看板分享数量上限；超限返回 `6307` |
+| `DASHBOARD_MAX_SHARE_DASHBOARDS` | `10` | 单个分享可包含的看板数上限 |
+| `DASHBOARD_SHARE_INTERVAL_MIN_SECONDS` / `DASHBOARD_SHARE_INTERVAL_MAX_SECONDS` | `5` / `3600` | 大屏轮播间隔上下限（秒） |
 
 > 翻转上述变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效。
 
@@ -1072,9 +1075,14 @@ curl -sI http://localhost/firmware/<productId>/<version>/<fileName>
 **设备侧协议**（复用既有命令通道，**不改 ACL、不新增下行主题**）：
 
 - **下发**：平台按批次经 `/cmd/down` 下发 `thing.service.ota_upgrade`，入参 `{url, version, md5, size}`（`callType=async`、`source=OTA`），并落 `device_command_record` 供命令历史 / 回执 / 超时巡检复用。
-- **回传**：设备向 `device/{deviceKey}/ota` 上报进度 `{"version","status","progress","message"}`，`status` 取 `downloading`/`flashing`/`success`/`failed`（`success` 恒推算 `progress=100`）；平台以共享订阅 `$share/{group}/device/+/ota` 消费，经 `IngestDispatcher` **第六路旁路**推进状态机（版本不一致 / 报文非法 / 无归属记录一律静默忽略）。
+- **回传**：设备向 `device/{deviceKey}/ota` 上报进度 `{"version","status","progress","fileMd5","message"}`，`status` 取 `downloading`/`flashing`/`verifying`/`success`/`failed`（`success` 恒推算 `progress=100`）；平台以共享订阅 `$share/{group}/device/+/ota` 消费，经 `IngestDispatcher` **第六路旁路**推进状态机（版本不一致 / 报文非法 / 无归属记录一律静默忽略）。
+  - **固件完整性校验（T-32）**：`fileMd5` 为设备下载完成后本地计算的固件摘要（可选字段，仅 32 位十六进制有效，自动转小写）。平台与 `ota_firmware.md5` 比对：一致记 `PASSED`，**不一致记 `MISMATCHED` 并把记录改判 `FAILED`**（传输或写盘损坏，绝不能算成功）；未回传记 `NOT_REPORTED`，是否因此判失败由 `OTA_VERIFY_REQUIRED` 决定（默认放行，保证未升级固件的老设备不会全量转红）。
 
-**巡检**：`OtaDispatchSweeper`（间隔 `OTA_DISPATCH_INTERVAL_MS`，默认 60s）每轮补投仍为 `PENDING` 的记录、并把超 `OTA_TASK_TIMEOUT_MS` 无回传的记录置 `TIMEOUT`；`OTA_ENABLED=false` 或间隔 `<=0` 时不注册。
+**灰度分批（T-32）**：创建任务时可选 `batchMode=BATCHED` + `batchSize`，平台按设备顺序切批并落 `ota_upgrade_batch`，**只下发首批**；后续批次由 `OtaBatchSweeper` 在「上一批已无非终态记录」且距收口已过 `OTA_BATCH_INTERVAL_MS` 时自动推进，也可由控制台点「推进下一批」立即下发（不受间隔约束）。间隔为 `0` 时只手动推进。任务可 **暂停**（不再开新批，在途设备跑完）与 **终止**（未下发记录置 `SKIPPED`，**不计入失败**；已下发设备跑完当前升级）。
+
+**设备级互斥（T-32）**：目标设备若已在别的升级任务中非终态，建任务时按 `OTA_DEVICE_CONFLICT_POLICY` 剔除（`SKIP`）或整单拒绝（`REJECT`）；下发前再做一次批量二次校验挡住并发建任务的竞态，冲突设备保持 `PENDING` 并写明原因，待对方任务收口后由补投巡检自然重投。
+
+**巡检**：`OtaDispatchSweeper`（间隔 `OTA_DISPATCH_INTERVAL_MS`，默认 60s）每轮依次执行**补投 `PENDING` → 推进到期批次 → 超时置 `TIMEOUT`**（顺序固定：先把上一批遗留的未下发记录补掉再开下一批，若把超时放前面会把「刚下发、设备还没回传」的记录误判为超时）；`OTA_ENABLED=false` 或间隔 `<=0` 时不注册。
 
 **可调项**（`.env` → 环境变量 → `application.yml` 的 `app.ota`，本节已同步透传至 `.env.example` 与 `docker/docker-compose.yml`）：
 
@@ -1088,6 +1096,18 @@ curl -sI http://localhost/firmware/<productId>/<version>/<fileName>
 | `OTA_DISPATCH_INTERVAL_MS` | `60000` | 补投 / 超时巡检间隔（毫秒），`0` 关闭（不注册巡检） |
 | `OTA_DISPATCH_BATCH_SIZE` | `200` | 单轮补投 `PENDING` 记录上限 |
 | `OTA_TASK_TIMEOUT_MS` | `86400000`（24h） | 逐台记录超时阈值（毫秒），超阈置 `TIMEOUT` |
+| `PROPERTY_HISTORY_STREAM_ENABLED` | `false` | 趋势实时流开关（T-36）：属性上报后经 SSE 推给趋势页实时追加。**刻意与 `PROPERTY_HISTORY_ENABLED` 分开** —— 压测关掉落库时往往仍想保留已有历史可查 |
+| `COMMAND_DENIED_IDENTIFIERS` | `factory_reset` | 危险命令标识符黑名单（逗号分隔，大小写不敏感），对所有角色拒绝下发，除非该角色在 `app.command.role-permissions` 中显式豁免（T-34） |
+| `COMMAND_QUOTA_ENABLED` | `false` | 命令调用配额总开关（T-34）；`false` 时**不做任何 Redis 读写** |
+| `COMMAND_QUOTA_WINDOW_SECONDS` | `60` | 配额固定窗口长度（秒） |
+| `COMMAND_QUOTA_MAX_PER_WINDOW` | `600` | 单个操作者在一个窗口内的最大命令下发数 |
+| `COMMAND_QUOTA_SYNC_MULTIPLIER` | `1` | 同步调用（`callType=sync`）的阈值倍数；实际阈值 = `MAX_PER_WINDOW × 本值` |
+| `COMMAND_QUOTA_FAIL_OPEN` | `true` | Redis 不可用时是否放行（`true` = 降级放行，与 `app.rate-limit` 一致） |
+| `OTA_DEVICE_CONFLICT_POLICY` | `SKIP` | 设备级互斥策略（T-32）：目标设备已在其他升级任务中时，`SKIP` 静默剔除、`REJECT` 整单拒绝（`6293`） |
+| `OTA_BATCH_INTERVAL_MS` | `0` | 灰度批次自动推进间隔（毫秒）（T-32）；`0` = 仅手动推进 |
+| `OTA_BATCH_ADVANCE_BATCH_SIZE` | `5` | 单轮巡检最多自动推进几个批次（T-32） |
+| `OTA_DEFAULT_BATCH_SIZE` | `10` | 灰度分批的默认每批台数（T-32）；创建请求未指定 `batchSize` 时取此值 |
+| `OTA_VERIFY_REQUIRED` | `false` | 固件校验是否强制（T-32）；`false` = 设备未回传 `fileMd5` 仍放行成功；`true` 判失败（仅适用于设备侧已全量支持回传的现场） |
 
 > 翻转上述变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效。
 
@@ -1213,7 +1233,7 @@ docker exec mqtt-mysql mysql -uroot -proot_password mqtt_cloud \
 
 | 指标 | 含义 |
 |------|------|
-| `scene_trigger_total` | 场景命中（属性 / 事件触发）并落执行记录次数 |
+| `scene_trigger_total` | 场景命中（属性 / 事件 / 上下线 / 影子变更触发）并落执行记录次数 |
 | `scene_timer_trigger_total` | 定时（`TIMER`）触发评估命中次数 |
 | `scene_rejected_total` | 步骤动作投递被线程池拒绝次数（对应步骤直接 `FAILED`） |
 
@@ -1228,8 +1248,9 @@ FROM scene_definition WHERE user_id = <userId> ORDER BY updated_at DESC;
 SELECT id, trigger_type, trigger_source, trigger_device_key, total_steps, finished_steps,
        status, error_message, started_at, finished_at, created_at
 FROM scene_execution WHERE scene_id = <sceneId> ORDER BY created_at DESC LIMIT 20;
--- 某次执行的步骤流（顺序 / 状态 / 尝试次数 / 排期与重试锚点）
-SELECT seq, action_type, status, attempt_count, scheduled_at, next_attempt_at, error_message, forward_payload
+-- 某次执行的步骤流（顺序 / 状态 / 尝试次数 / 循环轮次 / 流程结果 / 排期与重试锚点）
+SELECT seq, action_type, status, attempt_count, loop_iteration, flow_result,
+       scheduled_at, next_attempt_at, error_message, forward_payload
 FROM scene_step_run WHERE execution_id = <executionId> ORDER BY seq;
 -- 到期待补投的步骤：应被巡检收敛
 SELECT id, execution_id, seq, status, attempt_count, next_attempt_at FROM scene_step_run
@@ -1239,12 +1260,16 @@ WHERE status IN ('PENDING','RUNNING') AND next_attempt_at IS NOT NULL AND next_a
 **常见排障**：
 
 - **属性 / 事件上报但没有触发场景**：确认场景 `enabled=1`、`deleted=0`，触发源与标识符匹配（`EVENT` 源额外比对 `trigger_event_type`），作用域（`trigger_device_id`，为 `NULL` 表示该用户全部设备）覆盖该设备；`GT`/`GTE`/`LT`/`LTE` 两侧须为可解析十进制数，任一侧不可解析即不命中；确认 `SCENE_ENABLED=true` 且条件组（若有）按 `condition_logic` 同时 / 任一成立。
+- **上下线场景未触发**：确认设备状态**真实发生切换**（已 ONLINE 时重复上报 `data` 不会触发；首次 ONLINE 或 `LWT` 置 OFFLINE 才触发），且 `device_status` 有对应历史记录；作用域 `/` 冷却 `/` 条件组规则同属性触发。状态未变化、乱序旧事件被 SQL 守卫丢弃时都**不发布事件**，属预期。默认异步摄取（`IngestPersistenceService`）与 legacy 同步 / 心跳巡检（`DeviceServiceImpl`）两条路径都会发布。
 - **定时场景未按时触发**：核对 `timer_cron` 为合法 5 字段分钟级表达式、时区符合预期（`SCENE_TIMER_ZONE`，默认 `Asia/Shanghai`）；同一分钟内重复 tick 会被 `last_triggered_at` 去重，属预期。
 - **场景触发但动作没生效**：查 `scene_step_run` 状态——`PENDING` 表示待排期 / 待重试（看 `next_attempt_at` 与 `scheduled_at`），`FAILED` 看 `error_message`；`SKIPPED` 表示前一步失败后被短路。`FORWARD_MQTT` 置 `FAILED` 且提示「外部 MQTT 转发未启用」说明 `RULE_MQTT_ENABLED=false`（该动作受 T-19 外部 Broker 变量约束，参见 §9.14）。
 - **冷却窗口内重复上报只触发一次**：属预期——同一场景在 `cooldown_seconds` 内的重复命中被跳过，冷却锚点在进程内维护（**多副本各自独立**，重启后清空）。
 - **执行记录被清理**：`SCENE_EXECUTION_RETENTION_DAYS>0` 且巡检运行时，终态记录（`SUCCESS`/`FAILED`）超期被物理删除；`PENDING`/`RUNNING` 永不清理。如需长期留档，调大该值或置 `0`。
 - **步骤一直停在 `PENDING` / 不推进**：确认巡检已启用（`SCENE_SWEEP_INTERVAL_MS>0` 且 `SCENE_ENABLED=true`）；查看后端日志中场景巡检 WARN。步骤超 `SCENE_STEP_TIMEOUT_MS` 后由巡检置 `FAILED`。
-- **`6240`~`6245`**：`6240` 场景不存在（`404`）/ `6241` 场景配置非法（`400`）/ `6242` 不支持的步骤动作类型（`400`）/ `6243` 场景执行记录不存在（`404`）/ `6244` 场景 / 步骤 / 条件 / 目标设备数超出上限（`400`）/ `6245` 不支持的触发源（`400`）；场景与执行记录越权访问统一返回 `403`，非 `FAILED` 状态手动重试返回 `409`，设备越权复用 `2003`。
+- **分支没有按预期跳转**：检查分支步骤 `action_config` 的 `identifier` / `operator` / `threshold` 与条件设备最新值；`deviceId` 为空时取触发设备，`TIMER` 触发源必须在分支配置中显式指定设备；`trueSeq` / `falseSeq` 只能向后跳转，目标步骤必须存在且启用；实际决策见该步骤 `flow_result`。
+- **循环次数 / 进度异常**：循环步骤 `action_config` 为 `{startSeq, times}`，`times` 上限 20；循环体为 `startSeq` 到循环步骤前一步。每轮重放会覆盖循环体内步骤的执行时间线（保留最终状态与 `loop_iteration`），不是逐轮留痕；手动重试保留当前轮次，不从头重放已成功步骤。
+- **影子变更场景未触发**：确认 `trigger_type='SHADOW'`、`trigger_shadow_side` 与事件侧一致（`REPORTED` / `DESIRED` / `ANY`）；配置了 `trigger_identifier` 时只有该属性变化才命中；值未变化、影子 CAS 重试耗尽不会发布事件。`desired` 变更仅 `CONSOLE` / `OPEN_API` / 直接调用触发，`SCENE` / `RULE` / `OTA` 等内部来源被刻意跳过以避免自触发。实际变更摘要见 `scene_execution.trigger_value`（`k=v, ...`）。
+- **`6240`~`6245`**：`6240` 场景不存在（`404`）/ `6241` 场景配置非法（`400`）/ `6242` 不支持的步骤动作类型（`400`）/ `6243` 场景执行记录不存在（`404`）/ `6244` 场景 / 步骤 / 条件 / 目标设备数或循环展开步数超出上限（`400`）/ `6245` 不支持的触发源（`400`）；场景与执行记录越权访问统一返回 `403`，非 `FAILED` 状态手动重试返回 `409`，设备越权复用 `2003`。
 
 ### 9.20 MQTT TLS 与 X.509 设备认证（T-25）
 
@@ -1316,17 +1341,17 @@ chmod 750 .
 - **吊销后设备仍能发布 / 订阅**：`ACCESS_CONTROL_ENFORCE_AUTH=false` 期间认证与授权一律放行（迁移期双轨），吊销不生效属预期；置为 `true` 后按 `device_certificate` 与 `topic_prefix` 生效。
 - **`6249`~`6253` 汇总**：`6249` 不支持的认证方式（`400`）/ `6250` 主题前缀模板非法（`400`）/ `6251` 设备证书签发失败（`500`）/ `6252` 设备证书吊销失败（`400`）/ `6253` 设备令牌签发失败（`500`）。
 
-### 9.21 设备拓扑与网关代连（T-26）
+### 9.21 设备拓扑与网关代连（T-26 / T-47）
 
-T-26 引入两层设备拓扑：网关设备 `node_type=GATEWAY` 代子设备 `node_type=SUB`（`parent_id` 指向网关），二者须同一产品；子设备不再各自直连，其上行 / 下行主题由网关代为收发，主题形状（`device/{subKey}/data|heartbeat|lwt|reply|ota` 与 `device/{subKey}/cmd/down`）与直连设备完全一致，故 MQTT 侧零改动、无需重跑 `emqx-init`。存量设备行迁移后一律回退为 `DIRECT` 且 `parent_id` 为空，行为不变。
+T-26 引入设备拓扑：`GATEWAY` 代子设备 `SUB`（`parent_id` 指向父设备），二者须同一产品；T-47 扩展为**多级拓扑**——`SUB` 也可以作为子网关继续挂载叶子设备，默认最多 5 层。子设备不再各自直连，其上行 / 下行主题由直接父设备代为收发，主题形状（`device/{subKey}/data|heartbeat|lwt|reply|ota` 与 `device/{subKey}/cmd/down`）与直连设备完全一致，故 MQTT 侧零改动、无需重跑 `emqx-init`。存量设备行迁移后一律回退为 `DIRECT` 且 `parent_id` 为空，行为不变。
 
 **后端可调项**（`.env` → 环境变量 → `application.yml` 的 `app.device-topology`）：
 
 | 变量 | 默认 | 作用 |
 |------|------|------|
 | `DEVICE_TOPOLOGY_ENABLED` | `true` | 拓扑总开关；置 `false` 时六端点一律返回 `404`、授权委托分支不生效，既有直连设备链路不受影响，**用于现场回滚** |
-| `DEVICE_TOPOLOGY_MAX_DEPTH` | `2` | 拓扑深度上限；本期仅支持两层（父不得为 `SUB`），低于 `2` 视为仅允许 `DIRECT`、不接受任何挂载 |
-| `DEVICE_TOPOLOGY_MAX_SUB_DEVICES_PER_GATEWAY` | `200` | 单网关子设备数量上限，超限挂载报 `6260` |
+| `DEVICE_TOPOLOGY_MAX_DEPTH` | `5` | 拓扑深度上限（根为第 1 层）；默认支持多级，置 `2` 可回退两层行为，低于 `2` 视为仅允许 `DIRECT`、不接受任何挂载 |
+| `DEVICE_TOPOLOGY_MAX_SUB_DEVICES_PER_GATEWAY` | `200` | 单个父设备（网关或子网关）的直接子设备数量上限，超限挂载报 `6260` |
 
 > 翻转上述任一变量后 `docker compose --env-file .env -f docker/docker-compose.yml up -d --force-recreate backend` 生效；`DEVICE_TOPOLOGY_ENABLED=false` 是灰度或故障时的**回滚开关**——拓扑端点立即 `404`、网关不再获得代子设备授权，但已挂载数据保留（`node_type` / `parent_id` 不变），复位为 `true` 即恢复。
 
@@ -1336,11 +1361,12 @@ T-26 引入两层设备拓扑：网关设备 `node_type=GATEWAY` 代子设备 `n
 
 - **拓扑端点一律 `404`**：`DEVICE_TOPOLOGY_ENABLED=false`（控制器内 `requireEnabled()` 直接返回 `404`，**非鉴权问题**）；确认环境变量已透传并 `--force-recreate backend` 生效。
 - **挂载报 `6255`（`DEVICE_PARENT_NOT_FOUND`）**：`{gatewayId}` 指向的设备不存在或已逻辑删除。
-- **挂载报 `6256`（`DEVICE_PARENT_KIND_INVALID`）**：父设备当前为 `SUB`（本期仅两层，禁止三层嵌套）。
-- **挂载报 `6257`（`DEVICE_TOPOLOGY_DEPTH_EXCEEDED`）**：拓扑深度超过 `DEVICE_TOPOLOGY_MAX_DEPTH`；确认该值不低于 `2`。
-- **挂载报 `6258`（`DEVICE_PRODUCT_MISMATCH`）**：父网关与子设备不属于同一产品；子设备须与网关同产品。
-- **变更角色报 `6259`（`DEVICE_HAS_SUBDEVICES`）**：该网关仍有挂载子设备，须先解绑全部子设备再降级。
+- **挂载报 `6257`（`DEVICE_TOPOLOGY_DEPTH_EXCEEDED`）**：拓扑深度超过 `DEVICE_TOPOLOGY_MAX_DEPTH`，或待挂载设备已有下级（当前只允许挂载叶子设备、不支持整棵子树移动）；确认深度上限不低于 `2`。
+- **挂载报 `6258`（`DEVICE_PRODUCT_MISMATCH`）**：父设备与子设备不属于同一产品；子设备须与父设备同产品。
+- **变更角色报 `6259`（`DEVICE_HAS_SUBDEVICES`）**：该设备仍有挂载子设备，须先解绑全部子设备再降级。
 - **挂载报 `6260`（`DEVICE_SUBDEVICE_LIMIT_EXCEEDED`）**：超过 `DEVICE_TOPOLOGY_MAX_SUB_DEVICES_PER_GATEWAY`；调大该值或清理闲置子设备。
+- **解绑后子网关角色变化**：叶子子设备回落 `DIRECT`；带下级的子网关解绑后收敛为根 `GATEWAY`（`parent_id=NULL`），其下级子树保持，属预期。
+- **`6256`（`DEVICE_PARENT_KIND_INVALID`）**：T-47 起父设备可以是 `GATEWAY` 或 `SUB`，正常挂载不再返回该码；仅历史版本或外部误用保留错误码定义。
 - **网关代子设备发布 / 订阅被拒**：确认 `ACCESS_CONTROL_ENFORCE_AUTH=true`（`false` 期间认证与授权一律放行，委托判定不参与）；再确认委托方确为 `GATEWAY`、目标确为同产品 `SUB` 且 `parent_id` 等于委托方 `deviceId`，拓扑变更后两侧认证缓存已即时失效。
 - **`6254`~`6260` 汇总**：`6254` 拓扑参数非法（`400`）/ `6255` 父网关不存在（`404`）/ `6256` 父设备类型非法（`400`）/ `6257` 拓扑深度超限（`400`）/ `6258` 父设备与子设备产品不一致（`400`）/ `6259` 网关仍有子设备（`409`）/ `6260` 单网关子设备数超限（`400`）。
 
@@ -1420,6 +1446,375 @@ T-28 把「消息规则」（`rule_definition`）与「告警规则」（`alert_
 - **分组调整后规则未生效**：属预期 —— 匹配按设备当前隶属实时计算、无需重算；若仍未命中，确认设备已挂入目标分组（或其后代分组）。
 - **分组被删除后规则「少管一批设备」**：属预期 —— `group_ids` 只存 ID 不存名称快照，被删分组从作用域中「失联」后匹配自然落空，规则静默降级；如需避免，删除前先核对引用该分组的规则。
 - **`6268` / `6269` 汇总**：`6268` 告警规则作用域非法（`400`）/ `6269` 消息规则作用域非法（`400`）；分组 / 标签越权访问统一返回 `403`。
+
+### 9.24 设备调试中心与快速上位机运维（T-37 / T-38）
+
+T-37 提供**设备调试中心**：连接参数、Topic 一览、模拟上行、实时报文与设备端 / 上位机端属性代码。
+T-38 提供**快速上位机（Web 组态）**：按物模型一键生成单设备面板，实时看值、控值与调用服务。
+
+**后端可调项**（`.env` → 环境变量 → `application.yml`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `DEBUG_ENABLED` | `true` | 调试端点总开关；`false` 时 `/api/devices/*/debug/**` 不注册（404） |
+| `DEBUG_PUBLIC_BROKER_HOST` | `localhost` | 浏览器 / 上位机可达的 Broker 主机名或 IP。**容器内 `spring.mqtt.host` 是 `tcp://emqx:1883`，不能直接回显给用户**；生产必须改成公网域名或服务器 IP |
+| `DEBUG_MQTT_WS_PATH` | `/mqtt` | EMQX WebSocket 监听路径，用于拼接 `ws://host:8083/mqtt` |
+| `DEBUG_MAX_PAYLOAD_BYTES` | `65536` | 单次模拟上报载荷上限，超限返回 `6298` |
+| `MQTT_PORT` / `MQTT_TLS_PORT` / `MQTT_WS_PORT` | `1883` / `8883` / `8083` | 调试上下文展示的对外端口；必须与 compose 端口映射一致 |
+| `HMI_MAX_COUNT` | `20` | 每用户上位机数量上限，超限 `6301` |
+| `HMI_MAX_WIDGETS` | `30` | 单个上位机控件数量上限，超限 `6302` |
+
+**部署注意**：
+
+1. **Broker 对外地址必须显式配置**。默认 `localhost` 只适用于单机演示；远程用户看到 `tcp://localhost:1883` 会无法连接。
+2. **调试模拟不需要、也不返回设备密钥**。模拟上行由后端构造 `IngestRecord` 并投入与真机相同的 `IngestPipeline`，因此会真实触发物模型解析、影子、规则、告警、Webhook 与 SSE。`POST /debug/simulate` 仅 ADMIN / OPERATOR 可用。
+3. **密码只显示提示**。设备密钥以 BCrypt 哈希存储，平台无法回显；需要明文时走「重置设备密钥」或「导出全部设备凭据」，并自行承担轮换影响。
+4. **HMI 迁移**：`V21__hmi_view.sql` 只新增 `hmi_view` 表，不改既有表；应用回滚后旧代码忽略新表，可安全共存。HMI 与看板是两套模型，互不影响。
+5. **HMI 写值走影子**：`switch/slider/input/select` 调用 `PUT /api/devices/{deviceKey}/shadow/desired`，离线设备会 `QUEUED` 并在上线后补发；若期望「必须在线才允许控制」，应在设备端或业务侧另加约束。
+6. **实时刷新依赖 SSE**：HMI 运行页复用应用级 `/api/realtime/stream` 单连接，按 `deviceKey` 过滤；SSE 断开时页面仍可刷新取最新值，但不会自动追加。
+
+**常见排障**：
+
+- **调试页连接参数显示 `localhost` / 容器名**：检查 `DEBUG_PUBLIC_BROKER_HOST` 是否已设置并重建 backend。
+- **模拟上报返回 `6298`**：`data` / `reply` / `ota` 的载荷必须是 JSON 对象，且不超过 `DEBUG_MAX_PAYLOAD_BYTES`。
+- **模拟成功但属性没更新**：确认产品已定义物模型、`app.ingest.enabled=true`，且载荷标识符与 TSL 一致；未知字段会被忽略。
+- **HMI 保存报 `6303`**：控件绑定的属性 / 服务不存在，或开关 / 滑块 / 下拉绑到了只读属性；先刷新详情页的物模型投影再编辑。
+- **HMI 运行页数值不刷新**：确认浏览器 SSE 状态为「已连接」；跨副本部署时 `REALTIME_BROADCAST_ENABLED` 必须为 `true`。
+
+### 9.25 平台侧 Modbus 主站采集运维（T-31 P4）
+
+平台可作为 Modbus TCP 主站，按点表周期轮询现场设备，把采集值送进与 MQTT 上报相同的物模型链路
+（属性最新值 / 属性历史 / 影子 / 规则 / 告警 / 场景）。**默认关闭**，确认平台到现场网络可达后再开启。
+
+**后端可调项**（`.env` → 环境变量 → `application.yml` 的 `app.modbus`）：
+
+| 变量 | 默认 | 作用 |
+|------|------|------|
+| `MODBUS_COLLECT_ENABLED` | `false` | 总开关；`false` 时巡检不注册，平台不出网 |
+| `MODBUS_SWEEP_INTERVAL_MS` | `1000` | 巡检间隔：多久查一次到期点位 |
+| `MODBUS_BATCH_LIMIT` | `200` | 单轮最多取多少点位 |
+| `MODBUS_ENABLED_DEVICE_LIMIT` | `50` | 单轮最多提交多少台设备 |
+| `MODBUS_MAX_CONNECTIONS` | `8` | 并发 Modbus 连接上限（信号量） |
+| `MODBUS_CONNECT_TIMEOUT_MS` | `3000` | 连接超时 |
+| `MODBUS_READ_TIMEOUT_MS` | `3000` | 读超时 |
+| `MODBUS_RETRY` | `1` | 单次请求重试次数（0~10） |
+| `MODBUS_MIN_INTERVAL_MS` | `1000` | 采集周期下限；点表配得更小时按此值轮询 |
+| `MODBUS_CORE_POOL_SIZE` / `MODBUS_MAX_POOL_SIZE` | `2` / `4` | 采集专用线程池 |
+| `MODBUS_QUEUE_CAPACITY` | `200` | 采集线程池队列；满时 CallerRuns 降速 |
+| `MODBUS_DEFAULT_HOST` | 空 | `driver_config` 未写 host 时的默认值；空表示必须由产品配置提供 |
+| `MODBUS_DEFAULT_PORT` / `MODBUS_DEFAULT_UNIT_ID` | `502` / `1` | 同上 |
+
+**产品配置**：在产品管理页编辑产品，把「接入协议」切到 `Modbus（平台主站轮询）`，填写驱动标识与驱动配置。
+`protocol_type` 必须为 `MODBUS`；`driver_id` 留空或填 `modbus-tcp`；`driver_config` 为 JSON
+（编辑框内容通过 ADMIN 专用端点 `GET /api/products/{id}/driver-config` 读取，产品列表不暴露内网地址）：
+
+```json
+{
+  "host": "192.168.10.20",
+  "port": 502,
+  "unitId": 1,
+  "connectTimeoutMs": 3000,
+  "readTimeoutMs": 3000,
+  "retry": 1,
+  "wordOrder": "ABCD"
+}
+```
+
+`wordOrder` 仅影响 int32 / uint32 / int64 / uint64 / float / double：`ABCD` 大端、`CDAB` 字交换、
+`BADC` 字节交换、`DCBA` 小端；现场设备若使用 word-swap，改这里即可，不必在边缘侧转换。
+
+**点表配置**：在设备详情「点位表」中把 `executor` 设为 `PLATFORM`（同一设备下所有点位执行方必须一致），
+填写 `pointKey`（必须与物模型属性 identifier 一致）、`pointType`、寄存器地址、`unitId`（可选，留空继承驱动配置）、
+`dataType`、`scale` / `offset`、`readIntervalMs`。支持的点位类型与换算：
+
+| pointType | 功能码 | 单点宽度 |
+|---|---|---|
+| `HOLDING_REGISTER` | 03 | 按 dataType：int/bool/string 1 个寄存器，int32/uint32/float 2 个，int64/uint64/double 4 个 |
+| `INPUT_REGISTER` | 04 | 同上 |
+| `COIL` | 01 | 1 位，`!=0` 为 true |
+| `DISCRETE_INPUT` | 02 | 1 位，`!=0` 为 true |
+
+- 数值型：`工程值 = 原始值 * scale + offset`；`scale` 默认 1、`offset` 默认 0。
+- `int` 按有符号 16 位解释；`int32` / `uint32` 为 32 位有符号 / 无符号；`int64` / `uint64` 为 64 位有符号 / 无符号（uint64 无符号十进制）；`float` / `double` 为 IEEE-754。
+- `wordOrder` 默认 `ABCD`（大端）；`CDAB` / `BADC` / `DCBA` 适配现场字序，只作用于 32/64 位数值。
+- 同一设备可配置多个点位 `unitId`，平台在同一个 TCP 连接上分别读取；不同从站相同地址绝不合并。
+- `string` 当前按 **1 个寄存器 2 字节 ASCII** 解释，遇 NUL 截断；V18 点表没有字符串长度列，暂不支持变长字符串。
+
+**启用前检查**：
+
+1. 平台容器到 `host:port` 网络可达（建议把现场设备放在独立 VLAN，并在防火墙上只放行平台出口）。
+2. `app.ingest.enabled=true` 且 `app.thing-model.interpret-enabled=true`，否则采集值不会进入物模型链路。
+3. 点的 `pointKey` 与物模型 identifier 完全一致；`dataType` 与 TSL 属性类型兼容
+   （例如 TSL 为 `int` 时，工程值必须是整数，否则解析链路会判为非法值）。
+4. 设备 `enabled=1`、产品未停用；否则该轮点位记为 `SKIPPED`。
+
+**采集结果与排障**：
+
+- 每轮逐点写 `device_point_run`：`OK` / `FAILED` / `SKIPPED`，可在点位表页看到最近状态与失败原因。
+- 采集成功值会组装成 Alink `data` 报文投入 `IngestPipeline`，与 MQTT 上报完全同链路；
+  Topic 为 `device/{deviceKey}/data`，日志中带 `modbus-` 前缀的 traceId。
+- 合并读失败会自动降级逐点读；单点失败不影响同设备其它点位。
+- **连接失败不直接改设备在线状态**：平台侧网络故障与设备真离线难以区分，贸然置离线会触发误告警；
+  以 `device_point_run=FAILED` 与日志为准。
+- 同一设备不会重复提交采集任务（服务内有在途设备去重）；若日志持续报「并发连接数已达上限」，
+  调大 `MODBUS_MAX_CONNECTIONS` 或降低 `MODBUS_ENABLED_DEVICE_LIMIT`。
+
+**常见排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 点位一直无采集记录 | 点表 `executor` 是否为 `PLATFORM`、`enabled=1`；产品 `protocol_type` 是否为 `MODBUS`；`MODBUS_COLLECT_ENABLED` 是否为 true |
+| 有 FAILED，`driver_config` 非法 | 检查 JSON 与 `host`；未配置 host 时平台不会默认连 127.0.0.1 |
+| 有 OK 但属性不更新 | `pointKey` 与 TSL identifier 不一致，或工程值类型 / 范围不符合 TSL 定义 |
+| 值明显不对 | 核对 `scale` / `offset`、寄存器字节序与 `dataType`；float/double 必须按大端组合 |
+| 总线被打爆 | 调大 `MODBUS_MIN_INTERVAL_MS`、`MODBUS_SWEEP_INTERVAL_MS`，减少单轮设备数 |
+
+---
+
+### 9.26 看板大屏分享运维（T-46）
+
+**入口**：工作台「数据看板」→「大屏分享」或卡片「分享」。分享可包含多个看板，公开页为
+`/display/{token}`，无需登录；大屏每 60 秒刷新数据，轮播间隔由分享配置决定（5..3600 秒）。
+
+**令牌与失效**：
+
+- 令牌 256 位随机，数据库 `dashboard_share.token_hash` 只存 SHA-256，明文仅在创建 / 轮换响应返回一次；
+- 分享列表只显示前缀；遗失链接只能「轮换令牌」重新生成，旧链接立即失效；
+- 停用 / 删除分享后公开链接立即不可访问（`6305`）；
+- 公开视图每次读取都会重新校验看板与设备归属，删除 / 转移后自动跳过；全部不可用时返回 `6305`。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 打开 `/display/{token}` 显示链接失效 | 分享是否 `enabled=1`、令牌是否已轮换 / 删除、`dashboard_ids` 中看板是否仍存在且属于创建者 |
+| 看板显示但图例是「设备 {id}」 | 设备已转移或不属于分享创建者；公开视图只返回创建者名下设备名并过滤其它设备 ID |
+| 修改看板后大屏没变化 | 大屏只在首次加载读取分享配置；刷新页面重新加载。数据本身每 60 秒自动刷新 |
+| 轮播不切换 | 分享只包含 1 个看板时不会轮播；确认「播放 / 暂停」未暂停、`interval_seconds` 是否符合预期 |
+| 全屏按钮无反应 | 浏览器可能拒绝非用户手势触发的全屏；直接点击按钮重试 |
+
+**数据库排查**：
+
+```sql
+SELECT id, user_id, name, token_preview, dashboard_ids, interval_seconds, enabled, updated_at
+FROM dashboard_share WHERE user_id = <userId> ORDER BY updated_at DESC;
+-- 令牌哈希不可逆，不能从库中还原明文链接
+```
+
+---
+
+### 9.27 分组级权限共享运维（T-48）
+
+**入口**：工作台「监控」→「分组管理」→ 分组节点「共享」。所有者可按用户名或邮箱添加成员，
+授予 `VIEW`（只读）或 `OPERATE`（可查看并下发命令 / 写影子）。权限沿分组祖先链继承：
+给父分组授权即覆盖整棵子树；分组移动后权限自动跟随，不需要回填成员行。
+
+**权限边界**：
+
+| 能力 | 所有者 | 共享 OPERATE | 共享 VIEW |
+|---|---|---|---|
+| 查看分组子树 / 组内设备 | 是 | 是 | 是 |
+| 分组结构编辑 / 设备关联 / 成员管理 | 是 | 否 | 否 |
+| 下发命令 / 写影子 | 是 | 是（仍需平台 ADMIN / OPERATOR 角色） | 否 |
+| 调试 / 点位表 / HMI / 日志 / 凭据 / 拓扑 / 导出 | 是 | 否 | 否 |
+
+**运维约定**：
+
+- 共享成员只能从「分组管理」页看到共享分组；设备主列表、场景 / 规则 / OTA 目标选择器仍只显示本人数据；
+- 成员表 `device_group_member` 只存 `VIEW` / `OPERATE`，`OWNER` 不落库；不要手工插入 `OWNER`；
+- 删除分组或用户时成员行由外键 `ON DELETE CASCADE` 自动清理；移除成员后权限立即失效（读取路径无缓存）；
+- 不能把分组共享给所有者本人；重复添加同一成员会更新其权限而不是插入重复行。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 共享成员打开分组详情返回 `6310` | 成员关系是否已移除、目标分组是否在授权子树内、分组是否已删除 |
+| 添加成员返回 `6308` | 用户名 / 邮箱是否对应 ACTIVE 用户；是否试图共享给自己或所有者；权限是否只填 `VIEW` / `OPERATE` |
+| 修改 / 移除成员返回 `6309` | `memberId` 是否属于该分组；成员可能已被移除 |
+| 共享分组成员看不到设备 | 设备是否已加入该分组（或其子分组）；分页范围来自分组子树，未关联设备的空分组会返回空页 |
+| 共享 OPERATE 成员仍无法下发命令 | 平台角色是否为 VIEWER；共享操作权不替代 ADMIN / OPERATOR 闸门 |
+| 共享分组出现在场景 / 规则 / OTA 选择器 | 目标选择器应使用默认 `includeShared=false`；仅分组管理页传 `true` |
+| 升级后启动报 `V26` 迁移失败 | 检查 `device_group` / `sys_user` 表是否存在且引擎为 InnoDB；`V26` 依赖两表外键 |
+
+**数据库排查**：
+
+```sql
+-- 某分组当前共享成员
+SELECT m.id, u.username, u.email, m.permission, m.updated_at
+FROM device_group_member m JOIN sys_user u ON u.id = m.user_id
+WHERE m.group_id = <groupId> ORDER BY m.id;
+
+-- 某用户被共享的分组（含权限来源）
+SELECT m.group_id, g.name, m.permission
+FROM device_group_member m JOIN device_group g ON g.id = m.group_id
+WHERE m.user_id = <userId> AND g.deleted = 0;
+```
+
+**配置**：本任务无新增环境变量；`V26__device_group_member.sql` 随应用启动由 Flyway 自动执行。
+
+---
+
+### 9.28 场景步骤并行运维（T-49）
+
+**入口**：工作台「自动化」→「场景联动」→ 编辑场景 → 「表单」或「画布」视图。步骤类型新增
+「并行开始」与「并行汇合」：并行开始配置 2~8 条分支，块内普通步骤选择所属分支，所有分支结束后
+用「并行汇合」继续。
+
+**结构约束**：
+
+- `PARALLEL` / `JOIN` 必须成对，不能嵌套，两个流程步骤都必须启用；
+- 并行块内只允许普通动作步骤（更新属性 / 下发命令 / 转发 MQTT / 转发 HTTP），不能放条件分支、循环或另一个并行块；
+- 每个分支至少一个启用步骤；块内步骤必须归属具体分支；
+- 并行块不能与循环体范围重叠，条件分支不能跳入并行块；
+- 单块分支数 2~8，单场景步骤上限仍为 20。
+
+**执行语义**：
+
+- 并行开始同时排期各分支首步，分支首步的 `delaySeconds` 相对并行开始完成时刻；
+- 同分支内按 `seq` 串行执行；不同分支并发执行；
+- 所有分支全部成功（或被中止置为已跳过）后才执行汇合步骤；
+- 任一步骤重试耗尽会中止整条执行，未执行步骤置 `SKIPPED`；已在执行中的其它分支允许完成当前动作，但不会继续排期；
+- 手动重试时，失败步骤位于并行块内则从该块「并行开始」整体重置并重放，块前已完成步骤不回退。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 保存返回 `6241`（场景参数非法） | 检查并行块是否成对、是否有空分支、块内是否放了分支 / 循环、条件分支是否跳入块内 |
+| 执行停在并行开始 | 查看执行明细各分支首步是否已排期；线程池是否满（`scene_rejected_total`）；分支步骤是否有 `FAILED` |
+| 分支都成功但不执行汇合 | 检查是否存在分支步骤卡在 `PENDING` / `RUNNING`；汇合步骤是否被误删或禁用 |
+| 手动重试后仍失败 | 并行块会整体重放；确认失败原因是外部设备 / 网络，而非块结构在编辑后失效 |
+| 执行详情看不到分支归属 | `scene_step_run.parallel_seq` / `branch_index` 为空时表示该步骤不在并行块内 |
+
+**数据库排查**：
+
+```sql
+-- 某次执行的并行块与分支状态
+SELECT seq, action_type, parallel_seq, branch_index, status, attempt_count, flow_result
+FROM scene_step_run
+WHERE execution_id = <executionId>
+ORDER BY seq;
+```
+
+**配置**：本任务无新增环境变量；`V27__scene_parallel_steps.sql` 随应用启动由 Flyway 自动执行。
+
+---
+
+### 9.29 Modbus 多从站与 64 位整型运维（T-50）
+
+**入口**：设备详情 →「点位表」。点位表的「从站」列可填 0~247；留空表示继承设备驱动的
+`driver_config.unitId`。同一台设备的点位可以指向不同从站，采集器会在同一个 TCP 连接上
+分别读取。
+
+**配置规则**：
+
+- `driver_config.unitId` 是设备默认从站；点位 `unit_id` 非空时覆盖默认值；
+- 合并读键为「功能码 + unitId」：不同从站即使地址连续也不会合并，避免串位；
+- `data_type` 新增 `int64` / `uint64`，均占 4 个寄存器，沿用 `wordOrder`；
+- `uint64` 以无符号十进制字符串输出（例如 `18446744073709551615`），再参与 scale/offset；
+- 越界 unitId 保存返回 `6311`；采集阶段遇到历史脏数据会单点失败，不拖垮同批其它点位；
+- 一台设备仍只连一个 host:port；多个 TCP 网关请拆成多台设备。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 保存返回 `6311` | 从站地址需为 0~247 的整数；留空表示继承驱动配置 |
+| 某从站点位全部失败 | 检查网关是否支持该 unitId、从站是否在线；查看该点位 `errorMessage` 是否为读超时 |
+| 不同从站值互相串位 | 确认升级到 T-50（合并键含 unitId）；检查是否仍由旧版本采集 |
+| int64 显示负数但现场为无符号 | 将类型改为 `uint64`；确认 `wordOrder` 与 PLC 一致 |
+| uint64 值被截断 | 平台按字符串保存无符号十进制，不会截断；检查下游物模型属性类型是否可承载 |
+| 合并读失败但单点能读 | 查看日志中的降级记录；通常是某个地址越界或网关限制单次读取长度 |
+
+**数据库排查**：
+
+```sql
+SELECT id, point_key, address, unit_id, data_type, executor, enabled
+FROM device_point_table
+WHERE device_id = <deviceId> ORDER BY id;
+```
+
+**配置**：本任务无新增环境变量；`V28__point_unit_and_int64.sql` 随应用启动由 Flyway 自动执行。
+
+---
+
+### 9.30 场景版本回滚运维（T-51）
+
+**入口**：工作台「自动化」→「场景联动」→ 场景行「版本」。每次创建 / 保存 / 回滚都会生成一个版本，
+列表按版本号倒序，第一条为当前配置；每场景最多保留最近 20 个版本。
+
+**行为**：
+
+- 回滚会**覆盖当前场景的全部配置**（触发源、条件组、步骤流、启用状态），并生成一个新的 `RESTORE` 版本；
+- 回滚本身可再次撤销（再回滚到回滚前的版本）；
+- 启停开关不单独生成版本，但回滚会恢复快照中的启用状态；
+- 回滚不重新校验旧配置引用的分组 / 设备是否仍存在；若目标已删除，场景运行时会按现有目标解析逻辑失败；
+- 版本不存在返回 `6312`；快照损坏或恢复后名称与其它场景重名返回 `6241`；
+- 并发保存由 `(scene_id, version_no)` 唯一键兜底，冲突时本次保存整体回滚，需要重新提交。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 版本列表为空 | 升级前创建的老场景没有历史快照，重新保存一次即可生成首个版本 |
+| 回滚返回 `6312` | 版本可能已被场景删除清理，或 `versionId` 不属于当前场景 |
+| 回滚返回 `6241` | 快照 JSON 损坏，或旧场景名称已被其它场景占用 |
+| 回滚后场景不能运行 | 旧配置引用的分组 / 设备可能已删除，检查目标解析错误 |
+| 看不到最新修改 | 最新版本就是当前配置；修改保存后刷新版本对话框 |
+
+**数据库排查**：
+
+```sql
+SELECT id, scene_id, version_no, change_type, scene_name, trigger_type, step_count, created_at
+FROM scene_version WHERE scene_id = <sceneId> ORDER BY version_no DESC;
+-- snapshot 为完整 JSON，仅在排障时按需查看
+```
+
+**配置**：本任务无新增环境变量；`V29__scene_version.sql` 随应用启动由 Flyway 自动执行。
+
+---
+
+### 9.31 告警阈值窗口聚合运维（T-52）
+
+**入口**：工作台「告警」→「告警规则」→ 来源类型「阈值」。统计窗口为 0 时按最新值实时判断
+（与旧版本一致）；大于 0 时按窗口内聚合值判断，需同时选择聚合方式与最少样本数。
+
+**口径**：
+
+| 聚合方式 | 说明 |
+|---|---|
+| `AVG` | 窗口内数值样本均值 |
+| `MIN` / `MAX` | 最小值 / 最大值 |
+| `SUM` | 求和 |
+| `COUNT` | 窗口内数值样本数 |
+
+- 只统计可解析为十进制数的属性值；非数值样本忽略；
+- 窗口按属性上报时间计算，`anchor` 取已见最大上报时间，乱序样本不会拉长窗口；
+- 达到 `minSamples` 后才评估；样本不足时既不触发，也不把活动告警误判为恢复；
+- 告警记录的触发值为聚合值，标题会显示「N 秒 均值 / 最小值 / …」；
+- 窗口只保存在当前副本内存：服务重启、副本重平衡后窗口清空，需要重新累计；
+- 规则更新 / 删除会清理该规则的窗口；启停不会清理窗口。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 窗口规则一直不触发 | 检查 `windowSeconds`、`minSamples` 与实际上报频率；样本数不足时不会评估 |
+| 重启后告警延迟 | 内存窗口已清空，需重新累计 `minSamples` 个样本 |
+| 窗口阈值保存返回 `6208` | 窗口需 0~86400、最少样本 1~1000、聚合方式合法，窗口模式阈值必须为数字 |
+| 聚合值与手工计算不一致 | 以属性上报时间而非服务端处理时间为准；确认窗口内非数值样本已被忽略 |
+| 多副本下告警抖动 | 当前窗口不跨副本；设备重平衡后新副本需重新累计 |
+
+**数据库排查**：
+
+```sql
+SELECT id, name, identifier, operator, threshold_value,
+       aggregate_type, window_seconds, min_samples, enabled
+FROM alert_rule WHERE source_type = 'THRESHOLD' ORDER BY id;
+```
+
+**配置**：本任务无新增环境变量；`V30__alert_window.sql` 随应用启动由 Flyway 自动执行。
 
 ---
 

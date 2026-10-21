@@ -5,18 +5,26 @@
 
     <!-- T-22 设计文档 §7.2：按 ota_upgrade_record 重算任务计数与状态，避免逐条增减漂移。
          目标方言为 MySQL 8，故采用 UPDATE ... JOIN (子查询) ... SET 形式（MySQL 不支持 UPDATE ... SET ... FROM (...)）。
-         子查询仅依赖 ota_upgrade_record 的 task_id，命中 idx_task_status。 -->
+         子查询仅依赖 ota_upgrade_record 的 task_id，命中 idx_task_status。
+
+         T-32 三处口径变更：
+           1) dispatched_count 排除 SKIPPED —— SKIPPED 是「终止时从未下发」，计入已下发会让终止任务虚高；
+           2) skipped_count 单列，不并入 failed_count —— 终止是运维主动行为，不是设备升级失败；
+           3) status 首个 CASE 分支为 t.status IN ('PAUSED','ABORTED') THEN t.status ——
+              这两个状态表达运维意图而非记录聚合结果，若被重算，暂停/终止操作会被下一轮回传立刻撤销。 -->
 
     <update id="refreshCounters">
         UPDATE ota_upgrade_task t
         JOIN (
             SELECT task_id,
                    COUNT(*) AS total_count,
-                   SUM(CASE WHEN status &lt;&gt; 'PENDING' THEN 1 ELSE 0 END) AS dispatched_count,
+                   SUM(CASE WHEN status &lt;&gt; 'PENDING' AND status &lt;&gt; 'SKIPPED' THEN 1 ELSE 0 END) AS dispatched_count,
                    SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) AS success_count,
                    SUM(CASE WHEN status IN ('FAILED', 'TIMEOUT') THEN 1 ELSE 0 END) AS failed_count,
+                   SUM(CASE WHEN status = 'SKIPPED' THEN 1 ELSE 0 END) AS skipped_count,
                    CASE
-                       WHEN SUM(CASE WHEN status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING') THEN 1 ELSE 0 END) &gt; 0 THEN 'RUNNING'
+                       WHEN t.status IN ('PAUSED', 'ABORTED') THEN t.status
+                       WHEN SUM(CASE WHEN status IN ('PENDING', 'DISPATCHED', 'DOWNLOADING', 'FLASHING', 'VERIFYING') THEN 1 ELSE 0 END) &gt; 0 THEN 'RUNNING'
                        WHEN SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) = COUNT(*) THEN 'SUCCESS'
                        WHEN SUM(CASE WHEN status = 'SUCCESS' THEN 1 ELSE 0 END) = 0 THEN 'FAILED'
                        ELSE 'PARTIAL'
@@ -29,6 +37,7 @@
             t.dispatched_count = agg.dispatched_count,
             t.success_count = agg.success_count,
             t.failed_count = agg.failed_count,
+            t.skipped_count = agg.skipped_count,
             t.status = agg.status,
             t.updated_at = CURRENT_TIMESTAMP(3)
         WHERE t.id = #{taskId}

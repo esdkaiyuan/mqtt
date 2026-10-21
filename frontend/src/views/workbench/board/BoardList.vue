@@ -2,6 +2,10 @@
   <div class="board-list-page page">
     <PageHeader title="数据看板" desc="把常用设备属性趋势组合成看板，保存后可随时回看">
       <template #actions>
+        <el-button @click="openShareDialog()">
+          <svg-icon name="share" :size="16" />
+          大屏分享
+        </el-button>
         <el-button type="primary" @click="openCreateDialog">
           <svg-icon name="add" :size="16" />
           新建看板
@@ -41,6 +45,10 @@
           <div class="board-card__footer">
             <span class="board-card__time">更新于 {{ formatDateTime(board.updatedAt) }}</span>
             <div class="board-card__actions" @click.stop>
+              <el-button link type="primary" @click="openShareDialog(board)">
+                <svg-icon name="share" :size="14" />
+                分享
+              </el-button>
               <el-button link type="primary" @click="openRenameDialog(board)">
                 <svg-icon name="edit" :size="14" />
                 重命名
@@ -79,6 +87,13 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <DashboardShareDialog
+      v-if="shareVisible"
+      v-model="shareVisible"
+      :dashboards="dashboards"
+      :preset-dashboard-id="sharePresetId"
+    />
   </div>
 </template>
 
@@ -88,6 +103,7 @@ import { useRouter } from 'vue-router'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import SvgIcon from '@/components/Icon.vue'
+import DashboardShareDialog from '@/components/dashboard/DashboardShareDialog.vue'
 import { dashboardApi } from '@/api/dashboard'
 import { unwrapResult } from '@/utils/result'
 import { useDashboards } from '@/composables/useDashboards'
@@ -100,6 +116,8 @@ const showDialog = ref(false)
 /** 非空表示重命名，空表示新建。 */
 const editingId = ref(null)
 const form = reactive({ name: '' })
+const shareVisible = ref(false)
+const sharePresetId = ref(null)
 
 function formatDateTime(value) {
   if (!value) return '—'
@@ -120,6 +138,11 @@ function openRenameDialog(board) {
 
 function openBoard(board) {
   router.push(`/workbench/boards/${board.id}`)
+}
+
+function openShareDialog(board = null) {
+  sharePresetId.value = board?.id ?? null
+  shareVisible.value = true
 }
 
 async function handleSave() {

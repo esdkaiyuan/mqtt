@@ -15,6 +15,9 @@ export const sceneApi = {
   setSceneEnabled: (id, enabled) => api.put(`/scenes/${id}/enabled`, { enabled }),
   testScene: (id, data) => api.post(`/scenes/${id}/test`, data),
   runScene: (id) => api.post(`/scenes/${id}/run`),
+  listSceneVersions: (id) => api.get(`/scenes/${id}/versions`),
+  restoreSceneVersion: (id, versionId) =>
+    api.post(`/scenes/${id}/versions/${versionId}/restore`),
   listSceneExecutions: (params) => api.get('/scenes/executions', { params }),
   getSceneExecution: (id) => api.get(`/scenes/executions/${id}`),
   retrySceneExecution: (id) => api.post(`/scenes/executions/${id}/retry`)

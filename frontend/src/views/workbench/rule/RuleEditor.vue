@@ -63,6 +63,13 @@
       </el-form-item>
 
       <div class="form-section-title">② 触发条件</div>
+      <el-form-item label="条件组合">
+        <el-radio-group v-model="form.conditionLogic" :disabled="!form.extraConditions.length">
+          <el-radio-button value="AND">全部满足</el-radio-button>
+          <el-radio-button value="OR">任一满足</el-radio-button>
+        </el-radio-group>
+        <span v-if="!form.extraConditions.length" class="extra-hint">添加第二个条件后可切换组合方式</span>
+      </el-form-item>
       <el-form-item label="触发源" required>
         <el-select v-model="form.sourceType" style="width: 100%">
           <el-option
@@ -109,6 +116,55 @@
             :value="option.value"
           />
         </el-select>
+      </el-form-item>
+
+      <div v-if="form.extraConditions.length" class="form-section-title">
+        附加条件（与上方条件{{ form.conditionLogic === 'OR' ? '任一' : '全部' }}满足即触发）
+      </div>
+      <el-form-item
+        v-for="(condition, index) in form.extraConditions"
+        :key="`cond-${index}`"
+        :label="`附加条件 ${index + 1}`"
+      >
+        <div class="extra-item">
+          <el-input
+            v-model="condition.identifier"
+            maxlength="64"
+            placeholder="标识符"
+            class="extra-item__identifier"
+          />
+          <el-select v-if="form.sourceType !== 'EVENT'" v-model="condition.operator" class="extra-item__op">
+            <el-option
+              v-for="option in OPERATOR_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+          <el-input
+            v-if="form.sourceType !== 'EVENT'"
+            v-model="condition.thresholdValue"
+            placeholder="阈值"
+            class="extra-item__value"
+          />
+          <el-select v-else v-model="condition.eventType" clearable placeholder="事件类型" class="extra-item__value">
+            <el-option label="info" value="info" />
+            <el-option label="alert" value="alert" />
+            <el-option label="fault" value="fault" />
+          </el-select>
+          <el-button link type="danger" @click="removeCondition(index)">移除</el-button>
+        </div>
+      </el-form-item>
+      <el-form-item>
+        <el-button
+          :disabled="form.extraConditions.length >= MAX_CONDITIONS"
+          @click="addCondition"
+        >
+          + 添加条件
+        </el-button>
+        <span v-if="form.extraConditions.length >= MAX_CONDITIONS" class="extra-hint">
+          条件数已达上限 {{ MAX_CONDITIONS }}
+        </span>
       </el-form-item>
 
       <div class="form-section-title">③ 执行动作</div>
@@ -196,6 +252,58 @@
           />
         </el-form-item>
       </template>
+
+      <div v-if="form.extraActions.length" class="form-section-title">附加动作（命中后依次执行）</div>
+      <el-form-item
+        v-for="(action, index) in form.extraActions"
+        :key="`act-${index}`"
+        :label="`附加动作 ${index + 1}`"
+      >
+        <div class="extra-item extra-item--action">
+          <el-select v-model="action.actionType" class="extra-item__identifier">
+            <el-option
+              v-for="option in ACTION_TYPE_OPTIONS"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+          <el-input
+            v-if="action.actionType === 'FORWARD_HTTP'"
+            v-model="action.url"
+            placeholder="https://erp.example.com/hook"
+            class="extra-item__value"
+          />
+          <el-input
+            v-else-if="action.actionType === 'FORWARD_MQTT'"
+            v-model="action.topic"
+            placeholder="factory/line1"
+            class="extra-item__value"
+          />
+          <el-input
+            v-else
+            v-model="action.targetIdentifier"
+            maxlength="64"
+            :placeholder="action.actionType === 'UPDATE_PROPERTY' ? '目标属性' : '目标标识符'"
+            class="extra-item__value"
+          />
+          <el-input
+            v-if="action.actionType === 'UPDATE_PROPERTY'"
+            v-model="action.targetValue"
+            placeholder="写入值"
+            class="extra-item__value"
+          />
+          <el-button link type="danger" @click="removeAction(index)">移除</el-button>
+        </div>
+      </el-form-item>
+      <el-form-item>
+        <el-button :disabled="form.extraActions.length >= MAX_ACTIONS" @click="addAction">
+          + 添加动作
+        </el-button>
+        <span v-if="form.extraActions.length >= MAX_ACTIONS" class="extra-hint">
+          动作数已达上限 {{ MAX_ACTIONS }}
+        </span>
+      </el-form-item>
 
       <div class="form-section-title">高级</div>
       <el-form-item label="冷却窗口（秒）">
@@ -328,6 +436,12 @@ import {
   ACTION_TYPE_OPTIONS,
   OPERATOR_OPTIONS,
   EVENT_TYPE_OPTIONS,
+  MAX_ACTIONS,
+  MAX_CONDITIONS,
+  emptyAction,
+  emptyCondition,
+  validateAction,
+  validateCondition,
   buildRuleActionConfig,
   normalizeRuleScope
 } from '@/utils/rule'
@@ -378,6 +492,11 @@ function emptyForm() {
     thresholdValue: '',
     eventType: '',
     actionType: 'UPDATE_PROPERTY',
+    // T-33 多条件 / 多动作：首项仍走上方单值字段（保证单条件规则的提交体与改造前逐位一致），
+    // 附加项才进数组；没有附加项时 buildPayload 不下发 conditions / actions 字段。
+    conditionLogic: 'AND',
+    extraConditions: [],
+    extraActions: [],
     targetIdentifier: '',
     targetValue: '',
     commandType: 'property_set',
@@ -437,9 +556,19 @@ function fillForm(rule) {
     thresholdValue: rule.thresholdValue || '',
     eventType: rule.eventType || '',
     actionType: rule.actionType || 'UPDATE_PROPERTY',
+    conditionLogic: rule.conditionLogic || 'AND',
     cooldownSeconds: rule.cooldownSeconds ?? 0,
     enabled: rule.enabled ?? 1
   })
+  // T-33：后端对单条件规则也会回传长度为 1 的 conditions / actions 数组，
+  // 这里只把「第 2 项及以后」还原成附加项——首项就是上面已填好的单值字段。
+  form.extraConditions = (rule.conditions || [])
+    .slice(1)
+    .map((item) => ({ ...emptyCondition(rule.sourceType || 'PROPERTY'), ...item }))
+  form.extraActions = (rule.actions || []).slice(1).map((item) => ({
+    ...emptyAction(item.actionType || 'UPDATE_PROPERTY'),
+    ...item
+  }))
   if (rule.actionType === 'UPDATE_PROPERTY') {
     form.targetIdentifier = config.identifier || ''
     form.targetValue = config.value ?? ''
@@ -506,7 +635,89 @@ function validateForm() {
       break
   }
   if (form.cooldownSeconds < 0 || form.cooldownSeconds > 86400) return '冷却窗口需在 0 ~ 86400 秒'
+  return validateExtra()
+}
+
+/** 追加一个附加条件；标识符与触发源对齐当前设置，结构与首项一致。 */
+function addCondition() {
+  if (form.extraConditions.length >= MAX_CONDITIONS) return
+  form.extraConditions.push(emptyCondition(form.sourceType))
+}
+
+function removeCondition(index) {
+  form.extraConditions.splice(index, 1)
+}
+
+function addAction() {
+  if (form.extraActions.length >= MAX_ACTIONS) return
+  form.extraActions.push(emptyAction('UPDATE_PROPERTY'))
+}
+
+function removeAction(index) {
+  form.extraActions.splice(index, 1)
+}
+
+/** 校验附加条件与附加动作；返回首个错误文案，通过则返回空串。 */
+function validateExtra() {
+  for (let i = 0; i < form.extraConditions.length; i += 1) {
+    const error = validateCondition(
+      { ...form.extraConditions[i], sourceType: form.sourceType },
+      NUMERIC_OPERATORS,
+      i + 1
+    )
+    if (error) return error
+  }
+  for (const action of form.extraActions) {
+    const error = validateAction(action)
+    if (error) return error
+  }
   return ''
+}
+
+/**
+ * 组装多条件 / 多动作数组（仅在存在附加项时返回非空）。
+ * <p>
+ * 首项由表单的单值字段提供，附加项来自数组；**没有附加项时返回 null**，
+ * buildPayload 相应地不下发 conditions / actions 字段 —— 单条件规则提交体与改造前逐位一致。
+ */
+function buildMultiPayload() {
+  const conditions =
+    form.extraConditions.length > 0
+      ? [
+          form.sourceType === 'PROPERTY'
+            ? {
+                identifier: form.identifier.trim(),
+                operator: form.operator,
+                thresholdValue: String(form.thresholdValue).trim()
+              }
+            : { identifier: form.identifier.trim(), eventType: form.eventType || null },
+          ...form.extraConditions.map((item) =>
+            form.sourceType === 'PROPERTY'
+              ? {
+                  identifier: String(item.identifier || '').trim(),
+                  operator: item.operator,
+                  thresholdValue: String(item.thresholdValue || '').trim()
+                }
+              : {
+                  identifier: String(item.identifier || '').trim(),
+                  eventType: item.eventType || null
+                }
+          )
+        ]
+      : null
+
+  const actions =
+    form.extraActions.length > 0
+      ? [
+          { actionType: form.actionType, actionConfig: buildRuleActionConfig(form) },
+          ...form.extraActions.map((item) => ({
+            actionType: item.actionType,
+            actionConfig: buildRuleActionConfig(item)
+          }))
+        ]
+      : null
+
+  return { conditions, actions }
 }
 
 function buildPayload() {
@@ -529,6 +740,14 @@ function buildPayload() {
     payload.operator = null
     payload.thresholdValue = null
     payload.eventType = form.eventType || null
+  }
+  const multi = buildMultiPayload()
+  if (multi.conditions) {
+    payload.conditionLogic = form.conditionLogic
+    payload.conditions = multi.conditions
+  }
+  if (multi.actions) {
+    payload.actions = multi.actions
   }
   return payload
 }
@@ -603,6 +822,37 @@ onMounted(loadDevices)
 </script>
 
 <style scoped>
+/* 附加条件 / 动作：一行内放标识符 + 比较符 + 阈值 + 移除，窄屏自然换行 */
+.extra-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2xs);
+  width: 100%;
+}
+
+.extra-item--action {
+  flex-wrap: wrap;
+}
+
+.extra-item__identifier {
+  flex: 2 1 140px;
+  min-width: 0;
+}
+
+.extra-item__op {
+  flex: 0 0 96px;
+}
+
+.extra-item__value {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.extra-hint {
+  margin-left: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
 .rule-editor__view-toggle {
   margin-bottom: var(--spacing-md);
 }

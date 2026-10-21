@@ -12,12 +12,33 @@
         </div>
       </template>
       <template #actions>
+        <span class="live-toggle">
+          <el-switch v-model="liveEnabled" size="small" />
+          <span class="live-toggle__label">实时</span>
+        </span>
+        <el-button :loading="exporting" :disabled="!deviceKey" @click="handleExport">
+          <svg-icon name="download" :size="14" />
+          导出 CSV
+        </el-button>
         <el-button :loading="loading" @click="handleQuery">
           <svg-icon name="refresh" :size="14" />
           刷新
         </el-button>
       </template>
     </PageHeader>
+
+    <el-alert
+      v-if="pendingNew > 0"
+      type="info"
+      :closable="false"
+      show-icon
+      class="live-alert"
+    >
+      <template #default>
+        有 {{ pendingNew }} 条新日志
+        <el-button link type="primary" size="small" @click="refreshLive">立即刷新</el-button>
+      </template>
+    </el-alert>
 
     <div class="filter-card card">
       <el-form label-position="top" @submit.prevent="handleQuery">
@@ -89,12 +110,15 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDeviceStore } from '@/stores/device'
+import { useUiStore } from '@/stores/ui'
 import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import DeviceLogTimeline from '@/components/device/DeviceLogTimeline.vue'
+import { exportApi } from '@/api/export'
+import { downloadResponse } from '@/utils/download'
 import { useDeviceLog } from '@/composables/useDeviceLog'
 
 /** 与后端 `app.device-log.max-range-days` 默认值保持一致，仅做提前提示。 */
@@ -113,9 +137,60 @@ const deviceStore = useDeviceStore()
 
 const deviceId = computed(() => route.params.id)
 const deviceName = ref('')
+const deviceKey = ref('')
+const exporting = ref(false)
 
-const { form, items, total, loading, pageNum, pageSize, submit, reset, goToPage } =
+const ui = useUiStore()
+const liveEnabled = ref(false)
+const pendingNew = ref(0)
+let lastEventId = 0
+let liveTimer = null
+
+const { form, items, total, loading, pageNum, pageSize, submit, reset, refresh, goToPage } =
   useDeviceLog(deviceId)
+
+/** 实时事件只发「有更新」信号，这里按当前页决定自动刷新还是提示新日志。 */
+watch(
+  () => ui.events.length,
+  () => {
+    for (const event of ui.events) {
+      if (event.id <= lastEventId) continue
+      lastEventId = event.id
+      if (!liveEnabled.value) continue
+      if (event.eventName !== 'device-log' || event.deviceKey !== deviceKey.value) continue
+      if (pageNum.value === 1) {
+        scheduleLiveRefresh()
+      } else {
+        pendingNew.value += 1
+      }
+    }
+  }
+)
+
+watch(liveEnabled, (enabled) => {
+  pendingNew.value = 0
+  if (enabled) {
+    // 打开开关时从当前末尾开始，避免把历史事件一次性倒灌成刷新风暴
+    lastEventId = ui.events.at(-1)?.id || 0
+  }
+})
+
+function scheduleLiveRefresh() {
+  if (liveTimer) return
+  liveTimer = setTimeout(() => {
+    liveTimer = null
+    if (liveEnabled.value && pageNum.value === 1) refresh()
+  }, 800)
+}
+
+function refreshLive() {
+  pendingNew.value = 0
+  refresh()
+}
+
+onUnmounted(() => {
+  if (liveTimer) clearTimeout(liveTimer)
+})
 
 /** 兼容日期控件的字符串与 Date 两种取值。 */
 function toDate(value) {
@@ -142,9 +217,38 @@ function goBack() {
   router.push(`/workbench/devices/${deviceId.value}`)
 }
 
+/** 导出当前筛选条件下的完整日志；与表格查询共用同一套参数口径。 */
+async function handleExport() {
+  if (!deviceKey.value) return
+  const [start, end] = form.range ?? []
+  const startAt = toDate(start)
+  const endAt = toDate(end)
+  if (startAt && endAt) {
+    const spanDays = (endAt - startAt) / (24 * 60 * 60 * 1000)
+    if (spanDays > MAX_RANGE_DAYS) {
+      ElMessage.warning(`时间跨度不能超过 ${MAX_RANGE_DAYS} 天，请缩小范围后再导出`)
+      return
+    }
+  }
+  const params = {}
+  if (form.types?.length) params.types = form.types.join(',')
+  if (start) params.startTime = start
+  if (end) params.endTime = end
+  if (form.keyword) params.keyword = form.keyword
+  exporting.value = true
+  try {
+    const response = await exportApi.deviceLogs(deviceKey.value, params)
+    const name = downloadResponse(response, `device-logs-${deviceId.value}.csv`)
+    ElMessage.success(`已导出 ${name}`)
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(async () => {
   const device = await deviceStore.fetchDeviceById(deviceId.value)
   deviceName.value = device?.deviceName || ''
+  deviceKey.value = device?.deviceKey || ''
 })
 </script>
 
@@ -172,6 +276,21 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.live-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.live-toggle__label {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.live-alert {
+  margin-bottom: var(--spacing-md);
 }
 
 .filter-card {

@@ -23,6 +23,14 @@ public class PropertyHistoryProperties {
     /** 写入总开关：{@code false} 时摄取旁路短路，不落库 */
     private boolean enabled = true;
 
+    /**
+     * 趋势实时流开关（T-36 · X-3）。
+     * <p>
+     * 与 {@link #enabled} 分开：前者管「属性历史是否落库」，后者管「是否顺带推 SSE」。
+     * 压测 / 极端降级场景关掉落库时，往往仍希望保留已有历史可查，此时把实时流单独关掉即可。
+     */
+    private boolean streamEnabled = false;
+
     /** 单次查询时间跨度上限（天）；超出报 6225 */
     private int maxRangeDays = 31;
 

@@ -65,6 +65,36 @@ public class RuleDefinition {
     @TableField("event_type")
     private String eventType;
 
+    /**
+     * 多条件组合逻辑（T-33 / G-6-7）：{@code AND} = 全部满足 / {@code OR} = 任一满足。
+     * <p>
+     * 仅 {@link #conditionsJson} 非空时有意义；单条件规则恒为 {@code AND} 且不改语义。
+     */
+    @TableField("condition_logic")
+    private String conditionLogic;
+
+    /**
+     * 多条件 JSON 数组文本（T-33 / G-6-7），元素形如
+     * {@code {"identifier","operator","thresholdValue","eventType"}}。
+     * <p>
+     * {@code NULL} 时评估回落到 {@link #identifier} / {@link #operator} / {@link #thresholdValue}
+     * 这组单条件列 —— 存量行一律为 {@code NULL}，行为与 V9 原始实现逐位一致。
+     * 库中为 TEXT，响应中由服务层以数组形态暴露。
+     */
+    @TableField("conditions_json")
+    @JsonIgnore
+    private String conditionsJson;
+
+    /**
+     * 多动作 JSON 数组文本（T-33 / G-6-7），元素形如 {@code {"actionType","actionConfig"}}。
+     * <p>
+     * {@code NULL} 时回落到 {@link #actionType} / {@link #actionConfig} 单动作 ——
+     * 执行粒度与动作粒度对齐，每个动作各落一条 {@code rule_execution}，重试因此天然隔离。
+     */
+    @TableField("actions_json")
+    @JsonIgnore
+    private String actionsJson;
+
     /** 动作：UPDATE_PROPERTY/SEND_COMMAND/FORWARD_MQTT/FORWARD_HTTP */
     @TableField("action_type")
     private String actionType;
@@ -126,4 +156,14 @@ public class RuleDefinition {
     @TableField(exist = false)
     @JsonProperty("tagIds")
     private List<Long> tagIdsView;
+
+    /** 返回给前端的多条件数组（T-33 / G-6-7）；非持久化字段，JSON 键名为 {@code conditions} */
+    @TableField(exist = false)
+    @JsonProperty("conditions")
+    private List<Object> conditionsView;
+
+    /** 返回给前端的多动作数组（T-33 / G-6-7）；非持久化字段，JSON 键名为 {@code actions} */
+    @TableField(exist = false)
+    @JsonProperty("actions")
+    private List<Object> actionsView;
 }

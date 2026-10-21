@@ -5,6 +5,7 @@ import com.mqtt.cloud.entity.OtaUpgradeRecord;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -44,4 +45,29 @@ public interface OtaUpgradeRecordMapper extends BaseMapper<OtaUpgradeRecord> {
      * @return 最近一条进行中记录；无则返回 {@code null}
      */
     OtaUpgradeRecord selectLatestActiveByDevice(@Param("deviceId") Long deviceId);
+
+    /**
+     * 取给定设备集合中「已在别的任务里仍非终态」的 device_id（T-32 / G-11-4 设备级任务互斥）。
+     * <p>
+     * 只认 {@code excludeTaskId} 之外、且所属任务处于 {@code RUNNING} / {@code PAUSED} 的记录：
+     * 已 {@code ABORTED} 的任务其记录由 abort 一次性置 {@code SKIPPED}（终态），本就不会出现在结果里；
+     * 已 {@code SUCCESS} / {@code PARTIAL} / {@code FAILED} 的任务已收口，不构成并发升级风险。
+     * <p>
+     * 命中 {@code idx_device}；调用方须保证 {@code deviceIds} 非空（本项目所有设备 ID 均来自
+     * 库内查询，天然非空），否则 {@code IN ()} 会是语法错误。
+     *
+     * @param deviceIds     待检查的设备集合（非空）
+     * @param excludeTaskId 排除的任务主键（传当前任务自身，使本任务的既有记录不算冲突）
+     * @return 冲突的 device_id 集合（升序，无冲突返回空列表）
+     */
+    List<Long> selectActiveDeviceIdsExcludingTask(@Param("deviceIds") Collection<Long> deviceIds,
+                                                  @Param("excludeTaskId") Long excludeTaskId);
+
+    /**
+     * 取某任务全部仍为 {@code PENDING} 的记录主键（T-32 终止时批量置 {@code SKIPPED}）。
+     *
+     * @param taskId 任务主键
+     * @return 记录主键升序列表（无则空列表）
+     */
+    List<Long> selectPendingIdsByTask(@Param("taskId") Long taskId);
 }

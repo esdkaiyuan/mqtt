@@ -2,6 +2,8 @@ package com.mqtt.cloud.service.impl;
 
 import com.mqtt.cloud.common.RuleConstants;
 import com.mqtt.cloud.common.SceneConstants;
+import com.mqtt.cloud.common.constant.DeviceStatusValue;
+import com.mqtt.cloud.common.constant.ShadowChangeSide;
 import com.mqtt.cloud.config.SceneProperties;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
@@ -9,6 +11,7 @@ import com.mqtt.cloud.entity.SceneDefinition;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.mapper.SceneDefinitionMapper;
+import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.SceneEvaluationService.EventSample;
 import com.mqtt.cloud.service.SceneEvaluationService.PropertySample;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -19,6 +22,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -238,6 +242,175 @@ class SceneEvaluationServiceImplTest {
         verify(launcher, never()).launch(any(), any(), anyString());
     }
 
+    // ---------- 上下线触发 ----------
+
+    @Test
+    void onStatus_should_trigger_online_scene_when_status_online() {
+        SceneDefinition scene = statusTrigger(SceneConstants.TRIGGER_ONLINE);
+        stubDeviceAndScenes(scene);
+
+        service.onStatus(DEVICE_ID, DeviceStatusValue.ONLINE, NOW);
+
+        ArgumentCaptor<SceneExecutionLauncher.TriggerContext> captor =
+                ArgumentCaptor.forClass(SceneExecutionLauncher.TriggerContext.class);
+        verify(launcher).launch(eq(scene), captor.capture(), eq(SceneConstants.SOURCE_AUTO));
+        assertThat(captor.getValue().triggerDeviceId()).isEqualTo(DEVICE_ID);
+        assertThat(captor.getValue().triggerDeviceKey()).isEqualTo("dev-1");
+        assertThat(captor.getValue().triggerIdentifier()).isNull();
+        assertThat(captor.getValue().triggerValue()).isEqualTo(DeviceStatusValue.ONLINE);
+        assertThat(captor.getValue().triggeredAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void onStatus_should_trigger_offline_scene_when_status_offline() {
+        SceneDefinition scene = statusTrigger(SceneConstants.TRIGGER_OFFLINE);
+        stubDeviceAndScenes(scene);
+
+        service.onStatus(DEVICE_ID, DeviceStatusValue.OFFLINE, NOW);
+
+        verify(launcher).launch(eq(scene), any(SceneExecutionLauncher.TriggerContext.class),
+                eq(SceneConstants.SOURCE_AUTO));
+    }
+
+    @Test
+    void onStatus_should_skip_when_status_mismatch() {
+        stubDeviceAndScenes(statusTrigger(SceneConstants.TRIGGER_ONLINE));
+
+        service.onStatus(DEVICE_ID, DeviceStatusValue.OFFLINE, NOW);
+
+        verify(launcher, never()).launch(any(), any(), anyString());
+    }
+
+    @Test
+    void onStatus_should_skip_when_trigger_source_is_property() {
+        stubDeviceAndScenes(propertyTrigger());
+
+        service.onStatus(DEVICE_ID, DeviceStatusValue.ONLINE, NOW);
+
+        verify(launcher, never()).launch(any(), any(), anyString());
+    }
+
+    @Test
+    void onStatus_should_match_when_scope_absent() {
+        SceneDefinition scene = statusTrigger(SceneConstants.TRIGGER_OFFLINE);
+        scene.setTriggerDeviceId(null);
+        stubDeviceAndScenes(scene);
+
+        service.onStatus(DEVICE_ID, DeviceStatusValue.OFFLINE, NOW);
+
+        verify(launcher).launch(eq(scene), any(SceneExecutionLauncher.TriggerContext.class),
+                eq(SceneConstants.SOURCE_AUTO));
+    }
+
+    @Test
+    void onStatus_should_skip_when_scene_out_of_scope() {
+        SceneDefinition scene = statusTrigger(SceneConstants.TRIGGER_ONLINE);
+        scene.setTriggerDeviceId(OTHER_DEVICE_ID);
+        stubDeviceAndScenes(scene);
+
+        service.onStatus(DEVICE_ID, DeviceStatusValue.ONLINE, NOW);
+
+        verify(launcher, never()).launch(any(), any(), anyString());
+    }
+
+    @Test
+    void onStatus_should_skip_when_disabled() {
+        properties.setEnabled(false);
+
+        service.onStatus(DEVICE_ID, DeviceStatusValue.ONLINE, NOW);
+
+        verifyNoInteractions(deviceMapper, sceneDefinitionMapper, launcher);
+    }
+
+    @Test
+    void onStatus_should_not_propagate_when_device_load_fails() {
+        when(deviceMapper.selectById(DEVICE_ID)).thenThrow(new RuntimeException("db down"));
+
+        assertThatCode(() -> service.onStatus(DEVICE_ID, DeviceStatusValue.ONLINE, NOW))
+                .doesNotThrowAnyException();
+    }
+
+    // ---------- 影子变更触发 ----------
+
+    @Test
+    void onShadow_should_trigger_reported_scene_when_property_changes() {
+        SceneDefinition scene = shadowTrigger(ShadowChangeSide.REPORTED, "temperature");
+        stubDeviceAndScenes(scene);
+
+        service.onShadow(DEVICE_ID, ShadowChangeSide.REPORTED,
+                Map.of("temperature", "31"), "INGEST", NOW);
+
+        ArgumentCaptor<SceneExecutionLauncher.TriggerContext> captor =
+                ArgumentCaptor.forClass(SceneExecutionLauncher.TriggerContext.class);
+        verify(launcher).launch(eq(scene), captor.capture(), eq(SceneConstants.SOURCE_AUTO));
+        assertThat(captor.getValue().triggerDeviceId()).isEqualTo(DEVICE_ID);
+        assertThat(captor.getValue().triggerIdentifier()).isEqualTo("temperature");
+        assertThat(captor.getValue().triggerValue()).isEqualTo("temperature=31");
+        assertThat(captor.getValue().triggerEventType()).isEqualTo("reported");
+        assertThat(captor.getValue().triggeredAt()).isEqualTo(NOW);
+    }
+
+    @Test
+    void onShadow_should_match_any_side_and_any_identifier() {
+        SceneDefinition scene = shadowTrigger(ShadowChangeSide.ANY, null);
+        stubDeviceAndScenes(scene);
+
+        service.onShadow(DEVICE_ID, ShadowChangeSide.DESIRED,
+                Map.of("humidity", "60"), "OPEN_API", NOW);
+
+        verify(launcher).launch(eq(scene), any(SceneExecutionLauncher.TriggerContext.class),
+                eq(SceneConstants.SOURCE_AUTO));
+    }
+
+    @Test
+    void onShadow_should_skip_when_side_mismatch() {
+        stubDeviceAndScenes(shadowTrigger(ShadowChangeSide.REPORTED, null));
+
+        service.onShadow(DEVICE_ID, ShadowChangeSide.DESIRED,
+                Map.of("temperature", "31"), "CONSOLE", NOW);
+
+        verify(launcher, never()).launch(any(), any(), anyString());
+    }
+
+    @Test
+    void onShadow_should_skip_when_identifier_not_changed() {
+        stubDeviceAndScenes(shadowTrigger(ShadowChangeSide.ANY, "temperature"));
+
+        service.onShadow(DEVICE_ID, ShadowChangeSide.REPORTED,
+                Map.of("humidity", "60"), "INGEST", NOW);
+
+        verify(launcher, never()).launch(any(), any(), anyString());
+    }
+
+    @Test
+    void onShadow_should_skip_internal_desired_source() {
+        stubDeviceAndScenes(shadowTrigger(ShadowChangeSide.DESIRED, null));
+
+        service.onShadow(DEVICE_ID, ShadowChangeSide.DESIRED,
+                Map.of("temperature", "31"), DeviceCommandService.SOURCE_SCENE, NOW);
+
+        verify(launcher, never()).launch(any(), any(), anyString());
+    }
+
+    @Test
+    void onShadow_should_trigger_external_desired_source() {
+        SceneDefinition scene = shadowTrigger(ShadowChangeSide.DESIRED, null);
+        stubDeviceAndScenes(scene);
+
+        service.onShadow(DEVICE_ID, ShadowChangeSide.DESIRED,
+                Map.of("temperature", "31"), DeviceCommandService.SOURCE_CONSOLE, NOW);
+
+        verify(launcher).launch(eq(scene), any(SceneExecutionLauncher.TriggerContext.class),
+                eq(SceneConstants.SOURCE_AUTO));
+    }
+
+    @Test
+    void onShadow_should_skip_when_changes_empty() {
+        service.onShadow(DEVICE_ID, ShadowChangeSide.REPORTED, Map.of(), "INGEST", NOW);
+
+        verifyNoInteractions(deviceMapper, sceneDefinitionMapper, launcher);
+    }
+
     // ---------- 条件组 ----------
 
     @Test
@@ -438,6 +611,30 @@ class SceneEvaluationServiceImplTest {
         scene.setTriggerType(SceneConstants.TRIGGER_EVENT);
         scene.setTriggerIdentifier("fall");
         scene.setTriggerEventType("alert");
+        scene.setCooldownSeconds(0);
+        scene.setEnabled(1);
+        return scene;
+    }
+
+    private SceneDefinition statusTrigger(String triggerType) {
+        SceneDefinition scene = new SceneDefinition();
+        scene.setId(SCENE_ID);
+        scene.setUserId(USER_ID);
+        scene.setName("上下线联动");
+        scene.setTriggerType(triggerType);
+        scene.setCooldownSeconds(0);
+        scene.setEnabled(1);
+        return scene;
+    }
+
+    private SceneDefinition shadowTrigger(String side, String identifier) {
+        SceneDefinition scene = new SceneDefinition();
+        scene.setId(SCENE_ID);
+        scene.setUserId(USER_ID);
+        scene.setName("影子联动");
+        scene.setTriggerType(SceneConstants.TRIGGER_SHADOW);
+        scene.setTriggerShadowSide(side);
+        scene.setTriggerIdentifier(identifier);
         scene.setCooldownSeconds(0);
         scene.setEnabled(1);
         return scene;

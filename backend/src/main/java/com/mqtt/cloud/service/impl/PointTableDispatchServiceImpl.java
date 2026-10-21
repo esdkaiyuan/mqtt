@@ -187,7 +187,8 @@ public class PointTableDispatchServiceImpl implements PointTableDispatchService 
     private static PointTablePayloadBuilder.PointTableEntry toEntry(DevicePointTable point) {
         return new PointTablePayloadBuilder.PointTableEntry(
                 point.getPointKey(), point.getPointType(), point.getAddress(), point.getDataType(),
-                point.getScale(), point.getOffset(), point.getUnit(), point.getReadIntervalMs());
+                point.getUnitId(), point.getScale(), point.getOffset(), point.getUnit(),
+                point.getReadIntervalMs());
     }
 
     private void count(String result) {

@@ -18,8 +18,8 @@ public class DeviceTopologyProperties {
     /** 是否启用子设备拓扑；false 时拓扑端点返回 404，授权委托分支不生效 */
     private boolean enabled = true;
 
-    /** 拓扑深度上限；低于 2 视为仅允许 DIRECT，不接受任何挂载 */
-    private int maxDepth = 2;
+    /** 拓扑深度上限；根网关为第 1 层，2 表示两层（网关 + 子设备），低于 2 不接受任何挂载 */
+    private int maxDepth = 5;
 
     /** 单网关子设备数量上限 */
     private int maxSubDevicesPerGateway = 200;

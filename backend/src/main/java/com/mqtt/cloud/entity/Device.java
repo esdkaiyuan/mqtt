@@ -116,4 +116,8 @@ public class Device {
     /** 设备标签（T-18，列表批量装配用，不映射数据库） */
     @TableField(exist = false)
     private java.util.List<DeviceTag> tags;
+
+    /** 当前用户对该设备的访问级别（T-48：OWNER/OPERATE/VIEW/ADMIN，不映射数据库） */
+    @TableField(exist = false)
+    private String accessLevel;
 }

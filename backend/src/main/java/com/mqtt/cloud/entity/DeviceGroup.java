@@ -63,4 +63,12 @@ public class DeviceGroup {
     /** 直接关联设备数（树投影用，不映射数据库） */
     @TableField(exist = false)
     private Integer deviceCount;
+
+    /** 是否为他人共享分组（T-48，树投影用） */
+    @TableField(exist = false)
+    private Boolean shared;
+
+    /** 共享权限 VIEW / OPERATE（T-48，仅 shared=true 时有值） */
+    @TableField(exist = false)
+    private String sharedPermission;
 }

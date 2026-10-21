@@ -43,15 +43,15 @@ public class SceneDefinition {
     @TableField("description")
     private String description;
 
-    /** 触发源：PROPERTY/EVENT/TIMER */
+    /** 触发源：PROPERTY/EVENT/TIMER/ONLINE/OFFLINE/SHADOW */
     @TableField("trigger_type")
     private String triggerType;
 
-    /** 触发限定设备ID，NULL=该用户全部设备（TIMER 源为空） */
+    /** 触发限定设备ID，NULL=该用户全部设备（TIMER 源为空；上下线源可空） */
     @TableField("trigger_device_id")
     private Long triggerDeviceId;
 
-    /** 触发属性/事件标识符（PROPERTY/EVENT 必填） */
+    /** 触发属性/事件标识符（PROPERTY/EVENT 必填；上下线源为空） */
     @TableField("trigger_identifier")
     private String triggerIdentifier;
 
@@ -66,6 +66,10 @@ public class SceneDefinition {
     /** 事件类型过滤（EVENT 源可空） */
     @TableField("trigger_event_type")
     private String triggerEventType;
+
+    /** 影子变更侧：REPORTED/DESIRED/ANY（仅 SHADOW 源，T-45） */
+    @TableField("trigger_shadow_side")
+    private String triggerShadowSide;
 
     /** 定时触发 cron（5 字段，分钟级；TIMER 源必填） */
     @TableField("timer_cron")

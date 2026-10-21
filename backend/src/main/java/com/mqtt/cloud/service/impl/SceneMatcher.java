@@ -1,6 +1,8 @@
 package com.mqtt.cloud.service.impl;
 
 import com.mqtt.cloud.common.SceneConstants;
+import com.mqtt.cloud.common.constant.DeviceStatusValue;
+import com.mqtt.cloud.common.constant.ShadowChangeSide;
 import com.mqtt.cloud.config.SceneProperties;
 import com.mqtt.cloud.dto.response.SceneTestResult;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
@@ -18,6 +20,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -81,6 +84,45 @@ public class SceneMatcher {
             return false;
         }
         return scene.getTriggerEventType() == null || scene.getTriggerEventType().equals(eventType);
+    }
+
+    /** 上下线触发匹配：作用域 → 场景状态源与本次状态一致（T-43）。 */
+    public boolean matchesStatusTrigger(SceneDefinition scene, Long deviceId, String status) {
+        if (!inScope(scene, deviceId) || status == null) {
+            return false;
+        }
+        String expected = expectedStatus(scene.getTriggerType());
+        return expected != null && expected.equalsIgnoreCase(status.trim());
+    }
+
+    /**
+     * 影子变更触发匹配（T-45）：作用域 → 变更侧（空 / ANY 不限）→ 属性标识符（空不限）。
+     *
+     * @param changedIdentifiers 本次变更涉及的属性标识符（非空）
+     */
+    public boolean matchesShadowTrigger(SceneDefinition scene, Long deviceId, String side,
+                                        Collection<String> changedIdentifiers) {
+        if (!inScope(scene, deviceId) || side == null || changedIdentifiers == null
+                || changedIdentifiers.isEmpty()) {
+            return false;
+        }
+        String expectedSide = scene.getTriggerShadowSide();
+        if (expectedSide != null && !ShadowChangeSide.ANY.equals(expectedSide)
+                && !expectedSide.equalsIgnoreCase(side.trim())) {
+            return false;
+        }
+        String identifier = scene.getTriggerIdentifier();
+        return identifier == null || changedIdentifiers.contains(identifier);
+    }
+
+    private static String expectedStatus(String triggerType) {
+        if (SceneConstants.TRIGGER_ONLINE.equals(triggerType)) {
+            return DeviceStatusValue.ONLINE;
+        }
+        if (SceneConstants.TRIGGER_OFFLINE.equals(triggerType)) {
+            return DeviceStatusValue.OFFLINE;
+        }
+        return null;
     }
 
     /** 定时触发匹配：cron 的下一次触发时刻落在当前分钟（按 {@code app.scene.timer-zone}）。 */

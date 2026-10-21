@@ -31,6 +31,24 @@ export const routes = [
         meta: { title: '设备接入', group: 'device' }
       },
       {
+        // 协议规范（T-31 P5）：D1 主题/ACL、D2 接入协议
+        path: 'protocol',
+        name: 'DocsProtocol',
+        redirect: '/docs/protocol/d1'
+      },
+      {
+        path: 'protocol/d1',
+        name: 'DocsProtocolD1',
+        component: () => import('@/views/site/docs/D1TopicAcl.vue'),
+        meta: { title: 'MQTT 主题与 ACL', group: 'protocol' }
+      },
+      {
+        path: 'protocol/d2',
+        name: 'DocsProtocolD2',
+        component: () => import('@/views/site/docs/D2DeviceProtocol.vue'),
+        meta: { title: '设备接入协议', group: 'protocol' }
+      },
+      {
         path: 'data/:section?',
         name: 'DocsDataMessage',
         component: () => import('@/views/site/docs/DataMessage.vue'),
@@ -60,6 +78,13 @@ export const routes = [
     path: '/register',
     name: 'Register',
     component: () => import('@/views/auth/Register.vue'),
+    meta: { requiresAuth: false, layout: 'blank' }
+  },
+  {
+    // 公开大屏分享（T-46）：凭不可猜测令牌只读访问，无需登录
+    path: '/display/:token',
+    name: 'DisplayBoard',
+    component: () => import('@/views/display/DisplayBoard.vue'),
     meta: { requiresAuth: false, layout: 'blank' }
   },
 
@@ -97,6 +122,13 @@ export const routes = [
         meta: { title: '批量注册', icon: 'add', group: 'monitor' }
       },
       {
+        // 多设备影子聚合（T-42）
+        path: 'shadows',
+        name: 'ShadowOverview',
+        component: () => import('@/views/workbench/device/ShadowOverview.vue'),
+        meta: { title: '设备影子', icon: 'signal', group: 'monitor' }
+      },
+      {
         path: 'devices/:id',
         name: 'DeviceDetail',
         component: () => import('@/views/workbench/device/DeviceDetail.vue'),
@@ -115,6 +147,13 @@ export const routes = [
         name: 'DeviceLog',
         component: () => import('@/views/workbench/device/DeviceLog.vue'),
         meta: { title: '设备日志', hidden: true, group: 'monitor' }
+      },
+      {
+        // 设备调试中心（T-37）：连接信息 / 上行模拟 / 实时报文 / 属性代码
+        path: 'devices/:id/debug',
+        name: 'DeviceDebug',
+        component: () => import('@/views/workbench/device/DeviceDebug.vue'),
+        meta: { title: '设备调试', hidden: true, group: 'monitor' }
       },
       {
         path: 'products',
@@ -158,6 +197,26 @@ export const routes = [
         name: 'NotificationChannels',
         component: () => import('@/views/workbench/access/NotificationChannels.vue'),
         meta: { title: '通知渠道', icon: 'message', group: 'access' }
+      },
+      {
+        // 快速上位机（T-38）：按物模型生成单设备 Web 组态
+        path: 'hmi',
+        name: 'HmiList',
+        component: () => import('@/views/workbench/hmi/HmiList.vue'),
+        meta: { title: '上位机', icon: 'chart', group: 'access' }
+      },
+      {
+        // 新建向导，明确排在 hmi/:id 之前
+        path: 'hmi/new',
+        name: 'HmiCreate',
+        component: () => import('@/views/workbench/hmi/HmiCreate.vue'),
+        meta: { title: '新建上位机', hidden: true, group: 'access' }
+      },
+      {
+        path: 'hmi/:id',
+        name: 'HmiDetail',
+        component: () => import('@/views/workbench/hmi/HmiDetail.vue'),
+        meta: { title: '上位机运行', hidden: true, group: 'access' }
       },
       {
         path: 'alerts',

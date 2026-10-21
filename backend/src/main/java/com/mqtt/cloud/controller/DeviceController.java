@@ -3,6 +3,7 @@ package com.mqtt.cloud.controller;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.constant.GroupPermission;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.security.SecurityUtils;
 import com.mqtt.cloud.dto.request.CommandInvokeRequest;
@@ -11,6 +12,7 @@ import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
 import com.mqtt.cloud.dto.response.CommandCapabilityResponse;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
+import com.mqtt.cloud.dto.response.DeviceShadowSummaryVO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceCommandRecord;
 import com.mqtt.cloud.entity.DeviceEventRecord;
@@ -18,6 +20,7 @@ import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.DeviceStatus;
 import com.mqtt.cloud.filter.UserPrincipal;
 import com.mqtt.cloud.service.DeviceCommandService;
+import com.mqtt.cloud.service.DeviceAccessService;
 import com.mqtt.cloud.service.DeviceCredentialService;
 import com.mqtt.cloud.service.DeviceDataService;
 import com.mqtt.cloud.service.DeviceGroupService;
@@ -50,6 +53,7 @@ public class DeviceController {
     private final DeviceDataService deviceDataService;
     private final DeviceCommandService deviceCommandService;
     private final DeviceShadowService deviceShadowService;
+    private final DeviceAccessService deviceAccessService;
     private final DeviceGroupService deviceGroupService;
     private final DeviceTagService deviceTagService;
     private final DeviceGroupTagAssembler assembler;
@@ -60,6 +64,7 @@ public class DeviceController {
                             DeviceDataService deviceDataService,
                             DeviceCommandService deviceCommandService,
                             DeviceShadowService deviceShadowService,
+                            DeviceAccessService deviceAccessService,
                             DeviceGroupService deviceGroupService,
                             DeviceTagService deviceTagService,
                             DeviceGroupTagAssembler assembler) {
@@ -69,6 +74,7 @@ public class DeviceController {
         this.deviceDataService = deviceDataService;
         this.deviceCommandService = deviceCommandService;
         this.deviceShadowService = deviceShadowService;
+        this.deviceAccessService = deviceAccessService;
         this.deviceGroupService = deviceGroupService;
         this.deviceTagService = deviceTagService;
         this.assembler = assembler;
@@ -118,12 +124,11 @@ public class DeviceController {
         return Result.success(page);
     }
 
-    @Operation(summary = "获取设备详情", description = "按设备 ID 查询详情，非归属用户访问返回 2003")
+    @Operation(summary = "获取设备详情", description = "所有者、ADMIN 或共享分组成员可读；非授权访问返回 2003")
     @GetMapping("/{deviceId}")
     public Result<Device> getDeviceDetail(
             @Parameter(description = "设备ID", required = true) @PathVariable Long deviceId) {
-        checkDeviceOwnership(deviceId);
-        return Result.success(deviceService.getDeviceById(deviceId));
+        return Result.success(requireReadableDevice(deviceId));
     }
 
     @Operation(summary = "更新设备", description = "更新设备名称、类型、Topic 等可编辑字段")
@@ -168,11 +173,11 @@ public class DeviceController {
         return Result.success(deviceService.getOnlineDevices(SecurityUtils.requireUserId()));
     }
 
-    @Operation(summary = "获取设备状态历史", description = "返回指定设备的状态变更记录列表")
+    @Operation(summary = "获取设备状态历史", description = "所有者、ADMIN 或共享分组成员可读")
     @GetMapping("/{deviceId}/status")
     public Result<List<DeviceStatus>> getDeviceStatusHistory(
             @Parameter(description = "设备ID", required = true) @PathVariable Long deviceId) {
-        checkDeviceOwnership(deviceId);
+        requireReadableDevice(deviceId);
         return Result.success(deviceStatusHistoryService.getHistoryByDeviceId(deviceId));
     }
 
@@ -180,7 +185,7 @@ public class DeviceController {
     @GetMapping("/{deviceKey}/properties")
     public Result<List<DevicePropertyLatest>> getDeviceProperties(
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
-        Device device = requireOwnedDevice(deviceKey);
+        Device device = requireReadableDevice(deviceKey);
         return Result.success(deviceDataService.getPropertyLatest(device.getId()));
     }
 
@@ -190,7 +195,7 @@ public class DeviceController {
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
             @Parameter(description = "页码，从 1 起") @RequestParam(defaultValue = "1") long page,
             @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
-        Device device = requireOwnedDevice(deviceKey);
+        Device device = requireReadableDevice(deviceKey);
         return Result.success(deviceDataService.getEvents(device.getId(), page, size));
     }
 
@@ -199,7 +204,7 @@ public class DeviceController {
     @GetMapping("/{deviceKey}/command-capability")
     public Result<CommandCapabilityResponse> getCommandCapability(
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
-        Device device = requireOwnedDevice(deviceKey);
+        Device device = requireReadableDevice(deviceKey);
         return Result.success(toCapabilityResponse(deviceCommandService.getCapability(device.getProductId())));
     }
 
@@ -210,7 +215,7 @@ public class DeviceController {
     public Result<DeviceCommandRecord> sendCommand(
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
             @Valid @RequestBody CommandInvokeRequest request) {
-        Device device = requireOwnedDevice(deviceKey);
+        Device device = requireOperableDevice(deviceKey);
         DeviceCommandRecord record = deviceCommandService.invoke(new DeviceCommandService.CommandInvoke(
                 device.getId(), device.getProductId(), request.getType(), request.getIdentifier(),
                 request.getParams() == null ? null : request.getParams().toString(),
@@ -224,7 +229,7 @@ public class DeviceController {
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
             @Parameter(description = "页码，从 1 起") @RequestParam(defaultValue = "1") long page,
             @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
-        Device device = requireOwnedDevice(deviceKey);
+        Device device = requireReadableDevice(deviceKey);
         return Result.success(deviceCommandService.listCommands(device.getId(), page, size));
     }
 
@@ -233,8 +238,67 @@ public class DeviceController {
     @GetMapping("/{deviceKey}/shadow")
     public Result<DeviceShadowService.DeviceShadowResponse> getDeviceShadow(
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
-        Device device = requireOwnedDevice(deviceKey);
+        Device device = requireReadableDevice(deviceKey);
         return Result.success(deviceShadowService.get(device.getId(), device.getProductId()));
+    }
+
+    @Operation(summary = "多设备影子聚合", description = "返回多台设备的 desired / reported / delta 与版本；"
+            + "deviceIds 不传时返回当前用户名下设备（最多 200 台）；显式传入非归属设备返回 2003")
+    @GetMapping("/shadow-summary")
+    public Result<List<DeviceShadowSummaryVO>> getShadowSummary(
+            @Parameter(description = "设备 ID 集合，逗号分隔；不传表示本人全部设备")
+                    @RequestParam(required = false) List<Long> deviceIds) {
+        Long userId = SecurityUtils.requireUserId();
+        List<Device> devices = resolveShadowDevices(userId, deviceIds);
+        List<DeviceShadowSummaryVO> result = new java.util.ArrayList<>(devices.size());
+        for (Device device : devices) {
+            DeviceShadowService.DeviceShadowResponse shadow =
+                    deviceShadowService.get(device.getId(), device.getProductId());
+            DeviceShadowSummaryVO item = new DeviceShadowSummaryVO();
+            item.setDeviceId(device.getId());
+            item.setDeviceKey(device.getDeviceKey());
+            item.setDeviceName(device.getDeviceName());
+            item.setStatus(device.getStatus());
+            item.setModeled(shadow.modeled());
+            item.setVersion(shadow.version());
+            item.setDesired(shadow.desired());
+            item.setReported(shadow.reported());
+            item.setDelta(shadow.delta());
+            item.setUpdatedAt(shadow.updatedAt());
+            result.add(item);
+        }
+        return Result.success(result);
+    }
+
+    private List<Device> resolveShadowDevices(Long userId, List<Long> deviceIds) {
+        if (deviceIds == null || deviceIds.isEmpty()) {
+            return deviceService.getDevicesByOwner(userId);
+        }
+        java.util.LinkedHashSet<Long> unique = new java.util.LinkedHashSet<>();
+        for (Long id : deviceIds) {
+            if (id != null) {
+                unique.add(id);
+            }
+        }
+        if (unique.size() > 200) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "影子聚合最多支持 200 台设备");
+        }
+        List<Device> devices = new java.util.ArrayList<>(unique.size());
+        for (Long id : unique) {
+            Device device = deviceService.getDeviceById(id);
+            requireOwned(device);
+            devices.add(device);
+        }
+        return devices;
+    }
+
+    /** 聚合接口的归属校验与单设备端点同口径：ADMIN 可跨账号，普通用户只能看本人设备。 */
+    private void requireOwned(Device device) {
+        UserPrincipal principal = SecurityUtils.requirePrincipal();
+        boolean isOwner = device.getOwnerId() != null && device.getOwnerId().equals(principal.getUserId());
+        if (!"ADMIN".equals(principal.getRole()) && !isOwner) {
+            throw new BusinessException(ResultCode.DEVICE_NOT_OWNED);
+        }
     }
 
     @Operation(summary = "写入影子期望值", description = "等价于 type=property_set 命令：按物模型校验后写入 desired；"
@@ -243,7 +307,7 @@ public class DeviceController {
     public Result<DeviceCommandRecord> putDesired(
             @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
             @RequestBody CommandInvokeRequest request) {
-        Device device = requireOwnedDevice(deviceKey);
+        Device device = requireOperableDevice(deviceKey);
         return Result.success(invokeDesired(device, request,
                 DeviceCommandService.SOURCE_CONSOLE, SecurityUtils.requireUserId()));
     }
@@ -284,10 +348,48 @@ public class DeviceController {
         checkOwnership(deviceService.getById(deviceId));
     }
 
-    /** 按 deviceKey 取设备并校验归属，供设备详情下的物模型数据只读接口使用。 */
-    private Device requireOwnedDevice(String deviceKey) {
+    /** 按设备 ID 取设备并校验可读（所有者 / ADMIN / 共享分组成员）. */
+    private Device requireReadableDevice(Long deviceId) {
+        Device device = deviceService.getDeviceById(deviceId);
+        if (device == null || Boolean.TRUE.equals(device.getDeleted())) {
+            throw new BusinessException(ResultCode.DEVICE_NOT_FOUND);
+        }
+        return applyReadable(device);
+    }
+
+    /** 按 deviceKey 取设备并校验可读，同时写入当前访问级别供前端裁剪操作。 */
+    private Device requireReadableDevice(String deviceKey) {
         Device device = deviceService.getDeviceByKey(deviceKey);
-        checkOwnership(device);
+        if (device == null || Boolean.TRUE.equals(device.getDeleted())) {
+            throw new BusinessException(ResultCode.DEVICE_NOT_FOUND);
+        }
+        return applyReadable(device);
+    }
+
+    private Device applyReadable(Device device) {
+        UserPrincipal principal = SecurityUtils.requirePrincipal();
+        String level;
+        if (principal.getUserId() != null && principal.getUserId().equals(device.getOwnerId())) {
+            level = GroupPermission.OWNER;
+        } else if ("ADMIN".equals(principal.getRole())) {
+            level = GroupPermission.OWNER;
+        } else {
+            level = deviceAccessService.resolveDeviceLevel(
+                    principal.getUserId(), principal.getRole(), device.getId());
+        }
+        if (!GroupPermission.canView(level)) {
+            throw new BusinessException(ResultCode.DEVICE_NOT_OWNED);
+        }
+        device.setAccessLevel(level);
+        return device;
+    }
+
+    /** 命令 / 影子写值：需要 OPERATE（所有者也满足），平台角色闸门仍由 SecurityConfig 负责。 */
+    private Device requireOperableDevice(String deviceKey) {
+        Device device = requireReadableDevice(deviceKey);
+        if (!GroupPermission.canOperate(device.getAccessLevel())) {
+            throw new BusinessException(ResultCode.DEVICE_NOT_OWNED);
+        }
         return device;
     }
 

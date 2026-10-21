@@ -206,10 +206,16 @@ public class DevicePointTableServiceImpl
         }
         point.setAddress(address);
 
+        Integer unitId = req.getUnitId();
+        if (unitId != null && (unitId < 0 || unitId > 247)) {
+            throw new BusinessException(ResultCode.POINT_UNIT_ID_INVALID);
+        }
+        point.setUnitId(unitId);
+
         String dataType = req.getDataType() == null || req.getDataType().isBlank()
                 ? DEFAULT_DATA_TYPE : req.getDataType().trim();
         if (!switch (dataType) {
-            case "int", "float", "double", "bool", "string" -> true;
+            case "int", "int32", "uint32", "int64", "uint64", "float", "double", "bool", "string" -> true;
             default -> false;
         }) {
             throw new BusinessException(ResultCode.POINT_DATA_TYPE_INVALID);
@@ -263,6 +269,7 @@ public class DevicePointTableServiceImpl
                 .pointKey(point.getPointKey())
                 .pointType(point.getPointType())
                 .address(point.getAddress())
+                .unitId(point.getUnitId())
                 .dataType(point.getDataType())
                 .scale(point.getScale())
                 .offset(point.getOffset())

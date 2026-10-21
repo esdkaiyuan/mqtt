@@ -50,8 +50,8 @@ public class DeviceTopologyController {
         this.topologyProperties = topologyProperties;
     }
 
-    @Operation(summary = "创建子设备", description = "在指定网关下创建子设备：产品与父网关取自路径，"
-            + "一步建成即挂载（node_type=SUB）；子设备与网关同产品为硬约束，违反返回 6258")
+    @Operation(summary = "创建子设备", description = "在指定网关或子网关下创建子设备：产品与父设备取自路径，"
+            + "一步建成即挂载（node_type=SUB）；子设备与父设备同产品为硬约束，违反返回 6258")
     @PostMapping("/{gatewayId}/sub-devices")
     public Result<DeviceCreatedDTO> createSubDevice(
             @Parameter(description = "网关设备ID", required = true) @PathVariable Long gatewayId,
@@ -61,8 +61,8 @@ public class DeviceTopologyController {
         return Result.success(deviceService.createSubDevice(gatewayId, dto));
     }
 
-    @Operation(summary = "挂载子设备", description = "把既有设备挂到网关下；网关当前为 DIRECT 时自动提升为 GATEWAY。"
-            + "父设备不是网关返回 6256，产品不一致返回 6258，层级或子设备数量超限返回 6257 / 6260")
+    @Operation(summary = "挂载子设备", description = "把既有叶子设备挂到网关或子网关下；父为 DIRECT 时自动提升为 GATEWAY。"
+            + "产品不一致返回 6258，层级或子设备数量超限返回 6257 / 6260；不支持整棵子树移动")
     @PostMapping("/{gatewayId}/sub-devices/{subDeviceId}")
     public Result<Device> attachSubDevice(
             @Parameter(description = "网关设备ID", required = true) @PathVariable Long gatewayId,
@@ -73,8 +73,8 @@ public class DeviceTopologyController {
         return Result.success(deviceTopologyService.attach(gatewayId, subDeviceId));
     }
 
-    @Operation(summary = "解绑子设备", description = "解除挂载关系：子设备 parent_id 置空、角色回落 DIRECT；"
-            + "网关角色保持 GATEWAY 不回落")
+    @Operation(summary = "解绑子设备", description = "解除挂载关系：叶子子设备 parent_id 置空、角色回落 DIRECT；"
+            + "带下级的子网关收敛为根 GATEWAY，原父网关角色保持")
     @DeleteMapping("/{gatewayId}/sub-devices/{subDeviceId}")
     public Result<Void> detachSubDevice(
             @Parameter(description = "网关设备ID", required = true) @PathVariable Long gatewayId,

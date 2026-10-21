@@ -17,6 +17,7 @@ import com.mqtt.cloud.mapper.RuleDefinitionMapper;
 import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceScopeService;
 import com.mqtt.cloud.service.RuleEvaluationService;
+import com.mqtt.cloud.service.RuleMultiSpec;
 import com.mqtt.cloud.service.RuleService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
@@ -30,6 +31,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -179,15 +181,25 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         ThingModelDefinition definition = thingModelService.getForProduct(device.getProductId());
         boolean deviceModeled = !definition.isEmpty();
 
+        // T-33：多条件规则的试运行只提供「一个标识符 + 一个取值」，只能判定与该标识符相关的那一个条件，
+        // 其余条件因缺值在 AND 下必然不满足。故这里刻意**不声称**「已完整判定」，
+        // 而是把监听的条件总数与实际参与判定的条件一并写进 reason，避免用户误读为「规则能命中」。
+        boolean multi = RuleMultiSpec.hasMultipleConditions(rule, objectMapper);
+        int conditionCount = RuleMultiSpec.conditionsOf(rule, objectMapper).size();
+        String multiNote = multi
+                ? "（该规则共 " + conditionCount + " 个条件，试运行只提供了 1 个属性取值，"
+                + "其余条件按缺值处理；完整判定需设备实际上报全部相关属性）"
+                : "";
+
         if (RuleConstants.SOURCE_EVENT.equals(rule.getSourceType())) {
             boolean identifierModeled = definition.events().containsKey(rule.getIdentifier());
             boolean matched = rule.getIdentifier() != null && rule.getIdentifier().equals(identifier);
-            String reason = matched
+            String reason = (matched
                     ? "事件标识符匹配" + (rule.getEventType() == null ? "" : "（事件类型过滤 " + rule.getEventType() + " 需实际上报核对）")
-                    : "标识符不匹配（规则监听 " + rule.getIdentifier() + "）";
+                    : "标识符不匹配（规则监听 " + rule.getIdentifier() + "）") + multiNote;
             ActionDiagnosis diagnosis = describeAction(rule, definition);
             return new RuleTestResult(matched, reason, deviceModeled, identifierModeled,
-                    diagnosis.executable(), diagnosis.summary());
+                    diagnosis.executable(), diagnosis.summary() + actionMultiNote(rule));
         }
 
         boolean identifierModeled = definition.properties().containsKey(rule.getIdentifier());
@@ -195,24 +207,31 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         String reason;
         if (!rule.getIdentifier().equals(identifier)) {
             matched = false;
-            reason = "标识符不匹配（规则监听 " + rule.getIdentifier() + "）";
+            reason = "标识符不匹配（规则监听 " + rule.getIdentifier() + "）" + multiNote;
         } else {
             Boolean result = RuleConditionMatcher.matchesProperty(valueText, rule.getOperator(), rule.getThresholdValue());
             if (result == null) {
                 matched = false;
-                reason = "取值或阈值不可解析为数值";
+                reason = "取值或阈值不可解析为数值" + multiNote;
             } else if (result) {
-                matched = true;
-                reason = valueText + " " + operatorLabel(rule.getOperator()) + " " + rule.getThresholdValue();
+                matched = !multi;
+                reason = (valueText + " " + operatorLabel(rule.getOperator()) + " " + rule.getThresholdValue())
+                        + (multi ? "（仅该条件满足，其余条件缺值 → 按 AND 判不命中）" : "");
             } else {
                 matched = false;
                 reason = "条件不满足：" + valueText + " 未满足 " + operatorLabel(rule.getOperator())
-                        + " " + rule.getThresholdValue();
+                        + " " + rule.getThresholdValue() + multiNote;
             }
         }
         ActionDiagnosis diagnosis = describeAction(rule, definition);
         return new RuleTestResult(matched, reason, deviceModeled, identifierModeled,
-                diagnosis.executable(), diagnosis.summary());
+                diagnosis.executable(), diagnosis.summary() + actionMultiNote(rule));
+    }
+
+    /** 多动作规则的试运行说明：动作诊断只覆盖首个动作，必须显式提示其余动作未被检查。 */
+    private String actionMultiNote(RuleDefinition rule) {
+        int count = RuleMultiSpec.actionsOf(rule, objectMapper).size();
+        return count > 1 ? "；该规则共 " + count + " 个动作，试运行只诊断了第一个" : "";
     }
 
     /**
@@ -309,7 +328,6 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         }
 
         String actionConfigJson = validateAndSerializeAction(actionType, request.getActionConfig());
-
         rule.setName(name);
         rule.setDescription(description);
         rule.setScopeType(scope.scopeType());
@@ -323,8 +341,198 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         rule.setEventType(eventType);
         rule.setActionType(actionType);
         rule.setActionConfig(actionConfigJson);
+
+        // ---- T-33：多条件 / 多动作（放在单值赋值之后，否则会被下面的 set 覆盖）----
+        // 策略是「多值优先、单值回填旧列」：数组非空时以数组为准，同时把首个元素回填到旧列，
+        // 使任何仍读 identifier / action_type 的存量路径（列表筛选、导出、旧版前端）继续拿到合理值。
+        MultiRule multi = resolveMulti(request, sourceType);
+        if (multi.conditionsJson() != null) {
+            rule.setConditionLogic(multi.logic());
+            rule.setConditionsJson(multi.conditionsJson());
+            rule.setIdentifier(multi.firstIdentifier());
+            rule.setOperator(multi.firstOperator());
+            rule.setThresholdValue(multi.firstThreshold());
+            rule.setEventType(multi.firstEventType());
+        } else {
+            rule.setConditionLogic(RuleConstants.LOGIC_AND);
+            rule.setConditionsJson(null);
+        }
+        if (multi.actionsJson() != null) {
+            rule.setActionsJson(multi.actionsJson());
+            rule.setActionType(multi.firstActionType());
+            rule.setActionConfig(multi.firstActionConfigJson());
+        } else {
+            rule.setActionsJson(null);
+        }
+
         rule.setCooldownSeconds(cooldownSeconds);
         rule.setEnabled(enabled);
+    }
+
+    /**
+     * 多条件 / 多动作解析结果（T-33）。
+     *
+     * @param conditionsJson        多条件 JSON 文本；{@code null} 表示走单条件路径
+     * @param logic                 组合逻辑
+     * @param actionsJson           多动作 JSON 文本；{@code null} 表示走单动作路径
+     * @param firstIdentifier       首个条件标识符（回填旧列）
+     * @param firstOperator         首个条件比较符（回填旧列）
+     * @param firstThreshold        首个条件阈值（回填旧列）
+     * @param firstEventType        首个条件事件类型（回填旧列）
+     * @param firstActionType       首个动作类型（回填旧列）
+     * @param firstActionConfigJson 首个动作配置 JSON（回填旧列）
+     */
+    private record MultiRule(String conditionsJson, String logic, String actionsJson,
+                             String firstIdentifier, String firstOperator, String firstThreshold,
+                             String firstEventType, String firstActionType, String firstActionConfigJson) {
+    }
+
+    /**
+     * 校验并序列化多条件 / 多动作（T-33）。
+     * <p>
+     * 数组为空（或全 null 元素）时返回 {@code null} 两项，调用方据此走单条件 / 单动作路径 ——
+     * 与改造前完全一致。
+     * <p>
+     * 超限时**显式拒绝而非静默截断**：悄悄丢掉多余条件等价于悄悄改了规则语义，
+     * 用户会在「规则生效但少了一个条件」里反复排查。
+     *
+     * @param sourceType 触发源，决定条件是属性型（带比较符）还是事件型（只带事件类型）
+     */
+    private MultiRule resolveMulti(RuleRequest request, String sourceType) {
+        return new MultiRule(
+                resolveConditions(request, sourceType),
+                resolveLogic(request.getConditionLogic()),
+                resolveActions(request),
+                null, null, null, null, null, null);
+    }
+
+    /** 组合逻辑归一化：缺省或非法一律按 {@code AND}，与单条件的直觉一致。 */
+    private String resolveLogic(String raw) {
+        String logic = normalizeUpper(raw);
+        return logic != null && RuleConstants.LOGICS.contains(logic) ? logic : RuleConstants.LOGIC_AND;
+    }
+
+    /** 多条件校验与序列化；返回 {@code null} 表示无多条件。 */
+    private String resolveConditions(RuleRequest request, String sourceType) {
+        List<JsonNode> conditions = request.getConditions();
+        if (conditions == null || conditions.isEmpty()) {
+            return null;
+        }
+        if (conditions.size() > RuleConstants.MAX_CONDITIONS) {
+            throw invalid("条件数不能超过 " + RuleConstants.MAX_CONDITIONS);
+        }
+        boolean property = RuleConstants.SOURCE_PROPERTY.equals(sourceType);
+        StringBuilder json = new StringBuilder("[");
+        for (JsonNode node : conditions) {
+            if (node == null || !node.isObject()) {
+                throw invalid("条件必须是对象");
+            }
+            String identifier = text(node, "identifier");
+            if (identifier == null) {
+                throw invalid("条件必须填写标识符");
+            }
+            checkIdentifier(identifier, "条件");
+            String operator = null;
+            String thresholdValue = null;
+            String eventType = null;
+            if (property) {
+                operator = normalizeUpper(text(node, "operator"));
+                if (operator == null || !RuleConstants.OPERATORS.contains(operator)) {
+                    throw invalid("条件的比较符必须是 " + String.join(" / ", RuleConstants.OPERATORS));
+                }
+                thresholdValue = text(node, "thresholdValue");
+                if (thresholdValue == null) {
+                    throw invalid("条件必须填写阈值");
+                }
+                if (thresholdValue.length() > RuleConstants.MAX_THRESHOLD_LENGTH) {
+                    throw invalid("阈值长度不能超过 " + RuleConstants.MAX_THRESHOLD_LENGTH);
+                }
+                if (RuleConstants.NUMERIC_OPERATORS.contains(operator)) {
+                    try {
+                        new BigDecimal(thresholdValue.trim());
+                    } catch (NumberFormatException e) {
+                        throw invalid("数值比较符的阈值必须是可解析的十进制数");
+                    }
+                }
+            } else {
+                eventType = text(node, "eventType");
+                if (eventType != null && eventType.length() > RuleConstants.MAX_EVENT_TYPE_LENGTH) {
+                    throw invalid("事件类型长度不能超过 " + RuleConstants.MAX_EVENT_TYPE_LENGTH);
+                }
+            }
+            if (json.length() > 1) {
+                json.append(',');
+            }
+            json.append("{\"identifier\":").append(quote(identifier));
+            if (operator != null) {
+                json.append(",\"operator\":").append(quote(operator));
+            }
+            if (thresholdValue != null) {
+                json.append(",\"thresholdValue\":").append(quote(thresholdValue));
+            }
+            if (eventType != null) {
+                json.append(",\"eventType\":").append(quote(eventType));
+            }
+            json.append('}');
+        }
+        return json.append(']').toString();
+    }
+
+    /** 多动作校验与序列化；返回 {@code null} 表示无多动作。 */
+    private String resolveActions(RuleRequest request) {
+        List<JsonNode> actions = request.getActions();
+        if (actions == null || actions.isEmpty()) {
+            return null;
+        }
+        if (actions.size() > RuleConstants.MAX_ACTIONS) {
+            throw invalid("动作数不能超过 " + RuleConstants.MAX_ACTIONS);
+        }
+        StringBuilder json = new StringBuilder("[");
+        for (JsonNode node : actions) {
+            if (node == null || !node.isObject()) {
+                throw invalid("动作必须是对象");
+            }
+            String actionType = normalizeUpper(text(node, "actionType"));
+            if (actionType == null) {
+                throw new BusinessException(ResultCode.RULE_ACTION_UNSUPPORTED, "动作类型不能为空");
+            }
+            if (!RuleConstants.ACTIONS.contains(actionType)) {
+                throw new BusinessException(ResultCode.RULE_ACTION_UNSUPPORTED,
+                        "不支持的动作类型 " + actionType);
+            }
+            JsonNode config = node.get("actionConfig");
+            // 每个动作单独走一次既有校验，保证多动作与单动作的配置约束完全一致
+            String configJson = validateAndSerializeAction(actionType, config);
+            if (json.length() > 1) {
+                json.append(',');
+            }
+            json.append("{\"actionType\":").append(quote(actionType))
+                    .append(",\"actionConfig\":").append(configJson).append('}');
+        }
+        return json.append(']').toString();
+    }
+
+    /** JSON 字符串字面量转义（值均由前端提供，直接拼接需转义引号与控制字符）。 */
+    private String quote(String value) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.append('"').toString();
     }
 
     /** 按动作类型校验 {@code action_config}，返回落库用 JSON 文本。 */
@@ -480,11 +688,39 @@ public class RuleServiceImpl extends ServiceImpl<RuleDefinitionMapper, RuleDefin
         };
     }
 
-    /** 装配返回前端的瞬态视图：动作配置对象与作用域 ID 数组；解析失败按空值降级。 */
+    /**
+     * 装配返回前端的瞬态视图：动作配置对象、作用域 ID 数组与多条件 / 多动作数组（T-33）；解析失败按空值降级。
+     * <p>
+     * 单条件 / 单动作规则也会被装配成**长度为一**的 {@code conditions} / {@code actions} 数组，
+     * 前端因此只需一套渲染逻辑；解析失败或列为空时返回空列表，由前端回落到单条件表单。
+     */
     private void populateView(RuleDefinition rule) {
         rule.setActionConfigView(readActionConfig(rule));
         rule.setGroupIdsView(scopeJson.toIdList(rule.getGroupIds()));
         rule.setTagIdsView(scopeJson.toIdList(rule.getTagIds()));
+        rule.setConditionsView(readArray(rule.getConditionsJson()));
+        rule.setActionsView(readArray(rule.getActionsJson()));
+    }
+
+    /** 解析多条件 / 多动作 JSON 数组；非法或为空时返回空列表（前端据此回落单值表单）。 */
+    private List<Object> readArray(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(json, new tools.jackson.core.type.TypeReference<List<Object>>() {
+            });
+        } catch (Exception e) {
+            log.warn("规则多条件 / 多动作解析失败，按单值展示: json={}", abbreviate(json), e);
+            return List.of();
+        }
+    }
+
+    private static String abbreviate(String value) {
+        if (value == null) {
+            return null;
+        }
+        return value.length() <= 120 ? value : value.substring(0, 120) + "...";
     }
 
     private JsonNode readActionConfig(RuleDefinition rule) {

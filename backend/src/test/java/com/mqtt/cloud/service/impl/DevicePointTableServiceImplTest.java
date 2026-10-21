@@ -92,6 +92,32 @@ class DevicePointTableServiceImplTest {
     }
 
     @Test
+    void savePoints_should_persist_point_unit_override() {
+        givenOwnedDevice();
+        when(pointTableMapper.findExecutorsByDevice(DEVICE_ID)).thenReturn(List.of());
+        when(pointTableMapper.insertOrUpdate(any(DevicePointTable.class))).thenReturn(true);
+        PointTableUpsertRequest request = point("u1", PointExecutorValue.PLATFORM);
+        request.setUnitId(2);
+
+        service.savePoints(OWNER_ID, DEVICE_ID, List.of(request));
+
+        ArgumentCaptor<DevicePointTable> captor = ArgumentCaptor.forClass(DevicePointTable.class);
+        verify(pointTableMapper).insertOrUpdate(captor.capture());
+        assertThat(captor.getValue().getUnitId()).isEqualTo(2);
+    }
+
+    @Test
+    void savePoints_should_reject_unit_id_out_of_range() {
+        givenOwnedDevice();
+        PointTableUpsertRequest request = point("u2", PointExecutorValue.PLATFORM);
+        request.setUnitId(248);
+
+        assertCode(() -> service.savePoints(OWNER_ID, DEVICE_ID, List.of(request)),
+                ResultCode.POINT_UNIT_ID_INVALID);
+        verify(pointTableMapper, never()).insertOrUpdate(any(DevicePointTable.class));
+    }
+
+    @Test
     void savePoints_should_reject_mixing_edge_into_existing_platform_device() {
         givenOwnedDevice();
         when(pointTableMapper.findExecutorsByDevice(DEVICE_ID))
@@ -350,6 +376,7 @@ class DevicePointTableServiceImplTest {
         point.setId(1L);
         point.setDeviceId(DEVICE_ID);
         point.setPointKey("t1");
+        point.setUnitId(2);
         point.setExecutor(PointExecutorValue.PLATFORM);
         // executor 传 null 表示不区分执行方，走 findEnabledByDevice 这一路
         when(pointTableMapper.findEnabledByDevice(DEVICE_ID)).thenReturn(List.of(point));
@@ -363,6 +390,7 @@ class DevicePointTableServiceImplTest {
 
         assertThat(points).hasSize(1);
         // 排障需要能区分「没配点」与「配了但采不到」，故最近状态必须透出
+        assertThat(points.get(0).getUnitId()).isEqualTo(2);
         assertThat(points.get(0).getLastRunStatus()).isEqualTo(DevicePointRun.STATUS_FAILED);
         assertThat(points.get(0).getLastErrorMessage()).isEqualTo("寄存器地址越界");
     }

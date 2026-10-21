@@ -2,6 +2,10 @@
   <div class="alert-list-page page">
     <PageHeader title="告警列表" desc="查看并处理本人设备的阈值 / 离线 / 事件告警">
       <template #actions>
+        <el-button :loading="exporting" @click="handleExport">
+          <svg-icon name="download" :size="14" />
+          导出 CSV
+        </el-button>
         <el-button :loading="loading" @click="refresh">
           <svg-icon name="refresh" :size="14" />
           刷新
@@ -275,6 +279,8 @@ import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import { alertApi } from '@/api/alert'
+import { exportApi } from '@/api/export'
+import { downloadResponse } from '@/utils/download'
 import { unwrapResult } from '@/utils/result'
 import {
   useAlertListQuery,
@@ -318,6 +324,24 @@ const route = useRoute()
 const detailVisible = ref(false)
 const detail = ref(null)
 const assignForm = reactive({ assigneeId: null, notify: false })
+const exporting = ref(false)
+
+/** 导出当前筛选条件下的告警；openOnly 与精确 status 的互斥口径由后端查询复用。 */
+async function handleExport() {
+  const params = {}
+  if (filters.status) params.status = filters.status
+  if (filters.sourceType) params.sourceType = filters.sourceType
+  if (filters.severity) params.severity = filters.severity
+  if (openOnly.value) params.openOnly = true
+  exporting.value = true
+  try {
+    const response = await exportApi.alerts(params)
+    const name = downloadResponse(response, 'alerts.csv')
+    ElMessage.success(`已导出 ${name}`)
+  } finally {
+    exporting.value = false
+  }
+}
 
 function rowClassName({ row }) {
   return row.status === 'RECOVERED' ? 'alert-row--recovered' : 'alert-row--open'

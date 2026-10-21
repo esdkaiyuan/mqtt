@@ -32,6 +32,9 @@ public class PointTableDTO {
     /** 地址 */
     private String address;
 
+    /** Modbus 从站地址；为空表示继承驱动配置（T-50） */
+    private Integer unitId;
+
     /** 数据类型 */
     private String dataType;
 

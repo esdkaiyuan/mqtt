@@ -36,8 +36,12 @@
                 <svg-icon name="building" :size="14" />
                 <span class="group-node__name">{{ data.name }}</span>
                 <span class="group-node__count">{{ data.deviceCount ?? 0 }}</span>
+                <el-tag v-if="data.shared" size="small" type="warning" effect="plain">
+                  {{ data.sharedPermission === 'OPERATE' ? '共享·可操作' : '共享·只读' }}
+                </el-tag>
               </span>
-              <span class="group-node__actions">
+              <span v-if="!data.shared" class="group-node__actions">
+                <el-button link size="small" @click.stop="openMembers(data)">共享</el-button>
                 <el-button link size="small" @click.stop="openCreateChild(data)">新建子分组</el-button>
                 <el-button link size="small" @click.stop="openEdit(data)">编辑</el-button>
                 <el-button link size="small" @click.stop="move(data, -1)">上移</el-button>
@@ -62,9 +66,17 @@
             <div class="group-devices__header">
               <div class="group-devices__title">
                 <span>{{ selectedGroup.name }}</span>
+                <el-tag
+                  v-if="selectedGroup.shared"
+                  size="small"
+                  type="warning"
+                  effect="plain"
+                >
+                  {{ selectedGroup.sharedPermission === 'OPERATE' ? '共享·可操作' : '共享·只读' }}
+                </el-tag>
                 <span class="group-devices__desc">{{ selectedGroup.description || '暂无描述' }}</span>
               </div>
-              <div class="group-devices__batch">
+              <div v-if="!selectedGroup.shared" class="group-devices__batch">
                 <el-button
                   size="small"
                   :disabled="groupDeviceTotal === 0 || running"
@@ -119,9 +131,17 @@
                   <span v-if="!row.tags || row.tags.length === 0" class="text-muted">—</span>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="90" fixed="right">
+              <el-table-column label="操作" width="120" fixed="right">
                 <template #default="{ row }">
-                  <el-button link type="danger" @click="handleRemoveDevice(row)">移出</el-button>
+                  <el-button link type="primary" @click="goDevice(row)">详情</el-button>
+                  <el-button
+                    v-if="!selectedGroup.shared"
+                    link
+                    type="danger"
+                    @click="handleRemoveDevice(row)"
+                  >
+                    移出
+                  </el-button>
                 </template>
               </el-table-column>
               <template #empty>
@@ -238,17 +258,21 @@
       @submit="handleBatchCommand"
     />
     <BatchResultDrawer v-model:visible="resultVisible" :result="result" />
+
+    <DeviceGroupMemberDialog v-model="memberVisible" :group="memberGroup" />
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import SvgIcon from '@/components/Icon.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import EmptyState from '@/components/common/EmptyState.vue'
 import BatchCommandDialog from '@/components/device/BatchCommandDialog.vue'
 import BatchResultDrawer from '@/components/device/BatchResultDrawer.vue'
+import DeviceGroupMemberDialog from '@/components/device/DeviceGroupMemberDialog.vue'
 import { deviceGroupApi } from '@/api/deviceGroup'
 import { unwrapResult } from '@/utils/result'
 import {
@@ -262,8 +286,9 @@ import { useDeviceBatch } from '@/composables/useDeviceBatch'
 const TREE_PROPS = { label: 'name', children: 'children' }
 const STATUS_LABELS = { ONLINE: '在线', OFFLINE: '离线', INACTIVE: '未激活' }
 const STATUS_TAG_TYPES = { ONLINE: 'success', OFFLINE: 'info', INACTIVE: 'warning' }
+const router = useRouter()
 
-const { tree, loading: treeLoading, refresh: refreshTree } = useDeviceGroupTreeQuery()
+const { tree, loading: treeLoading, refresh: refreshTree } = useDeviceGroupTreeQuery(true)
 const { saving: groupSaving, createGroup, updateGroup, deleteGroup } = useDeviceGroupMutations()
 const { tags, refresh: refreshTags } = useTagListQuery()
 const { saving: tagSaving, createTag, updateTag, deleteTag } = useTagMutations()
@@ -279,6 +304,8 @@ const groupDeviceTotal = ref(0)
 const groupDevicePage = ref(1)
 const groupDeviceSize = ref(10)
 const groupDeviceLoading = ref(false)
+const memberVisible = ref(false)
+const memberGroup = ref(null)
 
 function findNode(nodes, id) {
   for (const node of nodes) {
@@ -314,6 +341,10 @@ function handleNodeClick(data) {
   loadGroupDevices(1)
 }
 
+function goDevice(row) {
+  if (row?.id) router.push(`/workbench/devices/${row.id}`)
+}
+
 // 树刷新后按 id 重新绑定选中节点，保证 deviceCount / 名称同步
 watch(tree, (nodes) => {
   if (!selectedGroup.value) return
@@ -331,7 +362,7 @@ const groupEditingId = ref(null)
 const groupForm = reactive({ name: '', parentId: null, description: '' })
 
 const parentOptions = computed(() =>
-  flatten(tree.value).filter((group) => group.id !== groupEditingId.value)
+  flatten(tree.value).filter((group) => group.id !== groupEditingId.value && !group.shared)
 )
 
 function flatten(nodes) {
@@ -358,6 +389,11 @@ function openEdit(node) {
     description: node.description ?? ''
   })
   groupDialogVisible.value = true
+}
+
+function openMembers(node) {
+  memberGroup.value = node
+  memberVisible.value = true
 }
 
 async function handleSubmitGroup() {

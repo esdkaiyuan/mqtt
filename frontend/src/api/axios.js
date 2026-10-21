@@ -34,6 +34,11 @@ api.interceptors.request.use(
 
 api.interceptors.response.use(
   (response) => {
+    // 附件下载需要 Content-Disposition / X-Export-Truncated 等响应头，
+    // 由调用方显式声明 returnFullResponse，避免改变既有 blob 调用（固件 / TSL 导出）的契约
+    if (response.config?.returnFullResponse) {
+      return response
+    }
     const data = response.data
     // 兼容个别仍以 HTTP 200 返回业务错误的接口
     if (data && typeof data === 'object' && 'code' in data && data.code !== SUCCESS_CODE) {

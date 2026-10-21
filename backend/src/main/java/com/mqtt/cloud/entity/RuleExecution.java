@@ -1,6 +1,7 @@
 package com.mqtt.cloud.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
@@ -64,6 +65,16 @@ public class RuleExecution {
     /** 动作类型快照 */
     @TableField("action_type")
     private String actionType;
+
+    /**
+     * 该次执行对应的动作配置快照（T-33 / G-6-7，多动作为 NULL 时回查规则当前 {@code action_config}）。
+     * <p>
+     * 多动作时一次触发落 N 条执行记录，各自携带 {@code actions_json} 中对应项的配置 ——
+     * 执行器按记录 ID 回查规则拿不到「第几个动作」，快照列是让重试与巡检重放各自拿到正确配置的依据。
+     */
+    @TableField("action_config_snapshot")
+    @JsonIgnore
+    private String actionConfigSnapshot;
 
     /** 状态：PENDING/SUCCESS/FAILED */
     @TableField("status")

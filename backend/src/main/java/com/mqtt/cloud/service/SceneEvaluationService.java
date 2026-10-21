@@ -2,6 +2,7 @@ package com.mqtt.cloud.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 场景触发评估服务（T-23 设计文档 §8.1 / §8.2）。
@@ -33,6 +34,29 @@ public interface SceneEvaluationService {
      * @param samples  本批成功落库的事件样本
      */
     void onEvents(Long deviceId, List<EventSample> samples);
+
+    /**
+     * 上下线场景评估（**推**）：设备状态真正变化且事务提交后调用，命中即触发（T-43）。
+     *
+     * @param deviceId   设备ID
+     * @param status     新状态（{@code ONLINE} / {@code OFFLINE}）
+     * @param occurredAt 状态变更时间
+     */
+    void onStatus(Long deviceId, String status, LocalDateTime occurredAt);
+
+    /**
+     * 影子变更场景评估（**推**）：影子 CAS 成功且确有变更后调用，命中即触发（T-45）。
+     * <p>
+     * {@code desired} 变更若来源为场景 / 规则等内部自动化，会被跳过以避免自触发循环。
+     *
+     * @param deviceId   设备ID
+     * @param side       变更侧（{@code REPORTED} / {@code DESIRED}）
+     * @param changes    发生变化的属性（identifier → 新值）
+     * @param source     写入来源（命令来源；reported 为 INGEST）
+     * @param occurredAt 变更时间
+     */
+    void onShadow(Long deviceId, String side, Map<String, String> changes,
+                  String source, LocalDateTime occurredAt);
 
     /**
      * 主动失效本副本的场景定义缓存（写操作后由 {@link SceneService} 调用）。

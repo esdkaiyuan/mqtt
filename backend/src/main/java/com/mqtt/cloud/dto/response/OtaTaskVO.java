@@ -39,8 +39,20 @@ public class OtaTaskVO {
     /** 升级失败/超时数。 */
     private Integer failedCount;
 
-    /** 任务状态：RUNNING / SUCCESS / PARTIAL / FAILED。 */
+    /** 被终止跳过的设备数，不计入失败（T-32）。 */
+    private Integer skippedCount;
+
+    /** 任务状态：RUNNING / PAUSED / ABORTED / SUCCESS / PARTIAL / FAILED。 */
     private String status;
+
+    /** 下发策略：ALL 一次性全量 / BATCHED 灰度分批（T-32）。 */
+    private String batchMode;
+
+    /** 总批次数（T-32）；{@code ALL} 恒为 1。 */
+    private Integer batchTotal;
+
+    /** 已下发的最大批号（T-32）。 */
+    private Integer currentBatchNo;
 
     private LocalDateTime createdAt;
 }

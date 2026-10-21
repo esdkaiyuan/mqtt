@@ -84,6 +84,23 @@ class SecurityConfigFilterOrderTest {
                 .isTrue();
     }
 
+    @Test
+    @DisplayName("/public/dashboard-shares/** 为 permitAll：匿名大屏访问不被 Spring Security 拦截")
+    void publicDashboardSharePathIsPermitAll() throws Exception {
+        MockHttpServletRequest request =
+                new MockHttpServletRequest("GET", "/public/dashboard-shares/token-abc");
+        request.setServletPath("/public/dashboard-shares/token-abc");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        AtomicBoolean reachedDownstream = new AtomicBoolean(false);
+        FilterChain terminal = (req, res) -> reachedDownstream.set(true);
+
+        resolveFilterChainProxy().doFilter(request, response, terminal);
+
+        assertThat(response.getStatus()).isNotIn(401, 403);
+        assertThat(reachedDownstream).isTrue();
+    }
+
     /** 从上下文的 Filter Bean 中定位 Spring Security 的 {@code springSecurityFilterChain}。 */
     private FilterChainProxy resolveFilterChainProxy() {
         return applicationContext.getBeansOfType(Filter.class).values().stream()

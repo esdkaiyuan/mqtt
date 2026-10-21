@@ -122,6 +122,12 @@ const PageHeaderStub = {
 
 const SvgIconStub = { name: 'SvgIcon', props: ['name', 'size'], template: '<span class="stub-icon" />' }
 
+const DashboardShareDialogStub = {
+  name: 'DashboardShareDialog',
+  props: ['modelValue', 'dashboards', 'presetDashboardId'],
+  template: '<div v-if="modelValue" class="stub-share-dialog" />'
+}
+
 const STUBS = {
   ElButton: ElButtonStub,
   ElInput: ElInputStub,
@@ -130,7 +136,8 @@ const STUBS = {
   ElDialog: ElDialogStub,
   EmptyState: EmptyStateStub,
   PageHeader: PageHeaderStub,
-  SvgIcon: SvgIconStub
+  SvgIcon: SvgIconStub,
+  DashboardShareDialog: DashboardShareDialogStub
 }
 
 /** 推进异步：请求 → 渲染 → 微任务。 */
@@ -216,6 +223,24 @@ describe('views/workbench/board/BoardList', () => {
     await wrapper.find('.board-card').trigger('click')
 
     expect(mocks.routerPush).toHaveBeenCalledWith('/workbench/boards/3')
+  })
+
+  it('卡片分享入口打开分享对话框并预选当前看板', async () => {
+    hooks.dashboards.value = [board()]
+    mountPage()
+    await settle()
+
+    const shareButton = wrapper
+      .find('.board-card__actions')
+      .findAll('button')
+      .find((button) => button.text().includes('分享'))
+    await shareButton.trigger('click')
+    await nextTick()
+
+    const dialog = wrapper.findComponent({ name: 'DashboardShareDialog' })
+    expect(dialog.exists()).toBe(true)
+    expect(dialog.props('modelValue')).toBe(true)
+    expect(dialog.props('presetDashboardId')).toBe(3)
   })
 
   it('新建看板：填写名称后提交调用 create 并关闭弹窗', async () => {

@@ -257,4 +257,161 @@ describe('components/scene/SceneStepEditor', () => {
     expect(target.targetMode).toBe('product')
     expect(target.targetConfig).toEqual(DEFAULT_TARGET_CONFIG)
   })
+
+  it('切换到条件分支时无目标并渲染分支配置', async () => {
+    const target = step()
+    const { wrapper } = mountEditor({ steps: [target] })
+
+    await wrapper.find('.step-editor__field--action').findComponent(ElSelectStub).vm.$emit('change', 'BRANCH')
+    await nextTick()
+
+    expect(target.actionType).toBe('BRANCH')
+    expect(target.targetType).toBe('NONE')
+    expect(target.targetConfig).toBeNull()
+    expect(target.actionConfig).toMatchObject({ operator: 'GT', trueSeq: null, falseSeq: null })
+    expect(wrapper.find('.step-editor__field--target').exists()).toBe(false)
+    expect(wrapper.text()).toContain('分支步骤按属性条件选择后续步骤')
+  })
+
+  it('循环步骤渲染循环体起始与次数', async () => {
+    const first = step({ seq: 1 })
+    const second = step({
+      seq: 2,
+      actionType: 'LOOP',
+      targetType: 'NONE',
+      targetConfig: null,
+      actionConfig: { startSeq: 1, times: 3 }
+    })
+    const { wrapper } = mountEditor({ steps: [first, second] })
+
+    const loopItem = wrapper.findAll('.step-editor__item')[1]
+    expect(loopItem.find('.step-editor__field--target').exists()).toBe(false)
+    expect(loopItem.find('.step-editor__field--loop-times').exists()).toBe(true)
+    expect(wrapper.text()).toContain('循环步骤标记循环体结束')
+  })
+
+  it('切换到并行开始时无目标并渲染分支数配置', async () => {
+    const target = step()
+    const { wrapper } = mountEditor({ steps: [target] })
+
+    await wrapper.find('.step-editor__field--action').findComponent(ElSelectStub).vm.$emit('change', 'PARALLEL')
+    await nextTick()
+
+    expect(target.actionType).toBe('PARALLEL')
+    expect(target.targetType).toBe('NONE')
+    expect(target.actionConfig).toEqual({ branches: 2 })
+    expect(wrapper.find('.step-editor__field--target').exists()).toBe(false)
+    expect(wrapper.find('.step-editor__field--parallel-branches').exists()).toBe(true)
+    expect(wrapper.text()).toContain('并行开始把后续步骤分到多条分支')
+  })
+
+  it('并行块内普通步骤渲染分支选择器，汇合步骤展示说明', () => {
+    const steps = [
+      step({
+        seq: 1,
+        actionType: 'PARALLEL',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: { branches: 2 }
+      }),
+      step({ seq: 2, branchIndex: 0 }),
+      step({ seq: 3, branchIndex: 1 }),
+      step({
+        seq: 4,
+        actionType: 'JOIN',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: {}
+      })
+    ]
+    const { wrapper } = mountEditor({ steps })
+
+    expect(wrapper.findAll('.step-editor__field--branch')).toHaveLength(2)
+    expect(wrapper.findAll('.step-editor__item')[3].text()).toContain('并行汇合不执行动作')
+  })
+
+  it('修改并行块内步骤的分支归属', async () => {
+    const steps = [
+      step({
+        seq: 1,
+        actionType: 'PARALLEL',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: { branches: 2 }
+      }),
+      step({ seq: 2, branchIndex: 0 }),
+      step({ seq: 3, branchIndex: 1 }),
+      step({
+        seq: 4,
+        actionType: 'JOIN',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: {}
+      })
+    ]
+    const { wrapper, steps: editorSteps } = mountEditor({ steps })
+
+    await wrapper.findAll('.step-editor__field--branch')[0]
+      .findComponent(ElSelectStub)
+      .vm.$emit('change', 1)
+    await nextTick()
+
+    expect(editorSteps[1].branchIndex).toBe(1)
+  })
+
+  it('删除被引用步骤后重映射分支目标', async () => {
+    const steps = [
+      step({ seq: 1 }),
+      step({
+        seq: 2,
+        actionType: 'BRANCH',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: {
+          deviceId: null,
+          identifier: 'temperature',
+          operator: 'GT',
+          threshold: '30',
+          trueSeq: 4,
+          falseSeq: null
+        }
+      }),
+      step({ seq: 3 }),
+      step({ seq: 4 })
+    ]
+    const { wrapper, onUpdate } = mountEditor({ steps })
+
+    await itemButtons(wrapper, 2)[2].trigger('click')
+
+    const next = onUpdate.mock.calls[0][0]
+    expect(next[1].actionConfig.trueSeq).toBe(3)
+  })
+
+  it('移动被引用步骤后重映射分支目标', async () => {
+    const steps = [
+      step({ seq: 1 }),
+      step({
+        seq: 2,
+        actionType: 'BRANCH',
+        targetType: 'NONE',
+        targetConfig: null,
+        actionConfig: {
+          deviceId: null,
+          identifier: 'temperature',
+          operator: 'GT',
+          threshold: '30',
+          trueSeq: 4,
+          falseSeq: null
+        }
+      }),
+      step({ seq: 3 }),
+      step({ seq: 4 })
+    ]
+    const { wrapper, onUpdate } = mountEditor({ steps })
+
+    await itemButtons(wrapper, 3)[0].trigger('click')
+
+    const next = onUpdate.mock.calls[0][0]
+    expect(next[1].actionConfig.trueSeq).toBe(3)
+  })
 })

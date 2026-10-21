@@ -42,6 +42,7 @@ public class AlertEvaluationServiceImpl implements AlertEvaluationService {
     private final AlertNotifier alertNotifier;
     private final DeviceScopeService deviceScopeService;
     private final AlertProperties properties;
+    private final AlertWindowAggregator windowAggregator;
 
     @Override
     public void onProperties(Long deviceId, Long productId, List<PropertySample> samples) {
@@ -162,20 +163,50 @@ public class AlertEvaluationServiceImpl implements AlertEvaluationService {
         }
     }
 
-    /** 阈值样本比较：命中则触发，未命中则对活动告警做回落恢复。 */
+    /**
+     * 阈值样本比较：窗口规则先聚合再比较，实时规则保持最新值语义；
+     * 命中则触发，未命中则对活动告警做回落恢复。
+     */
     private void evaluateThreshold(AlertRule rule, Device device, PropertySample sample) {
-        Boolean matched = compare(sample.valueText(), rule.getOperator(), rule.getThresholdValue(), rule.getId());
+        int windowSeconds = rule.getWindowSeconds() == null ? 0 : rule.getWindowSeconds();
+        if (windowSeconds > 0) {
+            var aggregate = windowAggregator.accept(rule, device.getId(), sample.reportedAt(), sample.valueText());
+            if (aggregate.isEmpty()) {
+                // 窗口样本不足 / 非数值：不触发，也不把已触发告警误判为恢复
+                return;
+            }
+            evaluateValue(rule, device, aggregate.get().valueText(),
+                    windowTitle(rule, windowSeconds));
+            return;
+        }
+        evaluateValue(rule, device, sample.valueText(), thresholdTitle(rule));
+    }
+
+    private void evaluateValue(AlertRule rule, Device device, String value, String title) {
+        Boolean matched = compare(value, rule.getOperator(), rule.getThresholdValue(), rule.getId());
         if (matched == null) {
             return;
         }
         if (matched) {
-            raise(rule, device, thresholdTitle(rule), sample.valueText());
+            raise(rule, device, title, value);
             return;
         }
         AlertRecord open = alertRecordMapper.selectOpenByRuleAndDevice(rule.getId(), device.getId());
         if (open != null) {
             recover(open, device);
         }
+    }
+
+    private static String windowTitle(AlertRule rule, int windowSeconds) {
+        String aggregate = switch (rule.getAggregateType() == null ? "" : rule.getAggregateType()) {
+            case AlertConstants.AGGREGATE_MIN -> "最小值";
+            case AlertConstants.AGGREGATE_MAX -> "最大值";
+            case AlertConstants.AGGREGATE_SUM -> "求和";
+            case AlertConstants.AGGREGATE_COUNT -> "计数";
+            default -> "均值";
+        };
+        return rule.getIdentifier() + " " + windowSeconds + "s " + aggregate + " "
+                + operatorLabel(rule.getOperator()) + " " + rule.getThresholdValue();
     }
 
     /**

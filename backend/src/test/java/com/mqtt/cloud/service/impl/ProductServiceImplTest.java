@@ -91,7 +91,70 @@ class ProductServiceImplTest {
         assertThat(created.getTopicPrefix()).isEqualTo("device/{deviceKey}");
         assertThat(created.getPayloadFormat()).isEqualTo("JSON");
         assertThat(created.getAuthMode()).isEqualTo("SECRET");
+        assertThat(created.getProtocolType()).isEqualTo("MQTT");
         assertThat(created.getStatus()).isEqualTo("ENABLED");
+    }
+
+    @Test
+    void create_should_persist_modbus_driver_config() {
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        when(productMapper.insert(any(Product.class))).thenAnswer(inv -> 1);
+        ProductRequest req = request("modbus-plc");
+        req.setProtocolType("MODBUS");
+        req.setDriverId("modbus-tcp");
+        req.setDriverConfig("{\"host\":\"192.168.10.20\",\"port\":502,\"unitId\":1}");
+
+        Product created = productService.create(req);
+
+        assertThat(created.getProtocolType()).isEqualTo("MODBUS");
+        assertThat(created.getDriverId()).isEqualTo("modbus-tcp");
+        assertThat(created.getDriverConfig()).contains("192.168.10.20");
+    }
+
+    @Test
+    void create_should_reject_unsupported_protocol() {
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        ProductRequest req = request("serial-device");
+        req.setProtocolType("SERIAL");
+
+        assertThatThrownBy(() -> productService.create(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("不支持的接入协议");
+    }
+
+    @Test
+    void update_without_protocol_should_keep_existing_driver_config() {
+        Product existing = product(9L, "modbus-plc", "ENABLED");
+        existing.setProtocolType("MODBUS");
+        existing.setDriverId("modbus-tcp");
+        existing.setDriverConfig("{\"host\":\"192.168.10.20\"}");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        ProductRequest req = request("modbus-plc");
+
+        productService.update(9L, req);
+
+        assertThat(existing.getProtocolType()).isEqualTo("MODBUS");
+        assertThat(existing.getDriverId()).isEqualTo("modbus-tcp");
+        assertThat(existing.getDriverConfig()).contains("192.168.10.20");
+    }
+
+    @Test
+    void update_switching_to_mqtt_should_clear_driver_config() {
+        Product existing = product(9L, "modbus-plc", "ENABLED");
+        existing.setProtocolType("MODBUS");
+        existing.setDriverId("modbus-tcp");
+        existing.setDriverConfig("{\"host\":\"192.168.10.20\"}");
+        when(productMapper.selectById(9L)).thenReturn(existing);
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        ProductRequest req = request("modbus-plc");
+        req.setProtocolType("MQTT");
+
+        productService.update(9L, req);
+
+        assertThat(existing.getProtocolType()).isEqualTo("MQTT");
+        assertThat(existing.getDriverId()).isNull();
+        assertThat(existing.getDriverConfig()).isNull();
     }
 
     @Test

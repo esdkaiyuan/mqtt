@@ -1,16 +1,25 @@
 package com.mqtt.cloud.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.common.constant.GroupPermission;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.dto.request.DeviceGroupMemberRequest;
 import com.mqtt.cloud.dto.request.DeviceGroupRequest;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
+import com.mqtt.cloud.dto.response.DeviceGroupMemberVO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceGroup;
+import com.mqtt.cloud.entity.DeviceGroupMember;
 import com.mqtt.cloud.entity.DeviceGroupRelation;
+import com.mqtt.cloud.entity.User;
 import com.mqtt.cloud.mapper.DeviceGroupMapper;
+import com.mqtt.cloud.mapper.DeviceGroupMemberMapper;
 import com.mqtt.cloud.mapper.DeviceGroupRelationMapper;
+import com.mqtt.cloud.mapper.UserMapper;
+import com.mqtt.cloud.service.DeviceAccessService;
 import com.mqtt.cloud.service.DeviceGroupService;
 import com.mqtt.cloud.service.DeviceService;
 import org.springframework.stereotype.Service;
@@ -43,10 +52,20 @@ public class DeviceGroupServiceImpl extends ServiceImpl<DeviceGroupMapper, Devic
 
     private final DeviceGroupRelationMapper groupRelationMapper;
     private final DeviceService deviceService;
+    private final DeviceGroupMemberMapper memberMapper;
+    private final UserMapper userMapper;
+    private final DeviceAccessService deviceAccessService;
 
-    public DeviceGroupServiceImpl(DeviceGroupRelationMapper groupRelationMapper, DeviceService deviceService) {
+    public DeviceGroupServiceImpl(DeviceGroupRelationMapper groupRelationMapper,
+                                  DeviceService deviceService,
+                                  DeviceGroupMemberMapper memberMapper,
+                                  UserMapper userMapper,
+                                  DeviceAccessService deviceAccessService) {
         this.groupRelationMapper = groupRelationMapper;
         this.deviceService = deviceService;
+        this.memberMapper = memberMapper;
+        this.userMapper = userMapper;
+        this.deviceAccessService = deviceAccessService;
     }
 
     @Override
@@ -128,8 +147,19 @@ public class DeviceGroupServiceImpl extends ServiceImpl<DeviceGroupMapper, Devic
     }
 
     @Override
-    public List<DeviceGroup> tree(Long userId) {
-        List<DeviceGroup> groups = baseMapper.selectByUser(userId);
+    public List<DeviceGroup> tree(Long userId, boolean includeShared) {
+        Map<Long, DeviceGroup> merged = new LinkedHashMap<>();
+        for (DeviceGroup group : baseMapper.selectByUser(userId)) {
+            group.setShared(false);
+            group.setSharedPermission(null);
+            merged.put(group.getId(), group);
+        }
+        if (includeShared) {
+            for (DeviceGroup group : deviceAccessService.sharedGroups(userId)) {
+                merged.putIfAbsent(group.getId(), group);
+            }
+        }
+        List<DeviceGroup> groups = new ArrayList<>(merged.values());
         if (groups.isEmpty()) {
             return List.of();
         }
@@ -153,8 +183,19 @@ public class DeviceGroupServiceImpl extends ServiceImpl<DeviceGroupMapper, Devic
     }
 
     @Override
-    public List<DeviceGroup> list(Long userId) {
-        return baseMapper.selectByUser(userId);
+    public List<DeviceGroup> list(Long userId, boolean includeShared) {
+        Map<Long, DeviceGroup> merged = new LinkedHashMap<>();
+        for (DeviceGroup group : baseMapper.selectByUser(userId)) {
+            group.setShared(false);
+            group.setSharedPermission(null);
+            merged.put(group.getId(), group);
+        }
+        if (includeShared) {
+            for (DeviceGroup group : deviceAccessService.sharedGroups(userId)) {
+                merged.putIfAbsent(group.getId(), group);
+            }
+        }
+        return new ArrayList<>(merged.values());
     }
 
     @Override
@@ -170,6 +211,98 @@ public class DeviceGroupServiceImpl extends ServiceImpl<DeviceGroupMapper, Devic
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
         return group;
+    }
+
+    @Override
+    public DeviceGroup getAccessible(Long userId, Long id) {
+        DeviceAccessService.GroupAccess access = deviceAccessService.resolveGroup(userId, id);
+        if (access.group() == null) {
+            throw new BusinessException(ResultCode.DEVICE_GROUP_NOT_FOUND);
+        }
+        if (GroupPermission.NONE.equals(access.level())) {
+            throw new BusinessException(ResultCode.DEVICE_GROUP_ACCESS_DENIED);
+        }
+        DeviceGroup group = access.group();
+        boolean owner = GroupPermission.OWNER.equals(access.level());
+        group.setShared(!owner);
+        group.setSharedPermission(owner ? null : access.level());
+        group.setDeviceCount(groupRelationMapper.countByGroupId(group.getId()));
+        return group;
+    }
+
+    @Override
+    public List<DeviceGroupMemberVO> listMembers(Long userId, Long groupId) {
+        getOwned(userId, groupId);
+        List<DeviceGroupMember> members = memberMapper.selectList(
+                new LambdaQueryWrapper<DeviceGroupMember>()
+                        .eq(DeviceGroupMember::getGroupId, groupId)
+                        .orderByAsc(DeviceGroupMember::getId));
+        if (members.isEmpty()) {
+            return List.of();
+        }
+        List<Long> userIds = members.stream().map(DeviceGroupMember::getUserId).toList();
+        Map<Long, User> users = userMapper.selectBatchIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, user -> user, (a, b) -> a));
+        return members.stream().map(member -> toMemberVO(member, users.get(member.getUserId()))).toList();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public DeviceGroupMemberVO addMember(Long userId, Long groupId, DeviceGroupMemberRequest request) {
+        DeviceGroup group = getOwned(userId, groupId);
+        String target = request == null ? null : trimToNull(request.getUsername());
+        if (target == null) {
+            throw memberInvalid("请输入用户名或邮箱");
+        }
+        String permission = normalizePermission(request.getPermission());
+        User targetUser = userMapper.selectOne(new LambdaQueryWrapper<User>()
+                .and(wrapper -> wrapper.eq(User::getUsername, target).or().eq(User::getEmail, target))
+                .eq(User::getDeleted, 0)
+                .last("LIMIT 1"));
+        if (targetUser == null) {
+            throw memberInvalid("目标用户不存在");
+        }
+        if (targetUser.getId().equals(userId) || targetUser.getId().equals(group.getUserId())) {
+            throw memberInvalid("不能共享给分组所有者或自己");
+        }
+        if (!"ACTIVE".equals(targetUser.getStatus())) {
+            throw memberInvalid("目标用户不可用");
+        }
+        DeviceGroupMember existing = memberMapper.selectOne(new LambdaQueryWrapper<DeviceGroupMember>()
+                .eq(DeviceGroupMember::getGroupId, groupId)
+                .eq(DeviceGroupMember::getUserId, targetUser.getId())
+                .last("LIMIT 1"));
+        if (existing != null) {
+            existing.setPermission(permission);
+            memberMapper.updateById(existing);
+            return toMemberVO(existing, targetUser);
+        }
+        DeviceGroupMember member = new DeviceGroupMember();
+        member.setGroupId(groupId);
+        member.setUserId(targetUser.getId());
+        member.setPermission(permission);
+        memberMapper.insert(member);
+        return toMemberVO(member, targetUser);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public DeviceGroupMemberVO updateMember(Long userId, Long groupId, Long memberId,
+                                            DeviceGroupMemberRequest request) {
+        getOwned(userId, groupId);
+        DeviceGroupMember member = getMember(groupId, memberId);
+        member.setPermission(normalizePermission(request == null ? null : request.getPermission()));
+        memberMapper.updateById(member);
+        User user = userMapper.selectById(member.getUserId());
+        return toMemberVO(member, user);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void removeMember(Long userId, Long groupId, Long memberId) {
+        getOwned(userId, groupId);
+        DeviceGroupMember member = getMember(groupId, memberId);
+        memberMapper.deleteById(member.getId());
     }
 
     @Override
@@ -211,13 +344,25 @@ public class DeviceGroupServiceImpl extends ServiceImpl<DeviceGroupMapper, Devic
 
     @Override
     public IPage<Device> pageDevices(Long userId, Long groupId, long page, long size) {
-        getOwned(userId, groupId);
+        DeviceAccessService.GroupAccess access = deviceAccessService.resolveGroup(userId, groupId);
+        if (access.group() == null) {
+            throw new BusinessException(ResultCode.DEVICE_GROUP_NOT_FOUND);
+        }
+        if (GroupPermission.NONE.equals(access.level())) {
+            throw new BusinessException(ResultCode.DEVICE_GROUP_ACCESS_DENIED);
+        }
+        DeviceGroup group = access.group();
         DeviceQueryDTO dto = new DeviceQueryDTO();
-        dto.setOwnerId(userId);
-        dto.setGroupIds(descendantIds(userId, groupId));
+        // 所有者按 ownerId 过滤；共享成员只看该分组子树（分组本身已限定归属）
+        dto.setOwnerId(GroupPermission.OWNER.equals(access.level()) ? group.getUserId() : null);
+        dto.setGroupIds(baseMapper.selectDescendantIds(group.getUserId(), groupId));
         dto.setPageNum((int) page);
         dto.setPageSize((int) size);
-        return deviceService.getDevices(userId, dto);
+        IPage<Device> result = deviceService.getDevicesInGroups(dto);
+        for (Device device : result.getRecords()) {
+            device.setAccessLevel(access.level());
+        }
+        return result;
     }
 
     @Override
@@ -248,6 +393,44 @@ public class DeviceGroupServiceImpl extends ServiceImpl<DeviceGroupMapper, Devic
             return List.of();
         }
         return groupRelationMapper.selectDeviceIdsByGroupIds(groupIds);
+    }
+
+    private DeviceGroupMember getMember(Long groupId, Long memberId) {
+        if (memberId == null) {
+            throw memberNotFound();
+        }
+        DeviceGroupMember member = memberMapper.selectById(memberId);
+        if (member == null || !groupId.equals(member.getGroupId())) {
+            throw memberNotFound();
+        }
+        return member;
+    }
+
+    private DeviceGroupMemberVO toMemberVO(DeviceGroupMember member, User user) {
+        DeviceGroupMemberVO vo = new DeviceGroupMemberVO();
+        vo.setId(member.getId());
+        vo.setUserId(member.getUserId());
+        vo.setUsername(user == null ? null : user.getUsername());
+        vo.setEmail(user == null ? null : user.getEmail());
+        vo.setPermission(member.getPermission());
+        vo.setCreatedAt(member.getCreatedAt());
+        return vo;
+    }
+
+    private static String normalizePermission(String permission) {
+        String value = permission == null ? null : permission.trim().toUpperCase();
+        if (!GroupPermission.SHARED.contains(value)) {
+            throw memberInvalid("权限必须是 VIEW / OPERATE");
+        }
+        return value;
+    }
+
+    private static BusinessException memberInvalid(String message) {
+        return new BusinessException(ResultCode.DEVICE_GROUP_MEMBER_INVALID, message);
+    }
+
+    private static BusinessException memberNotFound() {
+        return new BusinessException(ResultCode.DEVICE_GROUP_MEMBER_NOT_FOUND);
     }
 
     private String requireName(DeviceGroupRequest request) {

@@ -7,11 +7,11 @@ import api from './axios'
  * 「按分组筛选」与「分组内设备分页」均**包含所有后代分组**。
  */
 export const deviceGroupApi = {
-  /** 分组树（含 children 与直接关联设备数 deviceCount） */
-  tree: () => api.get('/device-groups/tree'),
+  /** 分组树（含 children 与直接关联设备数 deviceCount）；includeShared 仅分组管理页使用 */
+  tree: (params) => api.get('/device-groups/tree', { params }),
 
-  /** 分组平铺列表（下拉 / 选择器用） */
-  list: () => api.get('/device-groups'),
+  /** 分组平铺列表（下拉 / 选择器用）；默认不含共享分组 */
+  list: (params) => api.get('/device-groups', { params }),
 
   /** 创建分组 */
   create: (data) => api.post('/device-groups', data),
@@ -33,7 +33,19 @@ export const deviceGroupApi = {
 
   /** 移出分组（单台 / 批量） */
   removeDevices: (id, deviceIds) =>
-    api.delete(`/device-groups/${id}/devices`, { data: { deviceIds } })
+    api.delete(`/device-groups/${id}/devices`, { data: { deviceIds } }),
+
+  /** 分组成员列表（仅所有者） */
+  listMembers: (id) => api.get(`/device-groups/${id}/members`),
+
+  /** 添加成员（用户名 / 邮箱） */
+  addMember: (id, data) => api.post(`/device-groups/${id}/members`, data),
+
+  /** 修改成员权限 */
+  updateMember: (id, memberId, data) => api.put(`/device-groups/${id}/members/${memberId}`, data),
+
+  /** 移除成员 */
+  removeMember: (id, memberId) => api.delete(`/device-groups/${id}/members/${memberId}`)
 }
 
 export default deviceGroupApi

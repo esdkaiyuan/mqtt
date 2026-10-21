@@ -15,8 +15,11 @@
 
 - 用户认证与权限管理（ADMIN/OPERATOR/VIEWER）
 - 设备管理（CRUD、在线状态监控、MQTT Topic管理）
-- 实时消息监控（WebSocket连接、实时消息流）
+- 实时消息监控（SSE 实时流）
 - 历史数据查询（按设备/时间/Topic过滤、分页）
+- 设备调试中心（连接参数、模拟上行、设备端 / 上位机端属性代码）
+- 快速上位机（按物模型一键生成 Web 组态，实时看值与控值）
+- 平台侧 Modbus TCP 主站采集（按点表周期轮询，默认关闭）
 - 极简黑白灰色系UI设计
 
 ## 快速开始
@@ -94,6 +97,8 @@ MQTT自建站点/
 - [后端架构](docs/T-02_后端项目基础架构搭建_开发文档.md)
 - [部署文档](docs/DEPLOYMENT.md)
 - [设备接入（ESP32）](docs/ESP32_接入手册.md)
+- [D1 · MQTT 主题与 ACL 规范](docs/D1_MQTT主题与ACL规范.md)
+- [D2 · 设备接入协议规范](docs/D2_设备接入协议规范.md)
 - [API文档](http://localhost:8080/api/swagger-ui.html)（本地部署后访问）
 
 ## 开发

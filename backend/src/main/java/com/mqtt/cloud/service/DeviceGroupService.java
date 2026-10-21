@@ -1,7 +1,9 @@
 package com.mqtt.cloud.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.mqtt.cloud.dto.request.DeviceGroupMemberRequest;
 import com.mqtt.cloud.dto.request.DeviceGroupRequest;
+import com.mqtt.cloud.dto.response.DeviceGroupMemberVO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceGroup;
 
@@ -28,13 +30,38 @@ public interface DeviceGroupService {
     void delete(Long userId, Long id);
 
     /** 本人分组树（含 {@code children} 与直接关联设备数 {@code deviceCount}）。 */
-    List<DeviceGroup> tree(Long userId);
+    default List<DeviceGroup> tree(Long userId) {
+        return tree(userId, false);
+    }
+
+    /** 分组树；{@code includeShared=true} 时合并被共享的分组子树（仅分组管理页使用）。 */
+    List<DeviceGroup> tree(Long userId, boolean includeShared);
 
     /** 本人分组平铺列表（下拉 / 选择器用）。 */
-    List<DeviceGroup> list(Long userId);
+    default List<DeviceGroup> list(Long userId) {
+        return list(userId, false);
+    }
+
+    /** 分组平铺列表；{@code includeShared=true} 时包含被共享分组。 */
+    List<DeviceGroup> list(Long userId, boolean includeShared);
 
     /** 取本人分组，不存在 {@code 6212}，越权 {@code 403}。 */
     DeviceGroup getOwned(Long userId, Long id);
+
+    /** 取可访问分组（所有者或共享成员）；无权 {@code 6310}，不存在 {@code 6212}。 */
+    DeviceGroup getAccessible(Long userId, Long id);
+
+    /** 分组成员列表（仅所有者）。 */
+    List<DeviceGroupMemberVO> listMembers(Long userId, Long groupId);
+
+    /** 添加成员（仅所有者；用户名 / 邮箱查找；重复添加幂等更新权限）。 */
+    DeviceGroupMemberVO addMember(Long userId, Long groupId, DeviceGroupMemberRequest request);
+
+    /** 修改成员权限（仅所有者）。 */
+    DeviceGroupMemberVO updateMember(Long userId, Long groupId, Long memberId, DeviceGroupMemberRequest request);
+
+    /** 移除成员（仅所有者）。 */
+    void removeMember(Long userId, Long groupId, Long memberId);
 
     /** 某分组及其所有后代分组 ID（含自身），供筛选与批量共用。 */
     List<Long> descendantIds(Long userId, Long id);

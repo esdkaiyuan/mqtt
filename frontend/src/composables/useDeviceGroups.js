@@ -22,11 +22,13 @@ function invalidateTagCaches(queryClient) {
 /**
  * 分组树查询（含 children / deviceCount）。
  * 供分组管理页的 el-tree 与设备列表的分组筛选选择器共用同一份缓存。
+ * includeShared 仅分组管理页开启；场景 / 规则 / OTA 等目标选择器只展示本人分组。
  */
-export function useDeviceGroupTreeQuery() {
+export function useDeviceGroupTreeQuery(includeShared = false) {
   const treeQuery = useQuery({
-    queryKey: GROUP_TREE_KEY,
-    queryFn: async () => unwrapResult(await deviceGroupApi.tree(), [])
+    queryKey: [...GROUP_TREE_KEY, includeShared],
+    queryFn: async () =>
+      unwrapResult(await deviceGroupApi.tree(includeShared ? { includeShared: true } : undefined), [])
   })
 
   return {
@@ -37,10 +39,11 @@ export function useDeviceGroupTreeQuery() {
 }
 
 /** 分组平铺列表查询（下拉 / 父分组选择器用）。 */
-export function useDeviceGroupListQuery() {
+export function useDeviceGroupListQuery(includeShared = false) {
   const listQuery = useQuery({
-    queryKey: GROUP_LIST_KEY,
-    queryFn: async () => unwrapResult(await deviceGroupApi.list(), [])
+    queryKey: [...GROUP_LIST_KEY, includeShared],
+    queryFn: async () =>
+      unwrapResult(await deviceGroupApi.list(includeShared ? { includeShared: true } : undefined), [])
   })
 
   return {

@@ -4,9 +4,11 @@ import org.junit.jupiter.api.Test;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -65,7 +67,10 @@ class DeviceMapperColumnsTest {
     private List<String> selectColumnsOf(String statementId) throws Exception {
         try (InputStream in = getClass().getResourceAsStream("/com/mqtt/cloud/mapper/DeviceMapper.xml")) {
             assertThat(in).as("未找到 DeviceMapper.xml").isNotNull();
-            Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(in);
+            var builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+            // 离线构建：MyBatis DTD 仅用于校验，不能让单测依赖 mybatis.org 网络可达
+            builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader("")));
+            Document doc = builder.parse(in);
             NodeList selects = doc.getElementsByTagName("select");
             for (int i = 0; i < selects.getLength(); i++) {
                 Element el = (Element) selects.item(i);

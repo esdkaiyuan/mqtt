@@ -55,6 +55,8 @@ public class SceneExecutionFinalizer {
             if (skipped > 0) {
                 executionMapper.bumpFinishedSteps(run.getExecutionId(), skipped);
             }
+            // 分支 / 循环可能留下未执行的 PENDING 步骤，终态按实际明细重算一次进度
+            executionMapper.recountFinishedSteps(run.getExecutionId());
             executionMapper.markFailed(run.getExecutionId(),
                     "第 " + run.getSeq() + " 步失败：" + reason, now);
             log.warn("场景步骤重试耗尽，中止执行: executionId={}, seq={}, 原因={}",

@@ -52,8 +52,23 @@ public final class AlertConstants {
     /** 事件类型过滤取值（对应物模型事件 {@code eventType}）。 */
     public static final Set<String> EVENT_TYPES = Set.of("info", "alert", "fault");
 
-    /** 离线领域字段的取值上限（秒）：离线时长与抑制窗口共用。 */
+    /** 离线领域字段的取值上限（秒）：离线时长、抑制窗口与统计窗口共用。 */
     public static final int MAX_SECONDS = 86400;
+
+    // ---------- 阈值窗口聚合（T-52） ----------
+
+    public static final String AGGREGATE_AVG = "AVG";
+    public static final String AGGREGATE_MIN = "MIN";
+    public static final String AGGREGATE_MAX = "MAX";
+    public static final String AGGREGATE_SUM = "SUM";
+    public static final String AGGREGATE_COUNT = "COUNT";
+
+    /** 全部窗口聚合方式。 */
+    public static final Set<String> AGGREGATES =
+            Set.of(AGGREGATE_AVG, AGGREGATE_MIN, AGGREGATE_MAX, AGGREGATE_SUM, AGGREGATE_COUNT);
+
+    /** 单条规则窗口内最少样本数上限。 */
+    public static final int MAX_MIN_SAMPLES = 1000;
 
     /** Webhook 事件类型：告警触发。 */
     public static final String EVENT_ALERT_TRIGGERED = "alert.triggered";

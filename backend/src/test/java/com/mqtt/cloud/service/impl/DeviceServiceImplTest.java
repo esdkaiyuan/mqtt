@@ -9,6 +9,7 @@ import com.mqtt.cloud.dto.request.CreateSubDeviceDTO;
 import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.Product;
+import com.mqtt.cloud.event.DeviceStatusChangedEvent;
 import com.mqtt.cloud.mapper.DeviceMapper;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceCredentialService;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
@@ -60,6 +62,8 @@ class DeviceServiceImplTest {
     private EmqxClientKicker emqxClientKicker;
     @Mock
     private DeviceTopologyService deviceTopologyService;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     private DeviceServiceImpl service;
 
@@ -69,7 +73,7 @@ class DeviceServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), Device.class);
         service = new DeviceServiceImpl(deviceStatusHistoryService, deviceCredentialService,
                 deviceSecretService, productService, authCacheService, emqxClientKicker,
-                deviceTopologyService);
+                deviceTopologyService, eventPublisher);
         ReflectionTestUtils.setField(service, "baseMapper", deviceMapper);
     }
 
@@ -155,6 +159,7 @@ class DeviceServiceImplTest {
         service.updateDeviceStatus(1L, DeviceStatusValue.OFFLINE, LocalDateTime.now());
 
         verify(deviceStatusHistoryService, never()).recordStatusChange(any(), anyString());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
@@ -162,10 +167,17 @@ class DeviceServiceImplTest {
         Device device = device(DeviceStatusValue.OFFLINE);
         when(deviceMapper.selectById(1L)).thenReturn(device);
         when(deviceMapper.updateStatusGuarded(eq(1L), anyString(), any())).thenReturn(1);
+        LocalDateTime eventTime = LocalDateTime.of(2026, 10, 21, 9, 30);
 
-        service.updateDeviceStatus(1L, DeviceStatusValue.ONLINE, LocalDateTime.now());
+        service.updateDeviceStatus(1L, DeviceStatusValue.ONLINE, eventTime);
 
         verify(deviceStatusHistoryService).recordStatusChange(1L, DeviceStatusValue.ONLINE);
+        ArgumentCaptor<DeviceStatusChangedEvent> captor =
+                ArgumentCaptor.forClass(DeviceStatusChangedEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().deviceId()).isEqualTo(1L);
+        assertThat(captor.getValue().status()).isEqualTo(DeviceStatusValue.ONLINE);
+        assertThat(captor.getValue().occurredAt()).isEqualTo(eventTime);
     }
 
     @Test
@@ -177,6 +189,7 @@ class DeviceServiceImplTest {
         service.updateDeviceStatus(1L, DeviceStatusValue.ONLINE, LocalDateTime.now());
 
         verify(deviceStatusHistoryService, never()).recordStatusChange(any(), anyString());
+        verify(eventPublisher, never()).publishEvent(any());
     }
 
     @Test
@@ -185,7 +198,7 @@ class DeviceServiceImplTest {
 
         service.updateDeviceStatus(404L, DeviceStatusValue.ONLINE, LocalDateTime.now());
 
-        verifyNoInteractions(deviceStatusHistoryService);
+        verifyNoInteractions(deviceStatusHistoryService, eventPublisher);
     }
 
     @Test

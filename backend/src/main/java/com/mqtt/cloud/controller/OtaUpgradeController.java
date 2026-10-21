@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.security.SecurityUtils;
 import com.mqtt.cloud.dto.request.OtaTaskCreateRequest;
+import com.mqtt.cloud.dto.response.OtaBatchVO;
 import com.mqtt.cloud.dto.response.OtaRecordVO;
 import com.mqtt.cloud.dto.response.OtaTaskDetailVO;
 import com.mqtt.cloud.dto.response.OtaTaskVO;
@@ -21,11 +22,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
- * OTA 升级任务控制器（T-22 设计文档 §6.2）。
+ * OTA 升级任务控制器（T-22 设计文档 §6.2，T-32 增灰度控制端点）。
  * <p>
- * 提供升级任务的创建、列表、详情、逐台记录分页、重投与删除；操作者身份一律由登录态注入，
- * 请求体不得传 {@code userId}。任务创建时解析目标集合、剔除与固件产品不一致的设备并即时下发。
+ * 提供升级任务的创建、列表、详情、逐台记录分页、批次查询、重投、暂停 / 恢复 / 终止 / 手动推进与删除；
+ * 操作者身份一律由登录态注入，请求体不得传 {@code userId}。任务创建时解析目标集合、剔除产品不匹配设备、
+ * 按互斥策略剔除正在升级的设备、按灰度策略切批并**仅下发首批**。
  * <p>
  * 授权：{@code /ota/**} 由 {@code SecurityConfig} 统一限定 {@code ADMIN} / {@code OPERATOR}。
  */
@@ -73,15 +77,55 @@ public class OtaUpgradeController {
         return Result.success(otaUpgradeService.listRecords(SecurityUtils.requireUserId(), id, status, page, size));
     }
 
+    @Operation(summary = "任务批次列表", description = "按批号升序返回灰度批次（设备数 / 下发数 / 成功失败 / 跳过与起止时间）；"
+            + "一次性全量（ALL）与存量任务返回空列表。任务不存在或不属于当前用户返回 6236")
+    @GetMapping("/{id}/batches")
+    public Result<List<OtaBatchVO>> batches(
+            @Parameter(description = "任务 ID", required = true) @PathVariable Long id) {
+        return Result.success(otaUpgradeService.listBatches(SecurityUtils.requireUserId(), id));
+    }
+
     @Operation(summary = "重投未成功设备", description = "将 PENDING/FAILED/TIMEOUT 记录重置为 PENDING 并重新下发，返回重置并按批尝试下发的记录数。"
-            + "任务不存在返回 6236；任务已成功（SUCCESS）返回 6238")
+            + "任务不存在返回 6236；任务已成功（SUCCESS）或已终止（ABORTED）返回 6238")
     @PostMapping("/{id}/retry")
     public Result<Integer> retry(
             @Parameter(description = "任务 ID", required = true) @PathVariable Long id) {
         return Result.success(otaUpgradeService.retry(SecurityUtils.requireUserId(), id));
     }
 
-    @Operation(summary = "删除升级任务", description = "删除任务并级联清理逐台记录；任务处于 RUNNING 返回 6238，不存在返回 6236")
+    @Operation(summary = "暂停灰度下发", description = "任务置 PAUSED，不再开新批；在途批次与已下发设备继续跑到终态。"
+            + "任务不存在返回 6236；非 RUNNING 状态返回 6238")
+    @PostMapping("/{id}/pause")
+    public Result<OtaTaskDetailVO> pause(
+            @Parameter(description = "任务 ID", required = true) @PathVariable Long id) {
+        return Result.success(otaUpgradeService.pause(SecurityUtils.requireUserId(), id));
+    }
+
+    @Operation(summary = "恢复灰度下发", description = "把 PAUSED 任务放回 RUNNING，之后可自动推进（batch-interval-ms > 0）或手动推进。"
+            + "任务不存在返回 6236；非 PAUSED 状态返回 6238")
+    @PostMapping("/{id}/resume")
+    public Result<OtaTaskDetailVO> resume(
+            @Parameter(description = "任务 ID", required = true) @PathVariable Long id) {
+        return Result.success(otaUpgradeService.resume(SecurityUtils.requireUserId(), id));
+    }
+
+    @Operation(summary = "终止灰度下发", description = "任务置 ABORTED，未下发记录批量置 SKIPPED（不计入失败），未下发批次置 SKIPPED，"
+            + "返回被跳过的记录数。任务不存在返回 6236；非 RUNNING/PAUSED 状态返回 6238")
+    @PostMapping("/{id}/abort")
+    public Result<Integer> abort(
+            @Parameter(description = "任务 ID", required = true) @PathVariable Long id) {
+        return Result.success(otaUpgradeService.abort(SecurityUtils.requireUserId(), id));
+    }
+
+    @Operation(summary = "手动推进下一批", description = "立即下发下一批次，不受 batch-interval-ms 约束；"
+            + "返回本批实际下发数。任务不存在返回 6236；非 RUNNING、ALL 策略或无待下发批次时返回 6238 或 0")
+    @PostMapping("/{id}/advance")
+    public Result<Integer> advance(
+            @Parameter(description = "任务 ID", required = true) @PathVariable Long id) {
+        return Result.success(otaUpgradeService.advance(SecurityUtils.requireUserId(), id));
+    }
+
+    @Operation(summary = "删除升级任务", description = "删除任务并级联清理逐台记录与批次；任务处于 RUNNING 或 PAUSED 返回 6238，不存在返回 6236")
     @DeleteMapping("/{id}")
     public Result<Void> remove(
             @Parameter(description = "任务 ID", required = true) @PathVariable Long id) {

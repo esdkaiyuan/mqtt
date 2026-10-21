@@ -38,11 +38,11 @@ public class SceneStep {
     @TableField("delay_seconds")
     private Integer delaySeconds;
 
-    /** 动作：UPDATE_PROPERTY/SEND_COMMAND/FORWARD_MQTT/FORWARD_HTTP */
+    /** 步骤类型：UPDATE_PROPERTY/SEND_COMMAND/FORWARD_MQTT/FORWARD_HTTP/BRANCH/LOOP/PARALLEL/JOIN */
     @TableField("action_type")
     private String actionType;
 
-    /** 目标：TRIGGER=触发设备 / FIXED=固定目标集合 */
+    /** 目标：TRIGGER=触发设备 / FIXED=固定目标集合 / NONE=分支或循环步骤 */
     @TableField("target_type")
     private String targetType;
 
@@ -55,6 +55,14 @@ public class SceneStep {
     @TableField("action_config")
     @JsonIgnore
     private String actionConfig;
+
+    /** 所属并行块起始步骤序号（PARALLEL 步骤 seq；非并行块为 NULL，T-49） */
+    @TableField("parallel_seq")
+    private Integer parallelSeq;
+
+    /** 并行分支序号（0 起；非并行块为 NULL，T-49） */
+    @TableField("branch_index")
+    private Integer branchIndex;
 
     /** 是否启用：1/0 */
     @TableField("enabled")

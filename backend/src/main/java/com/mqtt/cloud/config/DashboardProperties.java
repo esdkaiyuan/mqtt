@@ -20,4 +20,16 @@ public class DashboardProperties {
 
     /** 单看板面板数量上限；超出报 6229 */
     private int maxPanels = 12;
+
+    /** 单用户看板分享数量上限；超出报 6307 */
+    private int maxShares = 20;
+
+    /** 单个分享可包含的看板数量上限 */
+    private int maxShareDashboards = 10;
+
+    /** 轮播间隔下限（秒） */
+    private int shareIntervalMinSeconds = 5;
+
+    /** 轮播间隔上限（秒） */
+    private int shareIntervalMaxSeconds = 3600;
 }

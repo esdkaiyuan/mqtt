@@ -4,9 +4,9 @@
 <mapper namespace="com.mqtt.cloud.mapper.SceneStepRunMapper">
 
     <sql id="stepRunColumns">
-        id, execution_id, scene_id, step_id, seq, action_type, delay_seconds, scheduled_at,
-        status, attempt_count, next_attempt_at, error_message, forward_payload,
-        started_at, finished_at, created_at, updated_at
+        id, execution_id, scene_id, step_id, seq, parallel_seq, branch_index, action_type,
+        delay_seconds, scheduled_at, status, attempt_count, next_attempt_at, error_message,
+        forward_payload, loop_iteration, flow_result, started_at, finished_at, created_at, updated_at
     </sql>
 
     <!-- 某次执行的步骤明细（按 seq 升序） -->
@@ -123,11 +123,31 @@
             error_message = NULL,
             started_at = NULL,
             finished_at = NULL,
+            loop_iteration = 0,
+            flow_result = NULL,
             scheduled_at = CASE WHEN seq = #{firstSeq} THEN #{nextAttemptAt,jdbcType=TIMESTAMP} ELSE NULL END,
             next_attempt_at = CASE WHEN seq = #{firstSeq} THEN #{nextAttemptAt,jdbcType=TIMESTAMP} ELSE NULL END,
             updated_at = NOW(3)
         WHERE execution_id = #{executionId}
           AND status IN ('FAILED', 'SKIPPED')
+    </update>
+
+    <!-- 手动重试：整体重置 fromSeq 起的并行块（并行开始 / 汇合 / 分支步骤） -->
+    <update id="resetParallelFrom">
+        UPDATE scene_step_run
+        SET status = 'PENDING',
+            attempt_count = 0,
+            error_message = NULL,
+            started_at = NULL,
+            finished_at = NULL,
+            loop_iteration = 0,
+            flow_result = NULL,
+            scheduled_at = NULL,
+            next_attempt_at = NULL,
+            updated_at = NOW(3)
+        WHERE execution_id = #{executionId}
+          AND seq &gt;= #{fromSeq}
+          AND (action_type IN ('PARALLEL', 'JOIN') OR parallel_seq IS NOT NULL)
     </update>
 
     <!-- 回填转发载荷快照（渲染成功后调用，无论发送成功与否） -->
@@ -136,6 +156,45 @@
         SET forward_payload = #{forwardPayload},
             updated_at = NOW(3)
         WHERE id = #{id}
+    </update>
+
+    <!-- 回填分支 / 循环流程结果快照 -->
+    <update id="updateFlowResult">
+        UPDATE scene_step_run
+        SET flow_result = #{flowResult},
+            updated_at = NOW(3)
+        WHERE id = #{id}
+    </update>
+
+    <!-- 循环继续：当前循环步骤复位为 PENDING 并记录轮次（仅 RUNNING 生效） -->
+    <update id="resetLoopStep">
+        UPDATE scene_step_run
+        SET status = 'PENDING',
+            loop_iteration = #{loopIteration},
+            flow_result = #{flowResult},
+            scheduled_at = NULL,
+            next_attempt_at = NULL,
+            updated_at = NOW(3)
+        WHERE id = #{id}
+          AND status = 'RUNNING'
+    </update>
+
+    <!-- 重置循环体：已执行 / 已跳过步骤复位；未执行的 PENDING 步骤保持不变 -->
+    <update id="resetLoopBody">
+        UPDATE scene_step_run
+        SET status = 'PENDING',
+            attempt_count = 0,
+            error_message = NULL,
+            started_at = NULL,
+            finished_at = NULL,
+            loop_iteration = 0,
+            flow_result = NULL,
+            scheduled_at = NULL,
+            next_attempt_at = NULL,
+            updated_at = NOW(3)
+        WHERE execution_id = #{executionId}
+          AND seq BETWEEN #{startSeq} AND #{endSeq}
+          AND status IN ('SUCCESS', 'SKIPPED', 'FAILED')
     </update>
 
 </mapper>

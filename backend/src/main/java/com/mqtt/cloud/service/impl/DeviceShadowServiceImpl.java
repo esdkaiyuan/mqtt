@@ -1,15 +1,18 @@
 package com.mqtt.cloud.service.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.mqtt.cloud.common.constant.ShadowChangeSide;
 import com.mqtt.cloud.config.ShadowProperties;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.DeviceShadow;
+import com.mqtt.cloud.event.DeviceShadowChangedEvent;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.mapper.DeviceShadowMapper;
 import com.mqtt.cloud.service.DeviceShadowService;
 import com.mqtt.cloud.service.ThingModelService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -20,6 +23,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
@@ -39,6 +43,7 @@ public class DeviceShadowServiceImpl implements DeviceShadowService {
     private final ThingModelService thingModelService;
     private final ShadowProperties properties;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     public DeviceShadowResponse get(Long deviceId, Long productId) {
@@ -64,16 +69,21 @@ public class DeviceShadowServiceImpl implements DeviceShadowService {
         if (authoritative.isEmpty()) {
             return;
         }
-        merge(deviceId, state -> state.reported.putAll(authoritative));
+        merge(deviceId, ShadowChangeSide.REPORTED, "INGEST", state -> state.reported.putAll(authoritative));
     }
 
     @Override
     public void applyDesired(Long deviceId, Map<String, String> desired) {
+        applyDesired(deviceId, desired, null);
+    }
+
+    @Override
+    public void applyDesired(Long deviceId, Map<String, String> desired, String source) {
         if (deviceId == null || desired == null || desired.isEmpty()) {
             return;
         }
         Map<String, String> normalized = new LinkedHashMap<>(desired);
-        merge(deviceId, state -> state.desired.putAll(normalized));
+        merge(deviceId, ShadowChangeSide.DESIRED, source, state -> state.desired.putAll(normalized));
     }
 
     // ---------- 读-改-写 + CAS ----------
@@ -82,7 +92,7 @@ public class DeviceShadowServiceImpl implements DeviceShadowService {
      * 读-改-写 + 版本 CAS。CAS 冲突（受影响行数为 0）时重读重算，最多重试 {@code cas-retry} 次；
      * 耗尽后记 WARN 放弃（下一次上报 / 写入自然覆盖）。
      */
-    private void merge(Long deviceId, Consumer<State> mutator) {
+    private void merge(Long deviceId, String side, String source, Consumer<State> mutator) {
         int maxAttempts = Math.max(1, properties.getCasRetry());
         for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             DeviceShadow current = loadOrCreate(deviceId);
@@ -91,15 +101,48 @@ public class DeviceShadowServiceImpl implements DeviceShadowService {
                 return;
             }
             State state = new State(readMap(current.getDesired()), readMap(current.getReported()));
+            Map<String, String> before = new LinkedHashMap<>(sideMap(state, side));
             mutator.accept(state);
+            Map<String, String> changes = diff(before, sideMap(state, side));
             Map<String, String> delta = computeDelta(state.desired, state.reported);
+            LocalDateTime now = LocalDateTime.now();
             int updated = shadowMapper.casUpdate(deviceId, writeJson(state.desired),
-                    writeJson(state.reported), writeJson(delta), versionOf(current), LocalDateTime.now());
+                    writeJson(state.reported), writeJson(delta), versionOf(current), now);
             if (updated > 0) {
+                publishChanged(deviceId, side, source, changes, versionOf(current) + 1, now);
                 return;
             }
         }
         log.warn("影子合并 CAS 冲突重试耗尽，放弃本次合并: deviceId={}", deviceId);
+    }
+
+    private static Map<String, String> sideMap(State state, String side) {
+        return ShadowChangeSide.REPORTED.equals(side) ? state.reported : state.desired;
+    }
+
+    /** 只收集值发生变化的键（新增或值不同）；空映射表示无需发布事件。 */
+    private static Map<String, String> diff(Map<String, String> before, Map<String, String> after) {
+        Map<String, String> changes = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : after.entrySet()) {
+            if (!Objects.equals(before.get(entry.getKey()), entry.getValue())) {
+                changes.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return changes;
+    }
+
+    private void publishChanged(Long deviceId, String side, String source,
+                                Map<String, String> changes, long version, LocalDateTime occurredAt) {
+        if (changes.isEmpty()) {
+            return;
+        }
+        try {
+            eventPublisher.publishEvent(new DeviceShadowChangedEvent(deviceId, side,
+                    new LinkedHashMap<>(changes), version, source, occurredAt));
+        } catch (Exception e) {
+            // 影子合并是主链路，事件发布失败只记 WARN，不影响写入结果
+            log.warn("影子变更事件发布失败: deviceId={}, side={}", deviceId, side, e);
+        }
     }
 
     /** 懒创建（幂等）后读取影子行；返回 {@code null} 表示行仍不可用。 */

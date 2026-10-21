@@ -57,6 +57,18 @@ public class AlertRule {
     @TableField("threshold_value")
     private String thresholdValue;
 
+    /** 窗口聚合方式：AVG/MIN/MAX/SUM/COUNT；窗口 0 时为 NULL（T-52） */
+    @TableField("aggregate_type")
+    private String aggregateType;
+
+    /** 统计窗口（秒），0=实时最新值（T-52） */
+    @TableField("window_seconds")
+    private Integer windowSeconds;
+
+    /** 窗口内最少样本数（T-52） */
+    @TableField("min_samples")
+    private Integer minSamples;
+
     /** 事件类型过滤：info/alert/fault（EVENT 可选） */
     @TableField("event_type")
     private String eventType;

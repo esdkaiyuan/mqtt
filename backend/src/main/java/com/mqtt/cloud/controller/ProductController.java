@@ -3,6 +3,7 @@ package com.mqtt.cloud.controller;
 import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.dto.request.ProductRequest;
 import com.mqtt.cloud.dto.request.ThingModelRequest;
+import com.mqtt.cloud.dto.response.ProductDriverConfigVO;
 import com.mqtt.cloud.dto.response.ThingModelResponse;
 import com.mqtt.cloud.dto.response.ThingModelValidationResponse;
 import com.mqtt.cloud.entity.Product;
@@ -51,6 +52,16 @@ public class ProductController {
     @PreAuthorize("hasRole('ADMIN')")
     public Result<Product> update(@PathVariable Long id, @Valid @RequestBody ProductRequest request) {
         return Result.success(productService.update(id, request));
+    }
+
+    @Operation(summary = "查询产品驱动配置", description = "返回接入协议、驱动标识与驱动配置 JSON；"
+            + "driver_config 含现场内网地址，故仅 ADMIN 可读")
+    @GetMapping("/{id}/driver-config")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Result<ProductDriverConfigVO> getDriverConfig(@PathVariable Long id) {
+        var product = productService.requireById(id);
+        return Result.success(new ProductDriverConfigVO(product.getProtocolType(),
+                product.getDriverId(), product.getDriverConfig()));
     }
 
     @Operation(summary = "停用产品", description = "旗下所有设备将无法通过认证，缓存立即失效；重复停用幂等成功")

@@ -87,6 +87,12 @@ export function useDeviceLog(deviceId) {
     searchSeq.value += 1
   }
 
+  /** 实时事件触发的刷新：保持已提交条件不变，回到第 1 页重新拉取。 */
+  function refresh() {
+    pageNum.value = 1
+    searchSeq.value += 1
+  }
+
   function goToPage(page) {
     if (page < 1 || page > totalPages.value) return
     pageNum.value = page
@@ -102,6 +108,7 @@ export function useDeviceLog(deviceId) {
     pageSize,
     submit,
     reset,
+    refresh,
     goToPage
   }
 }
