@@ -113,7 +113,7 @@ app:
     # Redis 不可用时是否放行（true=可用性优先）
     fail-open: ${RATE_LIMIT_FAIL_OPEN:true}
   jwt:
-    secret: ${JWT_SECRET:TXlNU1RDbG91ZENsb3VkU2VjcmV0S2V5MjAyNVlvdXJTZWNyZXRrZXlGb3JIT1BERVI=}
+    secret: ${JWT_SECRET:}
     expiration: ${JWT_EXPIRATION:604800000}
     refresh-expiration: ${JWT_REFRESH:2592000000}
   device:

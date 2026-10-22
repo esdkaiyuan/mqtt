@@ -1,6 +1,6 @@
 <template>
   <footer class="site-footer">
-    <div class="site-container">
+    <div class="site-container" :class="{ 'site-container--wide': wide }">
       <div class="site-footer__grid">
         <div class="site-footer__col">
           <BrandLogo :size="24" :text-size="18" class="site-footer__brand" />
@@ -40,6 +40,13 @@
 
 <script setup>
 import BrandLogo from '@/components/common/BrandLogo.vue'
+
+defineProps({
+  wide: {
+    type: Boolean,
+    default: false
+  }
+})
 </script>
 
 <style scoped>

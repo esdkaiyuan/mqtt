@@ -3,10 +3,13 @@ package com.mqtt.cloud.controller;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -31,6 +34,7 @@ import java.util.Map;
  * Docker healthcheck 挂 liveness（避免数据库抖动引发重启风暴），负载均衡与监控用 readiness。
  */
 @Tag(name = "健康检查", description = "存活/就绪探针与排障明细")
+@SecurityRequirements
 @RestController
 @RequestMapping("/health")
 @RequiredArgsConstructor
@@ -65,9 +69,10 @@ public class HealthController {
 
     @Operation(summary = "就绪探针",
             description = "依赖与积压联合判定：数据库/Redis 任一不可用，或摄取队列深度、"
-                    + "死信积压超阈值时返回 DOWN 并附 degraded 原因。供负载均衡与外部监控使用")
+                    + "死信积压超阈值时返回 HTTP 503、status=DOWN 并附 degraded 原因。"
+                    + "供负载均衡与外部监控使用")
     @GetMapping("/ready")
-    public Map<String, Object> ready() {
+    public ResponseEntity<Map<String, Object>> ready() {
         Map<String, Object> result = new HashMap<>();
         result.put("timestamp", System.currentTimeMillis());
         Map<String, String> degraded = new HashMap<>();
@@ -97,9 +102,11 @@ public class HealthController {
             degraded.put("deadLetter", "UNKNOWN");
         }
 
-        result.put("status", degraded.isEmpty() ? "UP" : "DOWN");
+        boolean ready = degraded.isEmpty();
+        result.put("status", ready ? "UP" : "DOWN");
         result.put("degraded", degraded);
-        return result;
+        return ResponseEntity.status(ready ? HttpStatus.OK : HttpStatus.SERVICE_UNAVAILABLE)
+                .body(result);
     }
 
     @Operation(summary = "排障明细",

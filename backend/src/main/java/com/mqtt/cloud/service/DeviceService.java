@@ -67,6 +67,9 @@ public interface DeviceService extends IService<Device> {
     /** 某用户名下的全部设备（不做分页，供统计与开放 API 使用）。 */
     List<Device> getDevicesByOwner(Long ownerId);
 
+    /** 某用户名下最多返回 limit 台设备，供影子摘要等有上限的聚合接口使用。 */
+    List<Device> getDevicesByOwner(Long ownerId, int limit);
+
     /** 巡检用：最近心跳早于 {@code timeoutMinutes} 分钟的在线设备。 */
     List<Device> findTimeoutDevices(int timeoutMinutes);
 

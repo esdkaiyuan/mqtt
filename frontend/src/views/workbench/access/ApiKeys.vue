@@ -62,7 +62,10 @@
             v-model="form.permissions"
             :placeholder="PERMISSIONS_PLACEHOLDER"
           />
-          <p class="form-hint">留空表示拥有全部权限，多个权限使用 JSON 数组格式。</p>
+          <p class="form-hint">
+            留空表示全部权限；支持 device:read / device:write / stats:read。
+            旧版 data:read / data:write 兼容设备读写，统计仍需 stats:read；使用 JSON 数组格式。
+          </p>
         </el-form-item>
         <el-form-item label="过期时间">
           <el-date-picker
@@ -94,7 +97,7 @@ const apiKeys = ref([])
 const showCreate = ref(false)
 const createLoading = ref(false)
 
-const PERMISSIONS_PLACEHOLDER = '["device:read","device:write","data:read"]'
+const PERMISSIONS_PLACEHOLDER = '["device:read","device:write","stats:read"]'
 
 const form = ref({
   name: '',

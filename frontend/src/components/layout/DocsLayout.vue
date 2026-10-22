@@ -1,6 +1,6 @@
 <template>
   <div class="docs-layout">
-    <SiteNav :toc-toggle="navAsDrawer" @toggle-toc="navDrawerOpen = true" />
+    <SiteNav wide :toc-toggle="navAsDrawer" @toggle-toc="navDrawerOpen = true" />
 
     <div class="docs-layout__body">
       <aside class="docs-layout__side">
@@ -47,7 +47,7 @@
       </div>
     </el-drawer>
 
-    <SiteFooter />
+    <SiteFooter wide />
   </div>
 </template>
 
@@ -97,10 +97,10 @@ watch(
 .docs-layout__body {
   flex: 1;
   display: grid;
-  grid-template-columns: var(--nav-width) minmax(0, 1fr) 200px;
+  grid-template-columns: var(--nav-width) minmax(0, 1fr) 220px;
   gap: var(--spacing-3xl);
   width: 100%;
-  max-width: var(--site-max-width);
+  max-width: var(--docs-max-width);
   margin: 0 auto;
   padding: 0 var(--content-padding);
 }
@@ -119,9 +119,9 @@ watch(
   padding: var(--spacing-3xl) 0;
 }
 
-/* 左右内边距由三栏容器提供，此处只保留阅读栏上限，避免双重内边距 */
+/* 左右内边距由三栏容器提供；正文随主栏放大，仅保留超宽屏阅读上限 */
 .docs-layout__content {
-  max-width: 960px;
+  max-width: 1200px;
   margin: 0 auto;
 }
 

@@ -29,6 +29,7 @@ import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -73,10 +74,11 @@ class DeviceShadowSummaryControllerTest {
     void no_ids_should_return_owned_devices_shadow() {
         authenticate(USER_ID, "USER");
         Device device = device(1L, USER_ID, "dev-1");
-        when(deviceService.getDevicesByOwner(USER_ID)).thenReturn(List.of(device));
-        when(deviceShadowService.get(1L, 20L)).thenReturn(new DeviceShadowService.DeviceShadowResponse(
-                true, 3L, Map.of("power", "true"), Map.of("power", "false"),
-                Map.of("power", "true"), LocalDateTime.of(2026, 10, 21, 12, 0)));
+        when(deviceService.getDevicesByOwner(USER_ID, 200)).thenReturn(List.of(device));
+        when(deviceShadowService.getBatch(any())).thenReturn(Map.of(1L,
+                new DeviceShadowService.DeviceShadowResponse(
+                        true, 3L, Map.of("power", "true"), Map.of("power", "false"),
+                        Map.of("power", "true"), LocalDateTime.of(2026, 10, 21, 12, 0))));
 
         List<DeviceShadowSummaryVO> result = controller.getShadowSummary(null).getData();
 
@@ -95,7 +97,7 @@ class DeviceShadowSummaryControllerTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting(e -> ((BusinessException) e).getCode())
                 .isEqualTo(ResultCode.DEVICE_NOT_OWNED.getCode());
-        verify(deviceShadowService, never()).get(1L, 20L);
+        verify(deviceShadowService, never()).getBatch(any());
     }
 
     @Test
@@ -103,8 +105,9 @@ class DeviceShadowSummaryControllerTest {
         authenticate(USER_ID, "ADMIN");
         Device device = device(1L, OTHER_USER, "dev-1");
         when(deviceService.getDeviceById(1L)).thenReturn(device);
-        when(deviceShadowService.get(1L, 20L)).thenReturn(new DeviceShadowService.DeviceShadowResponse(
-                false, 0L, Map.of(), Map.of(), Map.of(), null));
+        when(deviceShadowService.getBatch(any())).thenReturn(Map.of(1L,
+                new DeviceShadowService.DeviceShadowResponse(
+                        false, 0L, Map.of(), Map.of(), Map.of(), null)));
 
         assertThat(controller.getShadowSummary(List.of(1L)).getData()).hasSize(1);
     }

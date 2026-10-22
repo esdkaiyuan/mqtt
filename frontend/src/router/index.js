@@ -25,10 +25,33 @@ export const routes = [
         meta: { title: '快速开始', group: 'getting-started' }
       },
       {
+        // 功能指南：按主题解释能力边界、使用顺序与关键约束
+        path: 'features/:section?',
+        name: 'DocsFeatures',
+        component: () => import('@/views/site/docs/Features.vue'),
+        meta: { title: '功能指南', group: 'features' }
+      },
+      {
         path: 'device/:section?',
         name: 'DocsDeviceAccess',
         component: () => import('@/views/site/docs/DeviceAccess.vue'),
+        // 旧「设备接入 → ESP32」链接迁移到独立接入示例章节
+        beforeEnter: (to) => (to.params.section === 'esp32' ? '/docs/examples/esp32' : true),
         meta: { title: '设备接入', group: 'device' }
+      },
+      {
+        // 接入示例：通用流程 + 按芯片/运行环境分类的完整示例
+        path: 'examples/:section?',
+        name: 'DocsDeviceExamples',
+        component: () => import('@/views/site/docs/DeviceExamples.vue'),
+        meta: { title: '接入示例', group: 'examples' }
+      },
+      {
+        // 上位机开发：Qt 桌面 HMI、Open API 通讯与打包部署
+        path: 'hmi/:section?',
+        name: 'DocsHmiDevelopment',
+        component: () => import('@/views/site/docs/HmiDevelopment.vue'),
+        meta: { title: '上位机开发', group: 'hmi' }
       },
       {
         // 协议规范（T-31 P5）：D1 主题/ACL、D2 接入协议

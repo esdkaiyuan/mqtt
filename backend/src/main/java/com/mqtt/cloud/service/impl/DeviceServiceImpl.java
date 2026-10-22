@@ -9,6 +9,7 @@ import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.constant.DeviceStatusValue;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.util.AfterCommit;
+import com.mqtt.cloud.common.util.PageSupport;
 import com.mqtt.cloud.dto.request.CreateDeviceDTO;
 import com.mqtt.cloud.dto.request.CreateSubDeviceDTO;
 import com.mqtt.cloud.dto.request.DeviceQueryDTO;
@@ -239,7 +240,8 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
 
     @Override
     public IPage<Device> getDevices(Long userId, DeviceQueryDTO dto) {
-        Page<Device> page = new Page<>(dto.getPageNum(), dto.getPageSize());
+        Page<Device> page = new Page<>(PageSupport.page(dto.getPageNum()),
+                PageSupport.size(dto.getPageSize(), 10));
         if (dto.getOwnerId() == null) {
             dto.setOwnerId(userId);
         }
@@ -248,7 +250,8 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
 
     @Override
     public IPage<Device> getDevicesInGroups(DeviceQueryDTO dto) {
-        Page<Device> page = new Page<>(dto.getPageNum(), dto.getPageSize());
+        Page<Device> page = new Page<>(PageSupport.page(dto.getPageNum()),
+                PageSupport.size(dto.getPageSize(), 10));
         if (dto.getGroupIds() == null || dto.getGroupIds().isEmpty()) {
             // 共享分组分页必须始终带分组范围；空范围视为无权数据，绝不退化为全表
             return page;
@@ -282,6 +285,11 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     @Override
     public List<Device> getDevicesByOwner(Long ownerId) {
         return this.baseMapper.findByOwnerId(ownerId);
+    }
+
+    @Override
+    public List<Device> getDevicesByOwner(Long ownerId, int limit) {
+        return this.baseMapper.findByOwnerIdLimited(ownerId, Math.max(1, limit));
     }
 
     @Override

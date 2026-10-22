@@ -1,0 +1,12 @@
+build/
+build-*/
+release/
+debug/
+Makefile
+Makefile.*
+.qmake.stash
+*.o
+config.json
+model.json
+*.user
+*.autosave

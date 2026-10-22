@@ -1,22 +1,27 @@
 package com.mqtt.cloud.filter;
 
+import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.security.RestSecurityExceptionHandler;
 import com.mqtt.cloud.entity.ApiKey;
+import com.mqtt.cloud.service.ApiKeyScopeService;
 import com.mqtt.cloud.service.ApiKeyService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
@@ -33,6 +38,8 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
     private static final String API_KEY_HEADER = "X-API-Key";
 
     private final ApiKeyService apiKeyService;
+    private final ApiKeyScopeService apiKeyScopeService;
+    private final ObjectMapper objectMapper;
 
     @Override
     protected boolean shouldNotFilter(@NonNull HttpServletRequest request) {
@@ -61,6 +68,12 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         if (apiKey != null && !apiKey.isBlank()) {
             ApiKey key = apiKeyService.validateApiKey(apiKey);
             if (key != null) {
+                String requiredScope = apiKeyScopeService.requiredScope(
+                        request.getMethod(), resolvePath(request));
+                if (!apiKeyScopeService.allows(key.getPermissions(), requiredScope)) {
+                    writeForbidden(response, requiredScope);
+                    return;
+                }
                 apiKeyService.updateLastUsed(key.getId());
                 UserPrincipal principal = new UserPrincipal(key.getUserId(), "EXTERNAL", "EXTERNAL", key.getId());
                 UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
@@ -72,5 +85,14 @@ public class ApiKeyAuthFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private void writeForbidden(HttpServletResponse response, String requiredScope) throws IOException {
+        response.setStatus(ResultCode.FORBIDDEN.getHttpStatus().value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding(StandardCharsets.UTF_8.name());
+        objectMapper.writeValue(response.getWriter(),
+                Result.error(ResultCode.FORBIDDEN.getCode(),
+                        "API Key 缺少 scope：" + requiredScope));
     }
 }

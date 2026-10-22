@@ -38,6 +38,7 @@ import org.springframework.web.bind.annotation.*;
 import tools.jackson.databind.JsonNode;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 设备管理控制器
@@ -250,10 +251,19 @@ public class DeviceController {
                     @RequestParam(required = false) List<Long> deviceIds) {
         Long userId = SecurityUtils.requireUserId();
         List<Device> devices = resolveShadowDevices(userId, deviceIds);
+        List<DeviceShadowService.DeviceShadowKey> keys = devices.stream()
+                .map(device -> new DeviceShadowService.DeviceShadowKey(
+                        device.getId(), device.getProductId()))
+                .toList();
+        Map<Long, DeviceShadowService.DeviceShadowResponse> shadows =
+                deviceShadowService.getBatch(keys);
         List<DeviceShadowSummaryVO> result = new java.util.ArrayList<>(devices.size());
         for (Device device : devices) {
-            DeviceShadowService.DeviceShadowResponse shadow =
-                    deviceShadowService.get(device.getId(), device.getProductId());
+            DeviceShadowService.DeviceShadowResponse shadow = shadows.get(device.getId());
+            if (shadow == null) {
+                shadow = new DeviceShadowService.DeviceShadowResponse(
+                        false, 0L, Map.of(), Map.of(), Map.of(), null);
+            }
             DeviceShadowSummaryVO item = new DeviceShadowSummaryVO();
             item.setDeviceId(device.getId());
             item.setDeviceKey(device.getDeviceKey());
@@ -272,7 +282,7 @@ public class DeviceController {
 
     private List<Device> resolveShadowDevices(Long userId, List<Long> deviceIds) {
         if (deviceIds == null || deviceIds.isEmpty()) {
-            return deviceService.getDevicesByOwner(userId);
+            return deviceService.getDevicesByOwner(userId, 200);
         }
         java.util.LinkedHashSet<Long> unique = new java.util.LinkedHashSet<>();
         for (Long id : deviceIds) {

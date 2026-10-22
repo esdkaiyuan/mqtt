@@ -155,12 +155,15 @@ describe('router/routes 分区与兼容', () => {
     }
   })
 
-  it('文档站五章齐全且默认跳快速开始', () => {
+  it('文档站章节齐全且默认跳快速开始', () => {
     const docs = byPath('/docs')
     expect(docs.redirect).toBe('/docs/getting-started/overview')
     expect(docs.children.map((child) => child.name)).toEqual([
       'DocsGettingStarted',
+      'DocsFeatures',
       'DocsDeviceAccess',
+      'DocsDeviceExamples',
+      'DocsHmiDevelopment',
       'DocsProtocol',
       'DocsProtocolD1',
       'DocsProtocolD2',

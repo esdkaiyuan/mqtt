@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
+import com.mqtt.cloud.common.util.PageSupport;
 import com.mqtt.cloud.dto.request.MessageQueryDTO;
 import com.mqtt.cloud.dto.request.PublishMessageDTO;
 import com.mqtt.cloud.entity.Device;
@@ -63,7 +64,8 @@ public class MessageServiceImpl extends ServiceImpl<MessageMapper, Message> impl
 
     @Override
     public IPage<Message> getMessages(MessageQueryDTO dto, Long userId) {
-        Page<Message> page = new Page<>(dto.getPageNum(), dto.getPageSize());
+        Page<Message> page = new Page<>(PageSupport.page(dto.getPageNum()),
+                PageSupport.size(dto.getPageSize(), 20));
         return this.baseMapper.pageQuery(page, dto, userId);
     }
 

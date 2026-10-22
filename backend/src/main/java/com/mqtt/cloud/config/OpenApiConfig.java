@@ -1,9 +1,12 @@
 package com.mqtt.cloud.config;
 
+import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
+import io.swagger.v3.oas.models.security.SecurityRequirement;
+import io.swagger.v3.oas.models.security.SecurityScheme;
 import org.springdoc.core.models.GroupedOpenApi;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,7 +30,20 @@ public class OpenApiConfig {
                                 .email("dev@mqtt-cloud.local"))
                         .license(new License()
                                 .name("MIT")
-                                .url("https://opensource.org/licenses/MIT")));
+                                .url("https://opensource.org/licenses/MIT")))
+                .components(new Components()
+                        .addSecuritySchemes("bearerAuth", new SecurityScheme()
+                                .type(SecurityScheme.Type.HTTP)
+                                .scheme("bearer")
+                                .bearerFormat("JWT"))
+                        .addSecuritySchemes("apiKeyAuth", new SecurityScheme()
+                                .type(SecurityScheme.Type.APIKEY)
+                                .in(SecurityScheme.In.HEADER)
+                                .name("X-API-Key"))
+                        .addSecuritySchemes("deviceBasic", new SecurityScheme()
+                                .type(SecurityScheme.Type.HTTP)
+                                .scheme("basic")))
+                .addSecurityItem(new SecurityRequirement().addList("bearerAuth"));
     }
 
     /**
@@ -147,7 +163,7 @@ public class OpenApiConfig {
     public GroupedOpenApi healthApi() {
         return GroupedOpenApi.builder()
                 .group("健康检查")
-                .pathsToMatch("/api/health")
+                .pathsToMatch("/api/health", "/api/health/**")
                 .build();
     }
 
@@ -159,6 +175,89 @@ public class OpenApiConfig {
         return GroupedOpenApi.builder()
                 .group("告警中心")
                 .pathsToMatch("/api/alerts", "/api/alerts/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi deviceGroupApi() {
+        return GroupedOpenApi.builder()
+                .group("分组与标签")
+                .pathsToMatch("/api/device-groups", "/api/device-groups/**",
+                        "/api/device-tags", "/api/device-tags/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi automationApi() {
+        return GroupedOpenApi.builder()
+                .group("规则与场景")
+                .pathsToMatch("/api/rules", "/api/rules/**", "/api/scenes", "/api/scenes/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi otaApi() {
+        return GroupedOpenApi.builder()
+                .group("OTA升级")
+                .pathsToMatch("/api/ota/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi notificationApi() {
+        return GroupedOpenApi.builder()
+                .group("通知与升级策略")
+                .pathsToMatch("/api/notifications/**", "/api/notification-channels/**",
+                        "/api/alert-escalations/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi dashboardApi() {
+        return GroupedOpenApi.builder()
+                .group("看板与大屏")
+                .pathsToMatch("/api/dashboards", "/api/dashboards/**",
+                        "/api/public/dashboard-shares/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi hmiApi() {
+        return GroupedOpenApi.builder()
+                .group("快速上位机")
+                .pathsToMatch("/api/hmi-views", "/api/hmi-views/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi propertiesApi() {
+        return GroupedOpenApi.builder()
+                .group("属性与设备日志")
+                .pathsToMatch("/api/properties/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi deviceRegistrationApi() {
+        return GroupedOpenApi.builder()
+                .group("设备注册与激活")
+                .pathsToMatch("/api/device-registration/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi ingestApi() {
+        return GroupedOpenApi.builder()
+                .group("设备HTTP上报")
+                .pathsToMatch("/api/ingest/**")
+                .build();
+    }
+
+    @Bean
+    public GroupedOpenApi adminApi() {
+        return GroupedOpenApi.builder()
+                .group("运维管理")
+                .pathsToMatch("/api/admin/**")
                 .build();
     }
 }

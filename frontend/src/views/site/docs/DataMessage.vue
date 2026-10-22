@@ -10,13 +10,27 @@
       <CodeBlock language="http" :code="streamApi" />
       <ul>
         <li>鉴权：复用 JWT，前端使用 <code>fetch</code> + <code>ReadableStream</code> 携带 <code>Authorization</code> 头。</li>
-        <li>过滤：ADMIN 可见全部设备，其他角色仅可见自己拥有的设备。</li>
-        <li>心跳：通道定时发送心跳，客户端据此判断连接是否存活。</li>
+        <li>主题过滤：可选 <code>topics</code>，取值为 <code>device-data</code> / <code>device-log</code> / <code>property-trend</code>，可重复或逗号分隔；不传表示订阅全部。</li>
+        <li>可见范围：ADMIN 接收全部设备；其他角色只接收自己名下设备。分组共享设备不进入实时通道，查看其数据请走属性历史或设备详情接口。</li>
+        <li>心跳：通道定时发送 SSE 注释帧 <code>hb</code>，客户端据此判断连接是否存活。</li>
         <li>重连：断线后按退避策略自动重连，状态变化通过回调上报。</li>
       </ul>
 
-      <h2>事件结构</h2>
-      <CodeBlock language="json" :code="streamEvent" />
+      <h2>事件类型</h2>
+      <table>
+        <thead>
+          <tr><th>事件名</th><th>用途</th><th>载荷</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>device-data</code></td><td>设备上行消息</td><td><code>deviceId / deviceKey / topic / payload</code></td></tr>
+          <tr><td><code>device-log</code></td><td>设备日志增量</td><td><code>deviceId / deviceKey / occurredAt</code></td></tr>
+          <tr><td><code>property-trend</code></td><td>属性趋势增量</td><td><code>deviceId / deviceKey / samples[]</code></td></tr>
+        </tbody>
+      </table>
+      <p><code>payload</code> 是设备原始载荷字符串；<code>occurredAt</code> 为毫秒时间戳；<code>samples</code> 每项包含 <code>identifier / dataType / valueText / reportedAt</code>。</p>
+
+      <h2>事件示例</h2>
+      <CodeBlock language="http" :code="streamEvents" />
       <p>
         工作台底部状态栏展示实时通道状态（连接中 / 已连接 / 重连中 / 已关闭），
         全站仅维持一条 SSE 连接。
@@ -27,6 +41,9 @@
     <template v-else-if="section === 'history'">
       <h2>查询接口</h2>
       <CodeBlock language="http" :code="historyApi" />
+      <p>
+        该接口只返回当前登录用户名下设备的原始消息记录；分组共享设备请使用设备详情中的属性历史或日志。
+      </p>
 
       <h2>查询参数</h2>
       <table>
@@ -34,12 +51,12 @@
           <tr><th>参数</th><th>必填</th><th>说明</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>deviceId</code></td><td>是</td><td>设备 ID</td></tr>
+          <tr><td><code>deviceId</code></td><td>否</td><td>设备 ID；不传返回当前账号名下全部设备</td></tr>
           <tr><td><code>topic</code></td><td>否</td><td>Topic 关键词过滤</td></tr>
-          <tr><td><code>startTime</code></td><td>否</td><td>起始时间</td></tr>
-          <tr><td><code>endTime</code></td><td>否</td><td>结束时间</td></tr>
+          <tr><td><code>startTime</code></td><td>否</td><td>起始时间，格式 <code>yyyy-MM-dd HH:mm:ss</code></td></tr>
+          <tr><td><code>endTime</code></td><td>否</td><td>结束时间，格式 <code>yyyy-MM-dd HH:mm:ss</code></td></tr>
           <tr><td><code>pageNum</code></td><td>否</td><td>页码，默认 1</td></tr>
-          <tr><td><code>pageSize</code></td><td>否</td><td>每页条数</td></tr>
+          <tr><td><code>pageSize</code></td><td>否</td><td>每页条数，默认 20</td></tr>
         </tbody>
       </table>
 
@@ -82,38 +99,39 @@ const sections = {
 }
 
 const section = computed(() => route.params.section || 'realtime')
-const current = computed(() => sections[section.value] || sections.realtime)
+const current = computed(() => sections[section.value] || sections.format)
 
-const streamApi = `GET /api/realtime/stream
+const streamApi = `GET /api/realtime/stream?topics=device-data,device-log
 Accept: text/event-stream
 Authorization: Bearer <token>`
 
-const streamEvent = `{
-  "deviceId": 1,
-  "deviceKey": "sensor-01",
-  "topic": "device/sensor-01/data",
-  "payload": "{\\"method\\":\\"thing.event.property.post\\",\\"params\\":{\\"temperature\\":26.5}}",
-  "ts": "2026-09-28 10:00:00"
-}`
+const streamEvents = `event: device-data
+data: {"deviceId":1,"deviceKey":"sensor-01","topic":"device/sensor-01/data","payload":"{\\"method\\":\\"thing.event.property.post\\",\\"params\\":{\\"temperature\\":26.5}}"}
+
+event: device-log
+data: {"deviceId":1,"deviceKey":"sensor-01","occurredAt":1750000000000}
+
+event: property-trend
+data: {"deviceId":1,"deviceKey":"sensor-01","samples":[{"identifier":"temperature","dataType":"float","valueText":"26.5","reportedAt":"2026-10-22T10:00:00"}]}`
 
 const historyApi = `GET /api/history?deviceId=1&topic=data&pageNum=1&pageSize=20`
 
 const historyResponse = `{
   "code": 200,
   "data": {
-    "list": [
+    "records": [
       {
         "id": 1001,
         "deviceId": 1,
-        "deviceKey": "sensor-01",
         "topic": "device/sensor-01/data",
         "payload": "{\\"method\\":\\"thing.event.property.post\\",\\"params\\":{\\"temperature\\":26.5}}",
-        "createdAt": "2026-09-28 10:00:00"
+        "timestamp": "2026-10-22T10:00:00"
       }
     ],
     "total": 17849,
-    "pageNum": 1,
-    "pageSize": 20
+    "size": 20,
+    "current": 1,
+    "pages": 893
   }
 }`
 

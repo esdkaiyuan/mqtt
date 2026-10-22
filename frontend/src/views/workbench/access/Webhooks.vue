@@ -1,6 +1,6 @@
 <template>
   <div class="webhooks-page page">
-    <PageHeader title="Webhook" desc="配置设备事件回调地址、签名与重试策略">
+    <PageHeader title="Webhook" desc="配置设备事件回调地址、签名与投递参数">
       <template #actions>
         <el-button type="primary" @click="openCreateDialog">
           <svg-icon name="add" :size="16" />

@@ -77,6 +77,10 @@ a:hover {
   padding-right: var(--content-padding);
 }
 
+.site-container--wide {
+  max-width: var(--docs-max-width);
+}
+
 .card {
   background: var(--color-white);
   border-radius: var(--border-radius);

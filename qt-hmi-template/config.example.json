@@ -1,0 +1,7 @@
+{
+  "title": "设备监控上位机",
+  "baseUrl": "http://localhost/api/external/v1",
+  "deviceKey": "<deviceKey>",
+  "pollMs": 2000,
+  "model": "model.json"
+}

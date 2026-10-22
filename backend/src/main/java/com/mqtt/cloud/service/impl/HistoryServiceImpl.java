@@ -2,6 +2,7 @@ package com.mqtt.cloud.service.impl;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.mqtt.cloud.common.util.PageSupport;
 import com.mqtt.cloud.dto.request.HistoryQueryDTO;
 import com.mqtt.cloud.entity.HistoryRecord;
 import com.mqtt.cloud.mapper.MessageMapper;
@@ -20,7 +21,8 @@ public class HistoryServiceImpl implements HistoryService {
 
     @Override
     public IPage<HistoryRecord> getHistoryRecords(HistoryQueryDTO dto, Long userId) {
-        Page<HistoryRecord> page = new Page<>(dto.getPageNum(), dto.getPageSize());
+        Page<HistoryRecord> page = new Page<>(PageSupport.page(dto.getPageNum()),
+                PageSupport.size(dto.getPageSize(), 20));
         return messageMapper.pageHistoryQuery(page, dto, userId);
     }
 }

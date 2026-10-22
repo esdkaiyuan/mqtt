@@ -33,6 +33,13 @@ public class JwtUtil {
 
     public JwtUtil(@Value("${app.jwt.secret}") String secret,
                    @Value("${app.jwt.expiration}") long expiration) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException(
+                    "未配置 JWT_SECRET：请在环境变量或 .env 中设置至少 32 字节的签名密钥");
+        }
+        if (resolveKeyBytes(secret).length < 32) {
+            throw new IllegalStateException("JWT_SECRET 解码后必须至少 32 字节");
+        }
         this.secret = secret;
         this.expiration = expiration;
     }
@@ -97,10 +104,14 @@ public class JwtUtil {
     }
 
     private byte[] resolveKeyBytes() {
+        return resolveKeyBytes(secret);
+    }
+
+    private static byte[] resolveKeyBytes(String value) {
         try {
-            return Decoders.BASE64.decode(secret);
+            return Decoders.BASE64.decode(value);
         } catch (Exception e) {
-            return secret.getBytes(StandardCharsets.UTF_8);
+            return value.getBytes(StandardCharsets.UTF_8);
         }
     }
 }

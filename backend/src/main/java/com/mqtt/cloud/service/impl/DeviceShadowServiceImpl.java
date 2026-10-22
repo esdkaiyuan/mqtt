@@ -20,6 +20,7 @@ import tools.jackson.databind.node.ObjectNode;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,10 +52,52 @@ public class DeviceShadowServiceImpl implements DeviceShadowService {
         if (deviceId == null) {
             return new DeviceShadowResponse(modeled, 0L, Map.of(), Map.of(), Map.of(), null);
         }
-        DeviceShadow shadow = loadOrCreate(deviceId);
+        DeviceShadow shadow = find(deviceId);
         if (shadow == null) {
             return new DeviceShadowResponse(modeled, 0L, Map.of(), Map.of(), Map.of(), null);
         }
+        return toResponse(modeled, shadow);
+    }
+
+    @Override
+    public Map<Long, DeviceShadowResponse> getBatch(List<DeviceShadowKey> devices) {
+        if (devices == null || devices.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> deviceIds = devices.stream()
+                .map(DeviceShadowKey::deviceId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (deviceIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<DeviceShadow> rows = shadowMapper.selectList(Wrappers.<DeviceShadow>lambdaQuery()
+                .in(DeviceShadow::getDeviceId, deviceIds));
+        Map<Long, DeviceShadow> byDeviceId = new HashMap<>();
+        if (rows != null) {
+            for (DeviceShadow row : rows) {
+                byDeviceId.put(row.getDeviceId(), row);
+            }
+        }
+
+        Map<Long, Boolean> modeledByProduct = new HashMap<>();
+        Map<Long, DeviceShadowResponse> result = new LinkedHashMap<>();
+        for (DeviceShadowKey key : devices) {
+            if (key == null || key.deviceId() == null) {
+                continue;
+            }
+            boolean modeled = modeledByProduct.computeIfAbsent(key.productId(), this::isModeled);
+            DeviceShadow row = byDeviceId.get(key.deviceId());
+            result.put(key.deviceId(), row == null
+                    ? new DeviceShadowResponse(modeled, 0L, Map.of(), Map.of(), Map.of(), null)
+                    : toResponse(modeled, row));
+        }
+        return result;
+    }
+
+    private DeviceShadowResponse toResponse(boolean modeled, DeviceShadow shadow) {
         return new DeviceShadowResponse(modeled, versionOf(shadow),
                 readMap(shadow.getDesired()), readMap(shadow.getReported()), readMap(shadow.getDelta()),
                 shadow.getUpdatedAt());
@@ -148,6 +191,10 @@ public class DeviceShadowServiceImpl implements DeviceShadowService {
     /** 懒创建（幂等）后读取影子行；返回 {@code null} 表示行仍不可用。 */
     private DeviceShadow loadOrCreate(Long deviceId) {
         shadowMapper.insertIfAbsent(deviceId, LocalDateTime.now());
+        return find(deviceId);
+    }
+
+    private DeviceShadow find(Long deviceId) {
         return shadowMapper.selectOne(Wrappers.<DeviceShadow>lambdaQuery()
                 .eq(DeviceShadow::getDeviceId, deviceId));
     }

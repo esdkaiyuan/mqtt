@@ -42,7 +42,7 @@
         </thead>
         <tbody>
           <tr><td>Broker 地址</td><td>部署服务器 IP 或域名</td></tr>
-          <tr><td>端口</td><td>1883（MQTT）；TLS 端口按部署配置</td></tr>
+          <tr><td>端口</td><td>1883（MQTT TCP）；8883（TLS）；8083（WebSocket，默认均随 compose 暴露）</td></tr>
           <tr><td>ClientId</td><td>建议使用 <code>{deviceKey}</code>，保证唯一</td></tr>
           <tr><td>用户名</td><td><code>{productKey}.{deviceKey}</code></td></tr>
           <tr><td>密码</td><td><code>device_secret</code></td></tr>
@@ -130,7 +130,7 @@
     </template>
 
     <!-- Topic 与 ACL -->
-    <template v-else-if="section === 'topic-acl'">
+    <template v-else>
       <h2>主题规划</h2>
       <table>
         <thead>
@@ -161,20 +161,6 @@
         <router-link to="/docs/protocol/d1">D1 · MQTT 主题与 ACL</router-link>。
       </p>
     </template>
-
-    <!-- ESP32 示例 -->
-    <template v-else-if="section === 'esp32'">
-      <h2>ESP32 接入示例</h2>
-      <p>以下示例使用 PubSubClient，连接 Broker 并周期性上报温度数据。</p>
-      <CodeBlock language="cpp" :code="esp32Sample" />
-
-      <h3>常见排错</h3>
-      <ul>
-        <li>连接被拒：检查用户名是否为 <code>{productKey}.{deviceKey}</code>，密码是否为最新密钥。</li>
-        <li>发布被拒：确认 Topic 在自身 <code>{prefix}</code> 下，且没有进入 <code>{prefix}cmd/</code>。</li>
-        <li>设备一直离线：确认已设置遗言与心跳，且保活时间小于遗言窗口。</li>
-      </ul>
-    </template>
   </DocArticle>
 </template>
 
@@ -190,12 +176,11 @@ const sections = {
   identity: { title: '设备身份', desc: '一机一密、凭据格式与认证回调' },
   mqtt: { title: 'MQTT 连接参数', desc: 'Broker 地址、ClientId、QoS 与保活约定' },
   http: { title: 'HTTP 上报', desc: 'REST 端点、Basic 鉴权与 messageType' },
-  'topic-acl': { title: 'Topic 与 ACL', desc: '上报/下发主题模板与权限边界' },
-  esp32: { title: 'ESP32 接入示例', desc: '完整示例代码与常见排错' }
+  'topic-acl': { title: 'Topic 与 ACL', desc: '上报/下发主题模板与权限边界' }
 }
 
 const section = computed(() => route.params.section || 'identity')
-const current = computed(() => sections[section.value] || sections.identity)
+const current = computed(() => sections[section.value] || sections['topic-acl'])
 
 const authResponse = `// 认证成功
 {"result": "allow", "is_superuser": false}
@@ -227,33 +212,5 @@ const httpSuccessResponse = `{
     "receivedAt": "2026-10-04T12:00:00",
     "accepted": true
   }
-}`
-
-const esp32Sample = `#include <WiFi.h>
-#include <PubSubClient.h>
-
-const char* MQTT_HOST = "your-server";
-const int   MQTT_PORT = 1883;
-const char* MQTT_USER = "esp32-fall-detect.sensor-01"; // {productKey}.{deviceKey}
-const char* MQTT_PASS = "<device_secret>";
-const char* TOPIC_DATA = "device/sensor-01/data";
-const char* TOPIC_LWT  = "device/sensor-01/lwt";
-const char* PAYLOAD    = "{\\"id\\":\\"esp32-1\\",\\"version\\":\\"1.0\\","
-                         "\\"method\\":\\"thing.event.property.post\\","
-                         "\\"params\\":{\\"temperature\\":26.5}}";
-
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-void setup() {
-  client.setServer(MQTT_HOST, MQTT_PORT);
-  client.connect("sensor-01", MQTT_USER, MQTT_PASS, TOPIC_LWT, 1, false, "offline");
-}
-
-void loop() {
-  if (!client.connected()) client.connect("sensor-01", MQTT_USER, MQTT_PASS, TOPIC_LWT, 1, false, "offline");
-  client.loop();
-  client.publish(TOPIC_DATA, PAYLOAD, false);
-  delay(5000);
 }`
 </script>

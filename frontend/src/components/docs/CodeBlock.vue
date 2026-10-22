@@ -19,6 +19,8 @@ import hljs from 'highlight.js/lib/core'
 import bash from 'highlight.js/lib/languages/bash'
 import json from 'highlight.js/lib/languages/json'
 import cpp from 'highlight.js/lib/languages/cpp'
+import c from 'highlight.js/lib/languages/c'
+import cmake from 'highlight.js/lib/languages/cmake'
 import http from 'highlight.js/lib/languages/http'
 import javascript from 'highlight.js/lib/languages/javascript'
 import python from 'highlight.js/lib/languages/python'
@@ -29,6 +31,8 @@ import java from 'highlight.js/lib/languages/java'
 hljs.registerLanguage('bash', bash)
 hljs.registerLanguage('json', json)
 hljs.registerLanguage('cpp', cpp)
+hljs.registerLanguage('c', c)
+hljs.registerLanguage('cmake', cmake)
 hljs.registerLanguage('http', http)
 hljs.registerLanguage('javascript', javascript)
 hljs.registerLanguage('python', python)

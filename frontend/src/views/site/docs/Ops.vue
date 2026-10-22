@@ -9,9 +9,11 @@
         </thead>
         <tbody>
           <tr><td>nginx（frontend）</td><td>80（<code>FRONTEND_PORT</code>）</td><td>唯一入口，静态资源 + <code>/api</code> 反向代理</td></tr>
-          <tr><td>backend</td><td>8080（仅容器网络）</td><td>不发布宿主机端口，统一经网关访问</td></tr>
-          <tr><td>EMQX</td><td>1883</td><td>MQTT 接入</td></tr>
+          <tr><td>backend</td><td>8080（仅容器网络）</td><td>不发布宿主机端口；Swagger 经 <code>http://localhost/api/swagger-ui.html</code> 访问</td></tr>
+          <tr><td>EMQX</td><td>1883 / 8883 / 8083</td><td>MQTT TCP / TLS / WebSocket 接入</td></tr>
           <tr><td>EMQX Dashboard</td><td>18083</td><td>Broker 管理后台</td></tr>
+          <tr><td>MySQL</td><td>3306（<code>DB_PORT</code>）</td><td>业务库，生产环境建议仅内网可达</td></tr>
+          <tr><td>Redis</td><td>6379（<code>REDIS_PORT</code>）</td><td>默认仅绑定 <code>127.0.0.1</code>，供后端使用</td></tr>
         </tbody>
       </table>
 
@@ -27,7 +29,8 @@
     <template v-else-if="section === 'monitoring'">
       <h2>健康检查</h2>
       <ul>
-        <li>网关健康：<code>GET /api/health</code>（公开）。</li>
+        <li>存活探针：<code>GET /api/health</code>（公开，进程能响应即 UP）。</li>
+        <li>就绪探针：<code>GET /api/health/ready</code>（依赖或积压异常返回 HTTP 503）。</li>
         <li>应用健康：<code>GET /api/actuator/health</code>。</li>
         <li>一键巡检：<code>bash scripts/health-check.sh</code>。</li>
       </ul>
@@ -65,6 +68,21 @@
         <li>Nginx 必须为 <code>/api/realtime/stream</code> 单独配置：<code>proxy_buffering off</code>、<code>proxy_read_timeout 1h</code>、<code>Connection ''</code>。</li>
         <li>心跳间隔需小于网关空闲超时。</li>
         <li>多副本部署时确认跨副本实时广播已启用。</li>
+        <li>共享分组设备不会进入 SSE 推送；这是按设备归属过滤的预期行为，请改用历史 / 详情接口查看。</li>
+      </ul>
+
+      <h2>开放 API 调用失败</h2>
+      <ul>
+        <li><code>401 / 3501</code>：<code>X-API-Key</code> 缺失、无效或已撤销；重新创建并更新调用方配置。</li>
+        <li><code>403 / 2003</code>：设备不属于密钥所属账号；开放 API 不做跨账号共享。</li>
+        <li><code>429 / 4002</code>：按 <code>Retry-After</code> 退避后重试，避免高频轮询。</li>
+      </ul>
+
+      <h2>Webhook 未收到或延迟</h2>
+      <ul>
+        <li>先在控制台点击测试，确认目标地址可达且返回 2xx。</li>
+        <li>回调为异步单次投递，非 2xx 或网络异常只记录日志，不自动重试；需以平台数据对账补偿。</li>
+        <li>若配置了签名密钥，校验原始请求体上的 <code>X-Signature: sha256=&lt;hex&gt;</code>，不要先反序列化再计算。</li>
       </ul>
     </template>
   </DocArticle>
@@ -85,7 +103,7 @@ const sections = {
 }
 
 const section = computed(() => route.params.section || 'deployment')
-const current = computed(() => sections[section.value] || sections.deployment)
+const current = computed(() => sections[section.value] || sections.faq)
 
 const deploySample = `docker compose --env-file .env -f docker/docker-compose.yml up -d --build`
 

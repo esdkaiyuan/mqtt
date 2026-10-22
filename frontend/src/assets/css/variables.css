@@ -99,6 +99,7 @@
   --content-max-width: 1440px;  /* 工作台超宽内容上限，居中 */
   --grid-gutter: 16px;          /* 卡片/栅格间距，全站统一 */
   --site-max-width: 1200px;     /* 公开站（官网/文档）内容上限 */
+  --docs-max-width: 1720px;     /* 文档站三栏内容上限 */
 
   /* 层级 */
   --z-nav: 100;

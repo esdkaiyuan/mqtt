@@ -4,6 +4,7 @@
   "scripts": {
     "dev": "cd frontend && npm run dev",
     "frontend": "cd frontend && npm run dev",
-    "install:all": "cd frontend && npm install"
+    "install:all": "cd frontend && npm install",
+    "create:hmi": "node scripts/create-hmi.mjs"
   }
 }

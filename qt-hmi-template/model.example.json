@@ -1,0 +1,36 @@
+{
+  "properties": [
+    {
+      "identifier": "temperature",
+      "label": "温度",
+      "type": "number",
+      "unit": "°C",
+      "writable": false
+    },
+    {
+      "identifier": "humidity",
+      "label": "湿度",
+      "type": "number",
+      "unit": "%",
+      "writable": false
+    },
+    {
+      "identifier": "power",
+      "label": "电源",
+      "type": "bool",
+      "writable": true
+    },
+    {
+      "identifier": "mode",
+      "label": "运行模式",
+      "type": "string",
+      "writable": true
+    }
+  ],
+  "services": [
+    {
+      "identifier": "reset",
+      "label": "复位"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.service.HttpIngestService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
  * {@code /ingest/**} 将直接返回 404。
  */
 @Tag(name = "HTTP 设备上报", description = "设备经 HTTP 上报数据 / 心跳 / 遗嘱，与 MQTT 汇聚进同一摄取管线")
+@SecurityRequirement(name = "deviceBasic")
 @ConditionalOnProperty(prefix = "app.http-ingest", name = "enabled", havingValue = "true", matchIfMissing = true)
 @RestController
 @RequestMapping("/ingest")

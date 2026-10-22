@@ -114,6 +114,7 @@
         <tr><td><code>version</code></td><td>单调递增；Redis INCR，退化进程内 <code>1e12+n</code>（仅单副本单调）</td></tr>
         <tr><td><code>dispatchedAt</code></td><td>Unix 毫秒</td></tr>
         <tr><td><code>points[]</code></td><td>启用中的 EDGE 点位；空点表拒绝下发</td></tr>
+        <tr><td><code>unitId</code></td><td>从站地址 0~247；留空继承驱动配置，多从站点位可混合下发</td></tr>
         <tr><td><code>scale</code> / <code>offset</code></td><td>字符串承载，保留 DECIMAL 精度</td></tr>
         <tr><td><code>readIntervalMs</code></td><td>采集周期；边缘侧应有默认值</td></tr>
       </tbody>
@@ -132,16 +133,24 @@
       </thead>
       <tbody>
         <tr><td>int</td><td>1</td><td>有符号 16 位</td></tr>
-        <tr><td>float</td><td>2</td><td>32 位大端 IEEE-754</td></tr>
-        <tr><td>double</td><td>4</td><td>64 位大端 IEEE-754</td></tr>
+        <tr><td>int32 / uint32</td><td>2</td><td>有符号 / 无符号 32 位</td></tr>
+        <tr><td>int64 / uint64</td><td>4</td><td>有符号 / 无符号 64 位；uint64 输出无符号十进制</td></tr>
+        <tr><td>float</td><td>2</td><td>32 位 IEEE-754</td></tr>
+        <tr><td>double</td><td>4</td><td>64 位 IEEE-754</td></tr>
         <tr><td>bool</td><td>1</td><td>非 0 为 true</td></tr>
         <tr><td>string</td><td>1</td><td>2 字节 ASCII，遇 NUL 截断</td></tr>
       </tbody>
     </table>
     <p>
-      工程值 = 原始值 × scale + offset；bool / string 不换算。平台采集成功后组装 Alink 属性信封投入
-      同一摄取管线，单点失败只写 <code>device_point_run=FAILED</code>。当前不提供字序 / 字节序配置，
-      word-swap 设备需在边缘侧转换。
+      工程值 = 原始值 × scale + offset；bool / string 不换算。32 / 64 位数值由产品
+      <code>driver_config.wordOrder</code> 决定字序，支持 <code>ABCD</code> / <code>CDAB</code> /
+      <code>BADC</code> / <code>DCBA</code>，16 位类型不受影响。平台采集成功后组装 Alink 属性信封投入
+      同一摄取管线，单点失败只写 <code>device_point_run=FAILED</code>。
+    </p>
+    <p>
+      多从站：点位级 <code>unitId</code> 非空时覆盖驱动默认值；采集器按
+      <code>(pointType, unitId)</code> 分组批量读取，避免同一次请求跨从站。点表下发载荷会原样携带
+      <code>unitId</code>，网关侧应按该字段切换目标从站。
     </p>
 
     <h2>与旧文档的差异</h2>
@@ -238,6 +247,7 @@ const pointTableSample = `{
       "pointType": "HOLDING_REGISTER",
       "address": "40001",
       "dataType": "float",
+      "unitId": 1,
       "scale": "0.1",
       "offset": "0",
       "unit": "°C",
@@ -250,6 +260,7 @@ const driverConfigSample = `{
   "host": "192.168.10.20",
   "port": 502,
   "unitId": 1,
+  "wordOrder": "ABCD",
   "connectTimeoutMs": 3000,
   "readTimeoutMs": 3000,
   "retry": 1

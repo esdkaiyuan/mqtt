@@ -36,6 +36,9 @@ public interface DeviceMapper extends BaseMapper<Device> {
 
     List<Device> findByOwnerId(@Param("ownerId") Long ownerId);
 
+    /** 按归属人取有限数量设备，供影子摘要等有上限的聚合接口使用。 */
+    List<Device> findByOwnerIdLimited(@Param("ownerId") Long ownerId, @Param("limit") int limit);
+
     List<Device> findOnlineDevices(@Param("ownerId") Long ownerId);
 
     List<Device> findTimeoutDevices(@Param("timeoutMinutes") int timeoutMinutes);

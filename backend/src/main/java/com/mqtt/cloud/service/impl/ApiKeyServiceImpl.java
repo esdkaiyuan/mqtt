@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.spring.service.impl.ServiceImpl;
 import com.mqtt.cloud.dto.request.ApiKeyRequest;
 import com.mqtt.cloud.entity.ApiKey;
 import com.mqtt.cloud.mapper.ApiKeyMapper;
+import com.mqtt.cloud.service.ApiKeyScopeService;
 import com.mqtt.cloud.service.ApiKeyService;
 import com.mqtt.cloud.util.ApiKeyGenerator;
 import lombok.RequiredArgsConstructor;
@@ -27,10 +28,12 @@ public class ApiKeyServiceImpl extends ServiceImpl<ApiKeyMapper, ApiKey> impleme
     private static final long LAST_USED_THROTTLE_SECONDS = 60;
 
     private final RedisTemplate<String, String> redisTemplate;
+    private final ApiKeyScopeService apiKeyScopeService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ApiKey createApiKey(Long userId, ApiKeyRequest request) {
+        apiKeyScopeService.requireValid(request.getPermissions());
         ApiKey apiKey = new ApiKey();
         apiKey.setUserId(userId);
         apiKey.setName(request.getName());

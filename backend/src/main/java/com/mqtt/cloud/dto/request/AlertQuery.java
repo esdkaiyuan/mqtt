@@ -29,6 +29,6 @@ public class AlertQuery {
     /** 页码，默认1 */
     private Integer pageNum = 1;
 
-    /** 每页数量，默认10，最大100 */
-    private Integer pageSize = 10;
+    /** 每页数量，默认20，最大100 */
+    private Integer pageSize = 20;
 }

@@ -1,6 +1,6 @@
 <template>
   <nav class="site-nav" :class="{ 'is-scrolled': isScrolled }">
-    <div class="site-container site-nav__inner">
+    <div class="site-container site-nav__inner" :class="{ 'site-container--wide': wide }">
       <BrandLogo to="/" :size="32" :text-size="20" />
 
       <div class="site-nav__links" :class="{ 'is-open': mobileMenuOpen }">
@@ -48,6 +48,11 @@ import { scrollToSection, useScrollIndicator } from '@/composables/useLandingScr
 defineProps({
   // 文档站在 <1024px 需要由站点头唤起目录抽屉，官网不传
   tocToggle: {
+    type: Boolean,
+    default: false
+  },
+  // 文档站使用更宽的内容栅格，需与正文三栏对齐
+  wide: {
     type: Boolean,
     default: false
   }

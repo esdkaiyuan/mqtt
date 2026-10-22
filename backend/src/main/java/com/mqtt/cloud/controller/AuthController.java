@@ -9,6 +9,7 @@ import com.mqtt.cloud.dto.response.LoginResponseDTO;
 import com.mqtt.cloud.dto.response.UserResponseDTO;
 import com.mqtt.cloud.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -32,12 +33,14 @@ public class AuthController {
     }
 
     @Operation(summary = "用户注册", description = "注册新用户，默认角色为 VIEWER；用户名重复返回 1001")
+    @SecurityRequirements
     @PostMapping("/register")
     public Result<UserResponseDTO> register(@Valid @RequestBody RegisterDTO dto) {
         return Result.success(userService.register(dto));
     }
 
     @Operation(summary = "用户登录", description = "校验用户名密码，成功返回 JWT Token 与用户信息；凭证错误返回 3001")
+    @SecurityRequirements
     @PostMapping("/login")
     public Result<LoginResponseDTO> login(@Valid @RequestBody LoginDTO dto) {
         return Result.success(userService.login(dto.getUsername(), dto.getPassword()));

@@ -5,6 +5,7 @@ import com.mqtt.cloud.common.Result;
 import com.mqtt.cloud.common.ResultCode;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.common.security.SecurityUtils;
+import com.mqtt.cloud.common.util.PageSupport;
 import com.mqtt.cloud.common.constant.OtaStatusValue;
 import com.mqtt.cloud.dto.request.AlertQuery;
 import com.mqtt.cloud.dto.request.CommandInvokeRequest;
@@ -41,6 +42,7 @@ import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceShadowService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -65,6 +67,7 @@ import java.util.Map;
  */
 @Slf4j
 @Tag(name = "外部API", description = "供第三方系统调用的开放接口，使用 X-API-Key 请求头认证，数据范围限定为密钥所属用户")
+@SecurityRequirement(name = "apiKeyAuth")
 @RestController
 @RequestMapping("/external/v1")
 @RequiredArgsConstructor
@@ -413,9 +416,18 @@ public class ExternalApiController {
     }
 
     @Operation(summary = "外部-查询告警列表", description = "分页返回密钥所属用户的告警记录，按 last_triggered_at 倒序；"
-            + "过滤参数同控制台（status / sourceType / severity / deviceId）")
+            + "过滤参数同控制台（status / sourceType / severity / deviceId）；新客户端使用 page / size，"
+            + "旧版 pageNum / pageSize 继续兼容")
     @GetMapping("/alerts")
-    public Result<IPage<AlertRecord>> listAlerts(AlertQuery query) {
+    public Result<IPage<AlertRecord>> listAlerts(
+            AlertQuery query,
+            @Parameter(description = "页码，从 1 起") @RequestParam(required = false) Integer page,
+            @Parameter(description = "每页条数，默认 20，上限 100")
+            @RequestParam(required = false) Integer size) {
+        if (page != null || size != null) {
+            query.setPageNum(PageSupport.page(page != null ? page : query.getPageNum()));
+            query.setPageSize(PageSupport.size(size != null ? size : query.getPageSize(), 20));
+        }
         return Result.success(alertService.page(currentUserId(), query));
     }
 

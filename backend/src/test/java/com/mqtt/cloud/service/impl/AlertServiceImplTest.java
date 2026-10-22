@@ -89,7 +89,7 @@ class AlertServiceImplTest {
 
         IPage<AlertRecord> page = service.page(USER_ID, null);
 
-        assertThat(page.getSize()).isEqualTo(10);
+        assertThat(page.getSize()).isEqualTo(20);
     }
 
     @Test

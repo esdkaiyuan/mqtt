@@ -36,7 +36,8 @@ import java.util.Map;
 @Service
 public class AlertServiceImpl extends ServiceImpl<AlertRecordMapper, AlertRecord> implements AlertService {
 
-    private static final int DEFAULT_PAGE_SIZE = 10;
+    private static final int DEFAULT_PAGE_SIZE = 20;
+    private static final int DEFAULT_RECENT_LIMIT = 10;
     private static final int MAX_PAGE_SIZE = 100;
     private static final DateTimeFormatter TIME_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
 
@@ -167,7 +168,7 @@ public class AlertServiceImpl extends ServiceImpl<AlertRecordMapper, AlertRecord
 
     @Override
     public List<AlertRecord> recent(Long userId, int limit) {
-        int effective = limit <= 0 ? DEFAULT_PAGE_SIZE : Math.min(limit, MAX_PAGE_SIZE);
+        int effective = limit <= 0 ? DEFAULT_RECENT_LIMIT : Math.min(limit, MAX_PAGE_SIZE);
         return baseMapper.selectOpenByUserLimit(userId, effective);
     }
 

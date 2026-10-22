@@ -1,5 +1,7 @@
 package com.mqtt.cloud.service.impl;
 
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.mqtt.cloud.config.ShadowProperties;
 import com.mqtt.cloud.entity.DevicePropertyLatest;
 import com.mqtt.cloud.entity.DeviceShadow;
@@ -11,6 +13,7 @@ import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import tools.jackson.databind.ObjectMapper;
@@ -97,19 +100,39 @@ class DeviceShadowServiceImplTest {
     }
 
     @Test
-    void get_should_lazy_create_and_project_stored_state() {
+    void get_should_project_stored_state_without_writing() {
         when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(ThingModelDefinition.EMPTY);
         when(shadowMapper.selectOne(any()))
                 .thenReturn(shadow("{\"power\":\"true\"}", "{\"power\":\"false\"}", 3L));
 
         DeviceShadowResponse response = service.get(DEVICE_ID, PRODUCT_ID);
 
-        verify(shadowMapper).insertIfAbsent(eq(DEVICE_ID), any(LocalDateTime.class));
+        verify(shadowMapper, never()).insertIfAbsent(any(), any());
         assertThat(response.modeled()).isFalse();
         assertThat(response.version()).isEqualTo(3L);
         assertThat(response.desired()).containsEntry("power", "true");
         assertThat(response.reported()).containsEntry("power", "false");
         assertThat(response.updatedAt()).isNotNull();
+    }
+
+    @Test
+    void getBatch_should_read_once_and_not_create_missing_rows() {
+        TableInfoHelper.initTableInfo(
+                new MapperBuilderAssistant(new MybatisConfiguration(), ""), DeviceShadow.class);
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(ThingModelDefinition.EMPTY);
+        when(shadowMapper.selectList(any()))
+                .thenReturn(List.of(shadow("{\"power\":\"true\"}", "{}", 2L)));
+
+        Map<Long, DeviceShadowResponse> result = service.getBatch(List.of(
+                new com.mqtt.cloud.service.DeviceShadowService.DeviceShadowKey(DEVICE_ID, PRODUCT_ID),
+                new com.mqtt.cloud.service.DeviceShadowService.DeviceShadowKey(43L, PRODUCT_ID)));
+
+        verify(shadowMapper).selectList(any());
+        verify(shadowMapper, never()).insertIfAbsent(any(), any());
+        verify(thingModelService, times(1)).getForProduct(PRODUCT_ID);
+        assertThat(result).containsOnlyKeys(DEVICE_ID, 43L);
+        assertThat(result.get(DEVICE_ID).version()).isEqualTo(2L);
+        assertThat(result.get(43L).version()).isZero();
     }
 
     @Test

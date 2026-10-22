@@ -36,7 +36,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * servlet 对象驱动安全过滤链，不依赖 Boot 的 MockMvc 自动配置。
  */
 @SpringBootTest
-@TestPropertySource(properties = "app.http-ingest.enabled=false")
+@TestPropertySource(properties = {
+        "app.http-ingest.enabled=false",
+        "app.jwt.secret=test-only-jwt-secret-which-is-long-enough-123"
+})
 class SecurityConfigFilterOrderTest {
 
     @Autowired

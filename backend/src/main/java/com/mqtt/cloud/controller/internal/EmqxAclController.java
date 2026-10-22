@@ -1,6 +1,7 @@
 package com.mqtt.cloud.controller.internal;
 
 import com.mqtt.cloud.service.AclEvaluator;
+import io.swagger.v3.oas.annotations.Hidden;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
+@Hidden
 @RestController
 @RequestMapping("/internal/emqx")
 @RequiredArgsConstructor

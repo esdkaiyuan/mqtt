@@ -2,6 +2,7 @@ package com.mqtt.cloud.service;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -23,6 +24,14 @@ public interface DeviceShadowService {
      * @return 影子视图；影子为空时返回空映射与 {@code version = 0}
      */
     DeviceShadowResponse get(Long deviceId, Long productId);
+
+    /**
+     * 批量只读查询：一次取回多台设备的影子，不创建缺失行。
+     * <p>
+     * {@code modeled} 仍按产品判定，但同一产品只会查询一次物模型；返回映射保证包含
+     * 每个入参设备（缺失影子返回空视图与 version=0）。
+     */
+    Map<Long, DeviceShadowResponse> getBatch(List<DeviceShadowKey> devices);
 
     /**
      * 上报收敛：把给定标识符的<b>权威最新值</b>（回读 {@code device_property_latest}）合并进
@@ -60,5 +69,8 @@ public interface DeviceShadowService {
             Map<String, String> reported,
             Map<String, String> delta,
             LocalDateTime updatedAt) {
+    }
+
+    record DeviceShadowKey(Long deviceId, Long productId) {
     }
 }

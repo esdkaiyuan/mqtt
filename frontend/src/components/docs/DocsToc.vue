@@ -1,12 +1,13 @@
 <template>
   <aside v-if="chapter" class="docs-toc">
-    <div class="docs-toc__title">本页目录</div>
+    <div class="docs-toc__title">本章目录</div>
     <router-link
-      v-for="item in chapter.items"
+      v-for="(item, index) in chapter.items"
       :key="item.path"
       :to="item.path"
       class="docs-toc__item"
-      :class="{ 'is-active': route.path === item.path }"
+      :class="{ 'is-active': isActive(item, index) }"
+      :aria-current="isActive(item, index) ? 'page' : undefined"
     >
       {{ item.title }}
     </router-link>
@@ -20,6 +21,12 @@ import { resolveChapter } from '@/data/docsNav'
 
 const route = useRoute()
 const chapter = computed(() => resolveChapter(route.path))
+
+function isActive(item, index) {
+  if (route.path === item.path) return true
+  const current = route.path.replace(/\/+$/, '')
+  return index === 0 && current === item.path.replace(/\/[^/]+$/, '')
+}
 </script>
 
 <style scoped>
