@@ -190,6 +190,7 @@ MQTT自建站点/
 
 ## 文档
 
+- 文档中心索引：[`docs/README.md`](docs/README.md)（总览 / 协议规范 / 规划对标 / T-xx 任务交付 / 站内文档站）
 - 站内文档站：`http://localhost/docs`（快速开始 / 功能指南 / 设备接入 / 协议规范 / 开放 API / 平台运维）
 - [系统架构](docs/ARCHITECTURE.md)
 - [部署文档](docs/DEPLOYMENT.md)

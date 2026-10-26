@@ -935,7 +935,13 @@ export const errorCodes = [
   { code: 6314, message: 'HTTP 上报超出频率限制', desc: '设备级固定窗口限流，响应带 429' },
   { code: 6315, message: '幂等键非法', desc: 'Idempotency-Key 长度需 1~128，仅允许可见 ASCII' },
   { code: 6316, message: '设备导入文件非法', desc: 'CSV 格式 / 表头 / 行数 / 大小不合法' },
-  { code: 6317, message: 'Payload Codec 配置非法', desc: 'JSON / template / 路径表达式 / 大小不合法，或 version / mode 不支持' }
+  { code: 6317, message: 'Payload Codec 配置非法', desc: 'JSON / template / 路径表达式 / 大小不合法，或 version / mode 不支持' },
+  { code: 6318, message: '已启用多因素认证', desc: 'MFA 已绑定，无需重复发起绑定' },
+  { code: 6319, message: '尚未完成 MFA 绑定', desc: '没有待确认的 TOTP 密钥或账号未启用 MFA' },
+  { code: 6320, message: '动态口令错误', desc: 'TOTP 码错误或已过期，检查服务器与 authenticator 时间' },
+  { code: 6321, message: '二步验证会话无效', desc: 'MFA 临时令牌过期或非 MFA 用途，请重新登录' },
+  { code: 6322, message: 'MFA 功能已关闭', desc: 'app.mfa.enabled=false 时 MFA 端点不可用' },
+  { code: 6323, message: '数据桥接失败', desc: 'Kafka 未启用 / 配置缺失 / 发送失败，动作将按重试兜底' }
 ]
 
 export const webhookEvents = [

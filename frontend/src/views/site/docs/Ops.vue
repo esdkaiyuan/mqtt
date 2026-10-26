@@ -55,6 +55,10 @@
         <li><code>DEVICE_IMPORT_MAX_FILE_BYTES</code> / <code>DEVICE_IMPORT_MAX_ROWS</code>：设备 CSV 导入的文件大小与行数上限。</li>
         <li><code>OTA_ALLOW_DOWNGRADE</code>：是否允许固件降级（默认 <code>false</code>，建任务跳过当前版本更高的设备）。</li>
         <li><code>BRIDGE_KAFKA_*</code>：Kafka 数据桥接开关与连接参数（默认关闭，规则 / 场景 <code>FORWARD_KAFKA</code> 使用）。</li>
+        <li><code>MFA_ENABLED</code>：多因素认证总开关（默认 <code>true</code>；<code>false</code> 时 MFA 端点 404 且登录不要求二步）。</li>
+        <li><code>MFA_TIME_STEP_SECONDS</code> / <code>MFA_ALLOWED_WINDOW</code>：TOTP 步长与容忍的前后步数（默认 30 / 1）。</li>
+        <li><code>MFA_DIGITS</code> / <code>MFA_SECRET_LENGTH</code> / <code>MFA_ISSUER</code>：口令位数、密钥长度与 authenticator 发行方。</li>
+        <li><code>MFA_ENCRYPTION_KEY</code>：MFA 密钥加密密钥；留空由 <code>JWT_SECRET</code> 派生，轮换 <code>JWT_SECRET</code> 会导致已绑定用户需重新绑定。</li>
       </ul>
     </template>
 

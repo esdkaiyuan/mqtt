@@ -108,7 +108,14 @@
 
       <h2>成功响应</h2>
       <CodeBlock language="json" :code="httpSuccessResponse" />
-      <p><code>accepted</code> 恒为 <code>true</code>，表示记录已进入摄取管线。</p>
+      <p><code>accepted=true</code> 表示记录已进入摄取管线；携带 <code>Idempotency-Key</code> 且命中幂等时返回 <code>accepted=false</code> 与响应头 <code>X-Ingest-Duplicate: true</code>，不会重复入队。</p>
+
+      <h2>限流与幂等</h2>
+      <ul>
+        <li><strong>设备级限流</strong>：<code>HTTP_INGEST_RATE_LIMIT_ENABLED=true</code> 时按「设备 + 固定 60 秒窗口」计数，超限返回 <code>429</code> + <code>6314</code>；默认关闭。</li>
+        <li><strong>幂等去重</strong>：请求头 <code>Idempotency-Key</code>（1~128 个可见 ASCII，建议「启动批次 + 递增序号」），同一设备 + 同一键在 <code>HTTP_INGEST_IDEMPOTENCY_TTL_SECONDS</code>（默认 300 秒）内只入队一次。</li>
+        <li>非法幂等键返回 <code>400</code> + <code>6315</code>；限流与幂等发生在参数校验之后，非法报文不占配额。</li>
+      </ul>
 
       <h2>错误码</h2>
       <table>
@@ -119,6 +126,7 @@
           <tr><td>401</td><td><code>6246</code></td><td>设备凭据无效（缺失、非 Basic、用户名不符、设备不存在/停用/禁用、密钥错误）</td></tr>
           <tr><td>400</td><td><code>6247</code></td><td>messageType 不在白名单</td></tr>
           <tr><td>413</td><td><code>6248</code></td><td>请求体超过 <code>max-payload-bytes</code> 限制</td></tr>
+          <tr><td>429</td><td><code>6314</code></td><td>超出设备级上报频率限制，按 <code>Retry-After</code> 退避</td></tr>
         </tbody>
       </table>
 

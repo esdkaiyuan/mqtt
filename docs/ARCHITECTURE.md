@@ -1,7 +1,23 @@
 # MQTT云平台 - 系统架构文档
 
-> 版本：v1.45　最后更新：2026-10-26
+> 版本：v1.46　最后更新：2026-10-26
 > 适用范围：`MQTT自建站点` 主项目（Spring Boot + Vue 3 + EMQX + MySQL + Redis）
+
+---
+
+## 目录
+
+1. [系统概述](#1-系统概述)
+2. [总体架构](#2-总体架构)
+3. [部署拓扑与端口](#3-部署拓扑与端口)
+4. [后端架构](#4-后端架构)（分层 / 控制器清单 / 关键组件 / 模块边界）
+5. [前端架构](#5-前端架构)
+6. [数据模型](#6-数据模型)（44 张表，与 `V1`~`V34` 对应）
+7. [安全设计](#7-安全设计)
+8. [外部依赖与配置](#8-外部依赖与配置)
+9. [非功能性设计](#9-非功能性设计)
+10. [相关文档](#10-相关文档)
+11. [变更记录](#11-变更记录)
 
 ---
 
@@ -74,7 +90,7 @@ flowchart TB
 - **摄取链路（R2-1~R2-3）**：平台以共享订阅 `$share/{group}/device/+/data` 消费设备上行数据，进入有界队列后由固定 worker 批量落库；同一份数据同时 `PUBLISH` 到 Redis Pub/Sub 频道，由各后端副本 `SUBSCRIBE` 后扇出给本副本持有的 SSE 连接。队列满或落库持续失败的消息进入 `ingest_dead_letter` 表待人工处置，不阻塞主链路。
 - **下行命令链路（T-15）**：控制台 / 开放 API 下发命令 → 按物模型校验 → 落 `device_command_record`（`PENDING`）→ 平台账号发布到 `device/{deviceKey}/cmd/down`（QoS 1，置 `SENT`）→ 设备回执发布到 `device/{deviceKey}/reply` → 平台以共享订阅 `$share/{group}/device/+/reply` 消费，经摄取**第四路旁路**更新记录状态（`ACKED`/`FAILED`）。同步调用通过**轮询命令记录表**等待终态（跨副本正确），超时与长期停留由 `CommandTimeoutSweeper` 兜底置 `TIMEOUT`。
 - **导出与实时推送（T-36）**：CSV 编码统一收敛在 `CsvWriter`，三个细节写死在实现里并逐条单测 —— **UTF-8 BOM**（不加则 Excel 打开中文乱码）、**公式注入防护**（`=`/`+`/`-`/`@` 开头的单元格前置单引号；设备 payload 不可控，`=HYPERLINK` 是经典钓鱼手法）、**RFC 4180 转义**。导出**必须有行数上限并如实标注截断**，因为不分页的导出天然无界，一次性拼进内存能把进程打挂。SSE 由单主题扩为**多主题**，空 topics = 全订阅（保持既有行为等价）；属性趋势流挂在 `append`（属性历史唯一写入点，不会漏推/重推）且整段 `try/catch` 静默 —— **推送失败绝不能让摄取主链路的落库失败**。
-- **开放 API 的边界（T-35 / T-53）**：`/external/v1` 是唯一对外入口，控制器**只做三件事** —— API Key → `userId` 转换、响应裁剪、转发既有服务。归属隔离不靠控制器重复判断，而是**由各服务方法本身的 userId 校验承担**，因此新增能力域时只要复用服务就自动继承隔离。当前共 **47 个端点**：除命令下发与影子 desired 写入外，T-57 新增设备 / 规则 / 场景 12 个写端点（统一要求 `device:write`），其余为只读；T-53 批次二补分组 / 标签 / 点位表 / 规则执行 / 场景执行 / 看板只读端点，T-57 再补写端点。**不开放产品 / 物模型写、OTA 任务写与用户 / API Key 管理**（写操作的审计、回滚与幂等语义远比读复杂，控制台已完整覆盖）。
+- **开放 API 的边界（T-35 / T-53）**：`/external/v1` 是唯一对外入口，控制器**只做三件事** —— API Key → `userId` 转换、响应裁剪、转发既有服务。归属隔离不靠控制器重复判断，而是**由各服务方法本身的 userId 校验承担**，因此新增能力域时只要复用服务就自动继承隔离。当前共 **44 个端点**：除命令下发与影子 desired 写入外，T-57 新增设备 / 规则 / 场景 12 个写端点（统一要求 `device:write`），其余为只读；T-53 批次二补分组 / 标签 / 点位表 / 规则执行 / 场景执行 / 看板只读端点，T-57 再补写端点。**不开放产品 / 物模型写、OTA 任务写与用户 / API Key 管理**（写操作的审计、回滚与幂等语义远比读复杂，控制台已完整覆盖）。
 - **命令权限与配额（T-34）**：命令下发是**三层约束**，各管一件事、互不牵制 —— ① 角色闸门在 `SecurityConfig` 按路径限定 ADMIN/OPERATOR（改造前此处只有 `anyRequest().authenticated()`，VIEWER 可下发命令）；② 标识符 / 类型权限在 `CommandGuardService`，**只作用于外部来源**（规则 / OTA / 场景 / 点表是系统内部触发，其 `operatorId` 只是「谁配的这条自动化」，套角色判定会让「VIEWER 配的规则跑不起来」）；③ 调用配额在 `CommandQuotaService`，按 `operatorId` 的 Redis 固定窗口、**覆盖全部来源**（规则风暴同样要保护），`enabled=false` 时零 Redis 读写、`failOpen` 降级、TTL 仅在首次 INCR 设置。两者均在 `invoke` 入口**落库之前**判定。
 - **规则多条件与多动作（T-33）**：规则模型由「单条件 + 单动作」扩为 `condition_logic` + `conditions_json` + `actions_json`，采用「**JSON 可选列 + 旧列回落**」而非子表 —— 规则评估是「按 `user_id` 拉全量 → 内存匹配」，条件与动作从不作为 SQL 过滤条件，JSON 不损失查询能力，却让存量规则与存量代码路径行为逐位不变。多条件按「一次上报批」求值（同一条件多次上报取任一满足、`AND` 下缺值即终止求值）；多动作采用「**执行粒度 = 动作粒度**」，一次命中落 N 条执行记录并各带配置快照，使重试 / 巡检重放 / 手动重试天然按动作隔离（`FORWARD_HTTP` 不会重复投递），冷却锚点仍按每次触发只占一次。
 - **OTA 灰度与校验（T-32）**：升级任务可按 `batchMode=BATCHED` + `batchSize` 切批落 `ota_upgrade_batch`，建任务**只下发首批**；后续批次由巡检在「上一批已无非终态记录」且间隔到期后自动推进，控制台另有暂停 / 恢复 / 终止 / 手动推进。推进判定刻意读记录表而非可能滞后的批次 `status`，避免收口后被多压一轮巡检。任务状态 `PAUSED` / `ABORTED` 由**运维操作**产生而非记录聚合，故 `refreshCounters` 必须保留不被覆盖 —— 否则暂停会被下一次回传改回 `RUNNING`、终止被改回 `SUCCESS`，两个操作直接失效；`dispatched_count` 排除 `SKIPPED`、终止跳过数单列不并入失败。设备上行 `device/{key}/ota` 增可选 `fileMd5`，与 `ota_firmware.md5` 比对不一致即判失败；建任务期与下发期两处互斥校验保证同一台设备不会被两个任务同时升级。
@@ -505,6 +521,15 @@ frontend/src
 | `scene_version` | 场景版本快照（`V29` 新增，T-51）：`scene_id`（外键级联）、`version_no`（场景内递增）、`change_type`（`CREATE`/`UPDATE`/`RESTORE`）、`scene_name`/`trigger_type`/`step_count`（列表摘要）、`snapshot`（完整 JSON）、`operator_id`、`created_at`；唯一键 `uk_scene_version (scene_id, version_no)`；只追加，每场景保留最近 20 条 |
 | `device_certificate` | 设备证书（`V13` 新增，T-25）：X.509 证书生命周期（签发 + 吊销）。`device_id`（所属设备，**无外键**、普通索引 `idx_device_cert_device` 支撑「按设备查当前有效证书」的吊销热路径）、`product_key`/`device_key`（冗余，供审计与模板比对）、`serial`（十六进制序列号，**全局唯一 `uk_device_cert_serial`**）、`subject`（主体 DN，形如 `CN={productKey}.{deviceKey},O=MQTT Cloud`）、`issued_at`/`not_after`（毫秒精度）、`revoked_at`（**NULL = 未吊销**，非空即已吊销、**吊销即时生效**——EMQX 5.0.26 的 SSL 监听器无 `crl_check`/`crl_file`，改由后端认证回调查询本表拒绝）、`revoke_reason`（不超过 64 字符）、`created_at`；**不存私钥**（设备私钥仅随签发响应返回一次、CA 私钥只从文件系统读取），已吊销行保留不删供审计，同设备重签写新行、旧证书由运维按需显式吊销 |
 
+| `device_reg_batch` | 设备注册批次（`V17` 新增，T-30）：`batch_no`（对外唯一）、`product_id`、`owner_id`、`prefix` / `name_pattern` / `start_index`（deviceKey 生成规则）、`total_count` / `succeeded_count` / `failed_count`、`failed_items`（失败明细 JSON）、`credentials`（一次性凭据明文 JSON，**仅创建 / 查询时返回**）、`created_at` |
+| `device_point_table` | 设备点表（`V18` 新增，T-31）：`device_id`、`point_key`（映射物模型标识符）、`point_type`（寄存器 / 线圈 / DB / TAG / 节点）、`address`、`unit_id`（`V28` 新增，Modbus 从站地址，NULL = 继承 `driver_config.unitId`）、`data_type`（`int`/`float`/`double`/`bool`/`string`，`V28` 起支持 `int32`/`uint32`/`int64`/`uint64`）、`scale` / `offset`（工程值 = 原始值 × scale + offset）、`unit`、`executor`（`EDGE` 下发边缘 / `PLATFORM` 平台主站采集，同设备不可混用）、`read_interval_ms`、`enabled`；同一设备下 `point_key` 唯一 |
+| `device_point_run` | 点位运行日志（`V18` 新增，T-31）：`point_id` / `device_id`、`status`（`OK`/`FAILED`/`SKIPPED`）、`raw_value` / `value`（换算前后）、`error_message`、`collected_at`；未到周期的点位不写行，避免日志爆炸 |
+| `ota_upgrade_batch` | OTA 灰度批次（`V19` 新增，T-32）：`task_id`、`batch_no`（从 1 起）、`device_count` / `dispatched_count` / `success_count` / `failed_count` / `skipped_count`、`status`、`scheduled_at`（排期参考，**不作为自动推进判定依据**）、`started_at` / `finished_at`；自动推进以「上一批记录全部收口 + 间隔到期」为准，刻意不读批次 `status` |
+| `notification` | 站内信（`V15` 新增，T-27）：`user_id`、`event_type`（如 `alert.triggered`）、`level`（`INFO`/`WARNING`/`CRITICAL`）、`title` / `content`、`ref_type` / `ref_id`（当前为 `ALERT`）、`read_at`（NULL = 未读）、`created_at`；按用户隔离，超出保留上限清理最旧已读 |
+| `notification_channel` | 通知渠道配置（`V15` 新增，T-27）：`user_id`、`channel_type`（`EMAIL` / `SMS`）、`name`、`config`（JSON，SMTP / HTTP 供应商参数）、`events`（订阅事件数组）、`is_active`、`last_triggered_at`、`failure_count`；敏感字段响应脱敏 `******`，更新留空表示保留原值 |
+| `notification_delivery` | 通知投递记录（`V15` 新增，T-27）：`user_id`、`channel_id`（内置通道为 NULL）、`channel_type`（`INAPP`/`EMAIL`/`SMS`/`WEBHOOK`）、`event_type`、`target`（脱敏摘要）、`title`、`status`（`SUCCESS`/`FAILED`）、`attempt_count`、`next_attempt_at`（指数退避锚点）、`error_message`；按 `delivery-retention-days` 清理 |
+| `alert_escalation_policy` | 告警升级策略（`V15` 新增，T-27）：`user_id`、`name`、`severity`（`ALL`/`INFO`/`WARNING`/`CRITICAL`）、`after_seconds`（未确认阈值）、`assignee_id`（升级时指派处理人）、`channel_ids`（额外通知渠道）、`enabled`、`deleted`（**逻辑删除**）；升级以 `WHERE id=? AND escalation_level=?` 条件更新落地，多副本同一级只升一次 |
+| `dashboard_share` | 看板大屏分享（`V25` 新增，T-46）：`user_id`（创建者）、`name`（大屏标题）、`token_hash`（SHA-256，**不存明文**）、`token_preview`（前缀，仅列表识别）、`dashboard_ids`（看板 ID JSON 数组，按轮播顺序）、`interval_seconds`（轮播间隔）、`enabled`；轮换 / 停用 / 删除立即使旧链接失效 |
 | `audit_log` | 平台审计日志（`V31` 新增，T-53）：**只追加不修改**。`user_id` 刻意不加外键（用户删除后保留操作痕迹）；`source`（`CONSOLE`/`OPEN_API`/`DEVICE`/`ANONYMOUS`）、`http_method`、`path`、`action`（`CREATE`/`UPDATE`/`DELETE`/`COMMAND`/`ACK`/`LOGIN`…）、`resource_type`、`resource_id`、`status_code`、`success`、`error_message`（截断摘要，不含请求体）、`ip`、`user_agent`、`duration_ms`、`created_at`；索引 `idx_audit_user_time` / `idx_audit_time` / `idx_audit_action_time` / `idx_audit_resource`；按 `AUDIT_LOG_RETENTION_DAYS` 分批硬删除 |
 
 三层关系：**产品（模板）→ 设备（实例，`deviceKey` 在产品内唯一）→ 凭据（`deviceSecret` 仅存 BCrypt 哈希于 `device`）**。产品另持有**物模型（TSL）**：属性 / 事件 / 服务定义 + 版本号，是上行数据语义化的依据。
@@ -649,3 +674,4 @@ T-20（设备日志与诊断）**未新增表、未新增迁移**：设备日志
 | v1.43 | 2026-10-26 | T-57 开放 API 写操作与 SDK 示例收口：`/external/v1` 新增设备 / 规则 / 场景 12 个写端点（统一 `device:write`，设备写按 deviceKey 归属校验，全部转发既有服务）；端点总数 **35 → 47**；新增 D6 SDK 示例文档与文档站写操作分组；`ExternalApiControllerTest` 补写操作测试；§2 / §4.2 / §4.4 / §5.4 同步更新。 |
 | v1.44 | 2026-10-26 | T-58 TOTP 多因素认证收口：`V34` 为 `sys_user` 增加 MFA 三列；新增 `TotpUtil` / `MfaCrypto` / `MfaService` / `MfaController`，登录改为「密码 → 二步令牌 → 动态口令 → 访问令牌」；密钥 AES-256-GCM 加密存储；`MFA_*` 配置与开关；前端登录二步页与安全设置页；错误码 `6318`~`6322`；§2 / §4.1 / §4.2 / §4.3 / §4.4 / §5.4 / §6 / §8 同步更新。 |
 | v1.45 | 2026-10-26 | T-56 Kafka 数据桥接收口：新增 `bridge.KafkaMessageForwarder` + `app.bridge.kafka.*` 配置，规则 / 场景新增 `FORWARD_KAFKA` 动作（Topic / Key / 载荷模板，复用重试与载荷快照）；错误码 `6323`；`pom.xml` 增加 `kafka-clients`；前端规则 / 场景编辑器与 utils 同步；§2 / §4.1 / §4.3 / §4.4 / §5.4 / §8 同步更新。 |
+| v1.46 | 2026-10-26 | 文档体系优化与内容纠偏：新增 `docs/README.md` 文档中心索引；开放 API 端点数按代码校正为 **44**；数据模型补齐 9 张缺失表（`device_reg_batch` / `device_point_table` / `device_point_run` / `ota_upgrade_batch` / `notification` / `notification_channel` / `notification_delivery` / `alert_escalation_policy` / `dashboard_share`），与 `V1`~`V34` 迁移一一对应；修复 T-10 / T-56 文档相对链接。 |
