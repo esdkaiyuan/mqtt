@@ -338,6 +338,28 @@
           />
         </template>
 
+        <template v-else-if="step.actionType === 'FORWARD_KAFKA'">
+          <el-input
+            v-model="step.actionConfig.topic"
+            class="step-editor__config-item"
+            maxlength="255"
+            placeholder="Kafka Topic，如 factory.line1.alert"
+          />
+          <el-input
+            v-model="step.actionConfig.key"
+            class="step-editor__config-item"
+            maxlength="128"
+            placeholder="分区 Key（留空默认按设备标识）"
+          />
+          <el-input
+            v-model="step.actionConfig.payloadTemplate"
+            class="step-editor__config-item"
+            type="textarea"
+            :rows="2"
+            placeholder="载荷模板（留空使用默认载荷）"
+          />
+        </template>
+
         <template v-else-if="step.actionType === 'FORWARD_HTTP'">
           <el-select
             v-model="step.actionConfig.method"

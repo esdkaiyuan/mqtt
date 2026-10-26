@@ -92,6 +92,10 @@ public class Device {
     @TableField(value = "parent_id", updateStrategy = FieldStrategy.ALWAYS)
     private Long parentId;
 
+    /** 当前固件版本（T-54）：OTA 成功后由平台回写；NULL 表示尚未获知。 */
+    @TableField("firmware_version")
+    private String firmwareVersion;
+
     /** 设备激活码（T-30）；NULL 表示未走激活流程，注册即可用。敏感字段，不对外序列化 */
     @com.fasterxml.jackson.annotation.JsonIgnore
     @TableField(value = "activate_code", updateStrategy = FieldStrategy.ALWAYS)

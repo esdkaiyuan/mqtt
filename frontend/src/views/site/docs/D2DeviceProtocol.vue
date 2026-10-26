@@ -43,6 +43,21 @@
       <strong>时间口径</strong>：平台使用消息到达时间作为属性 / 事件时间，<strong>不读取 payload 内的 <code>ts</code></strong>。
     </p>
 
+    <h2>Payload Codec（可选）</h2>
+    <p>
+      若现场报文不是 Alink 信封，可在产品的「Payload Codec」中配置声明式映射模板。平台在物模型解析前先把原始
+      JSON 映射成 Alink，属性 / 事件 / 告警 / 规则 / 场景 / 历史链路完全无感知。
+      字符串以 <code>$</code> 开头表示路径（支持 <code>$.a.b</code>、<code>$[0]</code>、<code>$.a[0].b</code>），
+      其它值为常量；<strong>不执行脚本</strong>。路径不存在时字段省略。
+    </p>
+    <CodeBlock language="json" :code="codecSample" />
+    <p>
+      原始报文 <code>{"sensors":{"temp":26.5,"hum":61}}</code> 会被映射为
+      <code>{"method":"thing.event.property.post","params":{"temperature":26.5,"humidity":61}}</code>。
+      <code>fallbackToRaw=true</code>（默认）时，映射失败回退原始载荷；设为 false 则直接丢弃。
+      配置非法（JSON / template / 路径 / 大小超限）保存产品时返回 <code>6317</code>。
+    </p>
+
     <h2>属性上报</h2>
     <CodeBlock language="json" :code="propertySample" />
     <table>
@@ -192,6 +207,18 @@ const envelopeSample = `{
   "version": "1.0",
   "method": "thing.event.property.post",
   "params": { "temperature": 26.5 }
+}`
+
+const codecSample = `{
+  "version": 1,
+  "fallbackToRaw": true,
+  "template": {
+    "method": "thing.event.property.post",
+    "params": {
+      "temperature": "$.sensors.temp",
+      "humidity": "$.sensors.hum"
+    }
+  }
 }`
 
 const propertySample = `{

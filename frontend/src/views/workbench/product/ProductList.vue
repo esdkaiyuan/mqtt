@@ -44,6 +44,13 @@
             </el-button>
           </template>
         </el-table-column>
+        <el-table-column label="数据解析" width="100">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.payloadCodec ? 'success' : 'info'">
+              {{ row.payloadCodec ? 'Codec' : 'Alink' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" :disabled="!canWrite" @click="openEditDialog(row)">

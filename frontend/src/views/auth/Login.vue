@@ -36,44 +36,79 @@
           <p class="form-subtitle">使用您的账号登录管理工作台</p>
 
           <el-form label-position="top" class="login-form" @submit.prevent>
-            <el-form-item label="用户名">
-              <el-input
-                v-model="form.username"
-                placeholder="请输入用户名"
-                autocomplete="username"
-                size="large"
-              >
-                <template #prefix>
-                  <el-icon><User /></el-icon>
-                </template>
-              </el-input>
-            </el-form-item>
+            <template v-if="!mfaRequired">
+              <el-form-item label="用户名">
+                <el-input
+                  v-model="form.username"
+                  placeholder="请输入用户名"
+                  autocomplete="username"
+                  size="large"
+                >
+                  <template #prefix>
+                    <el-icon><User /></el-icon>
+                  </template>
+                </el-input>
+              </el-form-item>
 
-            <el-form-item label="密码">
-              <el-input
-                v-model="form.password"
-                type="password"
-                placeholder="请输入密码"
-                autocomplete="current-password"
-                size="large"
-                show-password
-                @keyup.enter="handleLogin"
-              >
-                <template #prefix>
-                  <el-icon><Lock /></el-icon>
-                </template>
-              </el-input>
-            </el-form-item>
+              <el-form-item label="密码">
+                <el-input
+                  v-model="form.password"
+                  type="password"
+                  placeholder="请输入密码"
+                  autocomplete="current-password"
+                  size="large"
+                  show-password
+                  @keyup.enter="handleLogin"
+                >
+                  <template #prefix>
+                    <el-icon><Lock /></el-icon>
+                  </template>
+                </el-input>
+              </el-form-item>
 
-            <el-button
-              type="primary"
-              size="large"
-              class="login-submit"
-              :loading="loading"
-              @click="handleLogin"
-            >
-              登录
-            </el-button>
+              <el-button
+                type="primary"
+                size="large"
+                class="login-submit"
+                :loading="loading"
+                @click="handleLogin"
+              >
+                登录
+              </el-button>
+            </template>
+
+            <template v-else>
+              <el-form-item label="动态口令">
+                <el-input
+                  v-model="mfaCode"
+                  placeholder="请输入 authenticator 中的 6 位口令"
+                  autocomplete="one-time-code"
+                  size="large"
+                  maxlength="6"
+                  @keyup.enter="handleMfaVerify"
+                >
+                  <template #prefix>
+                    <el-icon><Lock /></el-icon>
+                  </template>
+                </el-input>
+                <p class="form-hint">
+                  已开启多因素认证，请完成二步验证
+                </p>
+              </el-form-item>
+
+              <el-button
+                type="primary"
+                size="large"
+                class="login-submit"
+                :loading="loading"
+                @click="handleMfaVerify"
+              >
+                验证并登录
+              </el-button>
+              <el-button link type="primary" class="mfa-back" @click="backToPassword">
+                返回密码登录
+              </el-button>
+            </template>
 
             <div v-if="errorMessage" class="error-message">
               {{ errorMessage }}
@@ -113,6 +148,9 @@ const form = ref({
 
 const loading = ref(false)
 const errorMessage = ref('')
+const mfaRequired = ref(false)
+const mfaToken = ref('')
+const mfaCode = ref('')
 
 async function handleLogin() {
   errorMessage.value = ''
@@ -124,7 +162,13 @@ async function handleLogin() {
 
   loading.value = true
   try {
-    await authStore.login(form.value)
+    const result = await authStore.login(form.value)
+    if (result?.mfaRequired) {
+      mfaRequired.value = true
+      mfaToken.value = result.mfaToken
+      mfaCode.value = ''
+      return
+    }
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
     if (redirect) {
       router.replace(redirect)
@@ -134,6 +178,34 @@ async function handleLogin() {
   } finally {
     loading.value = false
   }
+}
+
+async function handleMfaVerify() {
+  errorMessage.value = ''
+  if (!mfaCode.value || mfaCode.value.length !== 6) {
+    errorMessage.value = '请输入 6 位动态口令'
+    return
+  }
+
+  loading.value = true
+  try {
+    await authStore.verifyMfa({ mfaToken: mfaToken.value, code: mfaCode.value })
+    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+    if (redirect) {
+      router.replace(redirect)
+    }
+  } catch {
+    // 错误提示由 axios 拦截器统一处理
+  } finally {
+    loading.value = false
+  }
+}
+
+function backToPassword() {
+  mfaRequired.value = false
+  mfaToken.value = ''
+  mfaCode.value = ''
+  errorMessage.value = ''
 }
 </script>
 

@@ -36,10 +36,13 @@ public final class RuleConstants {
     public static final String ACTION_FORWARD_MQTT = "FORWARD_MQTT";
     /** 动作：转发 HTTP。 */
     public static final String ACTION_FORWARD_HTTP = "FORWARD_HTTP";
+    /** 动作：转发 Kafka（T-56 数据桥接）。 */
+    public static final String ACTION_FORWARD_KAFKA = "FORWARD_KAFKA";
 
     /** 全部动作类型。 */
     public static final Set<String> ACTIONS = Set.of(
-            ACTION_UPDATE_PROPERTY, ACTION_SEND_COMMAND, ACTION_FORWARD_MQTT, ACTION_FORWARD_HTTP);
+            ACTION_UPDATE_PROPERTY, ACTION_SEND_COMMAND, ACTION_FORWARD_MQTT, ACTION_FORWARD_HTTP,
+            ACTION_FORWARD_KAFKA);
 
     // ---------- 执行状态 ----------
 

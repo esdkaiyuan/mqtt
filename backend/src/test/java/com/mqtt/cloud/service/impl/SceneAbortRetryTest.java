@@ -1,5 +1,6 @@
 package com.mqtt.cloud.service.impl;
 
+import com.mqtt.cloud.bridge.KafkaMessageForwarder;
 import com.mqtt.cloud.common.SceneConstants;
 import com.mqtt.cloud.config.RuleProperties;
 import com.mqtt.cloud.config.SceneProperties;
@@ -85,6 +86,7 @@ class SceneAbortRetryTest {
     private DeviceBatchService deviceBatchService;
     private RuleMqttForwarder mqttForwarder;
     private RuleHttpForwarder httpForwarder;
+    private KafkaMessageForwarder kafkaForwarder;
     private SceneProperties properties;
     private SceneExecutionFinalizer finalizer;
     private SceneActionExecutorImpl executor;
@@ -102,13 +104,14 @@ class SceneAbortRetryTest {
         deviceBatchService = mock(DeviceBatchService.class);
         mqttForwarder = mock(RuleMqttForwarder.class);
         httpForwarder = mock(RuleHttpForwarder.class);
+        kafkaForwarder = mock(KafkaMessageForwarder.class);
         properties = new SceneProperties();
         // 真实中止收口：本类要断言的是收口产生的 mapper 副作用，而非对 finalizer 的调用次数
         finalizer = new SceneExecutionFinalizer(stepRunMapper, executionMapper);
         executor = new SceneActionExecutorImpl(stepRunMapper, stepMapper, definitionMapper, executionMapper,
                 deviceMapper, propertyLatestMapper, commandService, thingModelService, deviceBatchService,
-                mqttForwarder, httpForwarder, finalizer, properties, new RuleProperties(), new ObjectMapper(),
-                mock(ThreadPoolTaskExecutor.class), new SimpleMeterRegistry());
+                mqttForwarder, httpForwarder, kafkaForwarder, finalizer, properties, new RuleProperties(),
+                new ObjectMapper(), mock(ThreadPoolTaskExecutor.class), new SimpleMeterRegistry());
     }
 
     // ---------- 中止收口三段式 ----------

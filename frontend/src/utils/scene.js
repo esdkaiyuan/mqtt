@@ -43,6 +43,7 @@ export const ACTION_TYPE_LABELS = {
   SEND_COMMAND: '下发命令',
   FORWARD_MQTT: '转发 MQTT',
   FORWARD_HTTP: '转发 HTTP',
+  FORWARD_KAFKA: '转发 Kafka',
   BRANCH: '条件分支',
   LOOP: '循环结束',
   PARALLEL: '并行开始',
@@ -131,6 +132,7 @@ export const ACTION_TYPE_OPTIONS = [
   { value: 'SEND_COMMAND', label: '下发命令' },
   { value: 'FORWARD_MQTT', label: '转发 MQTT' },
   { value: 'FORWARD_HTTP', label: '转发 HTTP' },
+  { value: 'FORWARD_KAFKA', label: '转发 Kafka' },
   { value: 'BRANCH', label: '条件分支' },
   { value: 'LOOP', label: '循环结束' },
   { value: 'PARALLEL', label: '并行开始' },
@@ -173,7 +175,7 @@ export const STEP_STATUS_OPTIONS = [
 ]
 
 /** 转发类动作只允许「触发设备」，其 target_config 必须为空。 */
-export const FORWARD_ACTIONS = new Set(['FORWARD_MQTT', 'FORWARD_HTTP'])
+export const FORWARD_ACTIONS = new Set(['FORWARD_MQTT', 'FORWARD_HTTP', 'FORWARD_KAFKA'])
 
 /** 上下线触发源：只按设备状态变化触发，不配置标识符 / 阈值 / cron。 */
 export const STATUS_TRIGGERS = new Set(['ONLINE', 'OFFLINE'])
@@ -245,6 +247,8 @@ export function formatActionSummary(step) {
       return `MQTT → ${config.topic ?? '—'}`
     case 'FORWARD_HTTP':
       return `${(config.method || 'POST').toUpperCase()} ${config.url ?? '—'}`
+    case 'FORWARD_KAFKA':
+      return `Kafka → ${config.topic ?? '—'}${config.key ? `（key=${config.key}）` : ''}`
     case 'BRANCH':
       return `条件分支 → 真：${config.trueSeq == null ? '结束' : `第 ${config.trueSeq} 步`} / 假：${config.falseSeq == null ? '结束' : `第 ${config.falseSeq} 步`}`
     case 'LOOP':
@@ -316,6 +320,8 @@ export function createActionConfig(actionType) {
       return { topic: '', qos: 1, payloadTemplate: '' }
     case 'FORWARD_HTTP':
       return { url: '', method: 'POST', headers: '', payloadTemplate: '' }
+    case 'FORWARD_KAFKA':
+      return { topic: '', key: '', payloadTemplate: '' }
     case 'BRANCH':
       return {
         deviceId: null,

@@ -222,6 +222,13 @@ export const routes = [
         meta: { title: '通知渠道', icon: 'message', group: 'access' }
       },
       {
+        // 安全设置（T-58）：TOTP 多因素认证绑定 / 启停
+        path: 'settings/security',
+        name: 'SecuritySettings',
+        component: () => import('@/views/workbench/settings/SecuritySettings.vue'),
+        meta: { title: '安全设置', icon: 'shield', group: 'access' }
+      },
+      {
         // 快速上位机（T-38）：按物模型生成单设备 Web 组态
         path: 'hmi',
         name: 'HmiList',
@@ -307,6 +314,13 @@ export const routes = [
         name: 'UpgradeTaskDetail',
         component: () => import('@/views/workbench/ota/UpgradeTaskDetail.vue'),
         meta: { title: '任务详情', hidden: true, group: 'fleet', roles: ['ADMIN', 'OPERATOR'] }
+      },
+      {
+        // 审计日志（T-53）：管理端写操作留痕，仅 ADMIN 可见
+        path: 'system/audit-logs',
+        name: 'AuditLogList',
+        component: () => import('@/views/workbench/system/AuditLogList.vue'),
+        meta: { title: '审计日志', icon: 'shield', group: 'system', roles: ['ADMIN'] }
       }
     ]
   },

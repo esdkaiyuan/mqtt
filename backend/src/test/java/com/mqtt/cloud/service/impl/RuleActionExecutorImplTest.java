@@ -1,6 +1,7 @@
 package com.mqtt.cloud.service.impl;
 
 import com.mqtt.cloud.common.ResultCode;
+import com.mqtt.cloud.bridge.KafkaMessageForwarder;
 import com.mqtt.cloud.common.RuleConstants;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.config.RuleProperties;
@@ -63,6 +64,7 @@ class RuleActionExecutorImplTest {
     private ThingModelService thingModelService;
     private RuleMqttForwarder mqttForwarder;
     private RuleHttpForwarder httpForwarder;
+    private KafkaMessageForwarder kafkaForwarder;
     private RuleProperties properties;
     private RuleActionExecutorImpl service;
 
@@ -76,10 +78,11 @@ class RuleActionExecutorImplTest {
         thingModelService = mock(ThingModelService.class);
         mqttForwarder = mock(RuleMqttForwarder.class);
         httpForwarder = mock(RuleHttpForwarder.class);
+        kafkaForwarder = mock(KafkaMessageForwarder.class);
         properties = new RuleProperties();
         service = new RuleActionExecutorImpl(executionMapper, definitionMapper, deviceMapper,
                 propertyLatestMapper, commandService, thingModelService, mqttForwarder, httpForwarder,
-                properties, new ObjectMapper());
+                kafkaForwarder, properties, new ObjectMapper());
     }
 
     // ---------- 记录加载 ----------

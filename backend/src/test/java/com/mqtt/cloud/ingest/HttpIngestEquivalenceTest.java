@@ -5,6 +5,7 @@ import com.mqtt.cloud.mqtt.MqttClientManager;
 import com.mqtt.cloud.mqtt.MqttMessageHandler;
 import com.mqtt.cloud.mqtt.MqttProperties;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.HttpIngestGuard;
 import com.mqtt.cloud.service.MessageService;
 import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.RealtimeStreamService;
@@ -19,6 +20,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -53,8 +55,10 @@ class HttpIngestEquivalenceTest {
     /** 驱动真实 {@link HttpIngestServiceImpl}，捕获其投递的 {@link IngestRecord}。 */
     private IngestRecord overHttp(String messageType, String payload) {
         IngestPipeline pipeline = mock(IngestPipeline.class);
+        HttpIngestGuard guard = (deviceKey, idempotencyKey) ->
+                new HttpIngestGuard.GuardResult(false, LocalDateTime.now());
         HttpIngestServiceImpl service = new HttpIngestServiceImpl(
-                pipeline, new IngestProperties(), new HttpIngestProperties());
+                pipeline, new IngestProperties(), new HttpIngestProperties(), guard);
 
         service.ingest(DEVICE_KEY, messageType, payload);
 

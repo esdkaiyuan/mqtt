@@ -65,10 +65,25 @@ export const useAuthStore = defineStore('auth', () => {
   async function login(loginDTO) {
     const result = await authApi.login(loginDTO)
     const data = result.data || result
+    // T-58：启用 MFA 的账号密码通过后只拿到二步临时令牌，不建立会话
+    if (data.mfaRequired) {
+      return { mfaRequired: true, mfaToken: data.mfaToken, username: data.username }
+    }
     token.value = data.token || ''
     user.value = normalizeUser(data)
     persistSession()
     emit('navigate', '/workbench/dashboard')
+    return { mfaRequired: false }
+  }
+
+  async function verifyMfa(payload) {
+    const result = await authApi.verifyMfa(payload)
+    const data = result.data || result
+    token.value = data.token || ''
+    user.value = normalizeUser(data)
+    persistSession()
+    emit('navigate', '/workbench/dashboard')
+    return data
   }
 
   async function register(registerDTO) {
@@ -132,6 +147,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAdmin,
     hasRole,
     login,
+    verifyMfa,
     register,
     logout,
     fetchCurrentUser,

@@ -10,6 +10,7 @@ import com.mqtt.cloud.dto.response.LoginResponseDTO;
 import com.mqtt.cloud.dto.response.UserResponseDTO;
 import com.mqtt.cloud.entity.User;
 import com.mqtt.cloud.mapper.UserMapper;
+import com.mqtt.cloud.config.MfaProperties;
 import com.mqtt.cloud.service.TokenBlacklistService;
 import com.mqtt.cloud.service.UserService;
 import com.mqtt.cloud.util.JwtUtil;
@@ -31,6 +32,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private final UserMapper userMapper;
     private final JwtUtil jwtUtil;
     private final TokenBlacklistService tokenBlacklistService;
+    private final MfaProperties mfaProperties;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -76,6 +78,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         if (!passwordEncoder.matches(rawPassword, user.getPassword())) {
             throw new BusinessException(ResultCode.INVALID_CREDENTIALS);
+        }
+
+        // T-58：启用 MFA 的用户密码通过后只签发二步临时令牌，最后登录时间等动态口令通过后再更新
+        if (mfaProperties.isEnabled() && Integer.valueOf(1).equals(user.getMfaEnabled())) {
+            String mfaToken = jwtUtil.generateMfaToken(
+                    user.getId(), user.getUsername(), user.getRole());
+            return LoginResponseDTO.mfaRequired(mfaToken, user.getUsername());
         }
 
         userMapper.updateLastLogin(user.getId(), LocalDateTime.now());

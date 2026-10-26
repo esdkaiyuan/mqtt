@@ -74,6 +74,10 @@
             <span :class="['device-type-badge', device.deviceType]">{{ formatDeviceType(device.deviceType) }}</span>
           </div>
           <div class="info-item">
+            <span class="info-label">固件版本</span>
+            <span class="info-value">{{ device.firmwareVersion || '未上报' }}</span>
+          </div>
+          <div class="info-item">
             <span class="info-label">MQTT Topic</span>
             <span class="info-value topic-text">{{ device.topic }}</span>
           </div>

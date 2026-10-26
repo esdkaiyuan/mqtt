@@ -25,5 +25,6 @@ export const EP_DIR_ALIAS = {
   'breadcrumb-item': 'breadcrumb',
   'radio-group': 'radio',
   'radio-button': 'radio',
-  'timeline-item': 'timeline'
+  'timeline-item': 'timeline',
+  step: 'steps'
 }

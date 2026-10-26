@@ -47,6 +47,7 @@ public class SecurityConfig {
     private static final String[] PUBLIC_ENDPOINTS = {
             "/auth/login",
             "/auth/register",
+            "/auth/mfa/verify",
             "/health",
             "/health/**",
             "/actuator/health",
@@ -125,6 +126,8 @@ public class SecurityConfig {
                     .requestMatchers("/external/v1/**").hasRole("EXTERNAL")
                     // 系统管理类接口仅 ADMIN 可访问
                     .requestMatchers("/api-keys/**", "/webhooks/**").hasRole("ADMIN")
+                    // 审计日志（T-53）：含全平台操作轨迹与来源 IP，仅 ADMIN 可查 / 导出
+                    .requestMatchers("/audit-logs/**", "/audit-logs").hasRole("ADMIN")
                     // 监控端点：health 与 prometheus 已在 PUBLIC_ENDPOINTS 放行，其余（info/metrics）仅 ADMIN
                     .requestMatchers("/actuator/**").hasRole("ADMIN")
                     // 排障明细（T-30 E3）：/health 与 /health/ready 已在 PUBLIC_ENDPOINTS 放行，

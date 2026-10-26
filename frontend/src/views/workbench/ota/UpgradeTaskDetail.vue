@@ -130,6 +130,12 @@
             建任务时 {{ detail.conflictSkippedCount }} 台设备正在其他升级任务中，已自动跳过
           </span>
         </div>
+        <div v-if="(detail.downgradeSkippedCount ?? 0) > 0" class="detail-meta__row">
+          <span class="detail-meta__label">降级拦截</span>
+          <span class="detail-meta__value">
+            建任务时 {{ detail.downgradeSkippedCount }} 台设备当前固件版本高于目标版本，已自动跳过
+          </span>
+        </div>
       </div>
 
       <div v-if="batches.length" class="batch-panel card">

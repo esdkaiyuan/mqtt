@@ -1816,6 +1816,306 @@ FROM alert_rule WHERE source_type = 'THRESHOLD' ORDER BY id;
 
 **配置**：本任务无新增环境变量；`V30__alert_window.sql` 随应用启动由 Flyway 自动执行。
 
+### 9.32 平台治理与接入可靠性运维（T-53）
+
+**审计日志**
+
+入口：工作台「系统管理 → 审计日志」，仅 `ADMIN` 可见。记录管理端与开放 API 的写操作
+（`POST` / `PUT` / `PATCH` / `DELETE`）以及登录、登出、注册事件；读请求不落库。
+
+- 字段包含：操作者、角色、来源（`CONSOLE` / `OPEN_API` / `ANONYMOUS`）、方法、路径、动作、
+  资源类型与标识、HTTP 状态、成功标记、错误摘要、IP、User-Agent、耗时；
+- **不记录请求体**：设备密钥、API Key、证书私钥不会进入审计表；
+- 查询支持用户、动作、资源、来源、结果、关键字与时间窗过滤；`GET /api/audit-logs/export` 导出 CSV；
+- 默认保留 180 天，`AUDIT_LOG_RETENTION_DAYS=0` 表示不清理；清理按批删除，避免大事务锁表。
+
+```bash
+# 查询最近的删除操作
+curl -H "Authorization: Bearer <admin-token>" \
+  "http://localhost/api/audit-logs?action=DELETE&pageNum=1&pageSize=20"
+```
+
+```sql
+SELECT created_at, username, source, action, resource_type, resource_id,
+       status_code, success, ip, duration_ms
+FROM audit_log
+ORDER BY created_at DESC
+LIMIT 50;
+```
+
+**设备台账 CSV 导入 / 导出**
+
+- 入口：设备管理页「导入」「导出」；模板：`GET /api/devices/import-template`；
+- 列：`deviceKey, deviceName, productKey` 必填，`deviceType`（默认 `sensor`）、
+  `topic`（默认 `device/{deviceKey}/data`）、`description`、`firmwareVersion`（T-54，可选）为可选列；
+- 单次最多 1000 行、2MB；逐行独立事务，失败行见 `failedItems`，不阻断整批；
+- 每台成功设备签发一次性密钥，仅导入响应返回；请立即导出凭据 CSV；
+- 导入需要 `ADMIN` / `OPERATOR`；导出不带密钥，非 `ADMIN` 只导出本人设备。
+
+```bash
+# 下载模板并导入
+curl -H "Authorization: Bearer <token>" \
+  -o device-import-template.csv \
+  http://localhost/api/devices/import-template
+
+curl -X POST -H "Authorization: Bearer <token>" \
+  -F "file=@devices.csv" \
+  http://localhost/api/devices/import
+```
+
+**HTTP 上报限流与幂等**
+
+- 限流：`HTTP_INGEST_RATE_LIMIT_ENABLED=true` 后，按「设备 + 固定 60 秒窗口」计数，
+  超限返回 `429` + `6314`；默认关闭，Redis 故障按 `HTTP_INGEST_RATE_LIMIT_FAIL_OPEN` 放行或拒绝；
+- 幂等：设备在请求头携带 `Idempotency-Key`（1~128 个可见 ASCII，建议设备启动批次 + 递增序号），
+  平台以 Redis `SET NX EX` 去重；重复请求返回 `200`、`accepted=false`、
+  响应头 `X-Ingest-Duplicate: true`，不会再次入队；
+- 幂等键在 TTL（默认 300 秒）内有效；参数校验失败的请求不会写入幂等键；
+- 限流与幂等都发生在**参数校验之后、入队之前**，不会改变 MQTT 链路。
+
+```bash
+curl -X POST "http://localhost/api/ingest/sensor-temp-001/data" \
+  -u "product-k1.sensor-temp-001:<device-secret>" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: boot-7f3a-000123" \
+  -d '{"params":{"temperature":26.5}}'
+```
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 审计日志页为空 | 确认 `AUDIT_LOG_ENABLED=true`；该页只展示写操作与认证事件，纯查询不会产生记录 |
+| 审计里有 `ANONYMOUS` | 设备激活 / 登录失败等尚未建立登录态的请求属正常；结合路径与结果判断 |
+| 导入返回 6316 | 检查表头（`deviceKey` / `deviceName` / `productKey`）、文件大小、行数与 CSV 引号是否闭合 |
+| 导入部分失败 | 查看 `failedItems`：常见为 `deviceKey` 重复、产品不存在、字段超长 |
+| HTTP 上报 429 + 6314 | 设备超出 `HTTP_INGEST_RATE_LIMIT_PER_MINUTE`；确认是否为设备重试风暴 |
+| 重复上报未去重 | 确认设备真的发送了 `Idempotency-Key`，且两次值一致；TTL 过期后同键会重新受理 |
+
+**配置**：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `AUDIT_LOG_ENABLED` | `true` | 审计日志总开关 |
+| `AUDIT_LOG_RETENTION_DAYS` | `180` | 保留天数，`0` = 不清理 |
+| `AUDIT_LOG_SWEEP_INTERVAL_MS` | `3600000` | 清理巡检间隔，`<=0` 关闭 |
+| `AUDIT_LOG_PURGE_BATCH_SIZE` | `1000` | 单批删除行数 |
+| `DEVICE_IMPORT_MAX_FILE_BYTES` | `2097152` | 导入文件大小上限 |
+| `DEVICE_IMPORT_MAX_ROWS` | `1000` | 导入数据行数上限 |
+| `HTTP_INGEST_RATE_LIMIT_ENABLED` | `false` | 设备级限流开关 |
+| `HTTP_INGEST_RATE_LIMIT_PER_MINUTE` | `600` | 单设备 60 秒内最大上报次数 |
+| `HTTP_INGEST_RATE_LIMIT_FAIL_OPEN` | `true` | Redis 故障时是否放行 |
+| `HTTP_INGEST_IDEMPOTENCY_TTL_SECONDS` | `300` | 幂等键有效期 |
+
+`V31__audit_log.sql` 随应用启动由 Flyway 自动执行；设备导入、HTTP 上报限流与幂等不新增表。
+
+### 9.33 OTA 固件版本跟踪与降级拦截运维（T-54）
+
+**版本来源**：设备上行 `device/{key}/ota` 报文 `status=success` 且带 `version` 时，平台回写
+`device.firmware_version`。任务升级与手工升级都会回写；失败 / 校验不一致 / 非终态回传不更新。
+
+**降级拦截**：建升级任务时，默认 `OTA_ALLOW_DOWNGRADE=false`，平台会跳过
+「设备当前 `firmware_version` 高于目标版本」的设备；任务详情显示「降级拦截 N 台」。
+设备版本未知（NULL）时放行。现场需要回滚固件时：
+
+```bash
+# .env
+OTA_ALLOW_DOWNGRADE=true
+```
+
+然后重建 / 重启 backend 容器；该开关影响建任务时的目标过滤，不影响已创建任务。
+全部目标设备都被拦截时建任务返回 `6237`。
+
+**防乱序回退**：设备回传版本低于平台记录时默认忽略（避免旧 success 包把版本改回旧值）；
+`OTA_ALLOW_DOWNGRADE=true` 时按设备真实回传更新。
+
+**排查**：
+
+```sql
+-- 查看设备当前版本
+SELECT device_key, firmware_version, status, last_seen
+FROM device WHERE deleted = 0 ORDER BY id;
+
+-- 查看升级任务的降级拦截情况（T-54 起持久化）
+SELECT id, name, firmware_id, total_count, skipped_count, downgrade_skipped_count, status
+FROM ota_upgrade_task ORDER BY id DESC LIMIT 20;
+```
+
+| 现象 | 排查 |
+|---|---|
+| 设备详情显示「未上报」 | 设备尚未通过 `device/{key}/ota` 成功回传 `version`；确认固件侧在 success 报文带版本 |
+| 任务详情没有「降级拦截」 | 没有设备因版本被跳过，或 `OTA_ALLOW_DOWNGRADE=true` |
+| 建任务返回 6237 | 目标设备当前版本均高于目标版本；确认固件版本号写对，或临时打开 `OTA_ALLOW_DOWNGRADE` |
+| 设备版本不更新 | 检查上行报文 `status` 是否 `success`、`version` 是否与任务记录一致；查看后端 WARN「固件版本回写失败 / 忽略回写」 |
+
+**配置**：`OTA_ALLOW_DOWNGRADE`（默认 `false`）。`V32__device_firmware_version.sql` 随应用启动由 Flyway 自动执行（设备版本列 + 任务降级拦截计数列）。
+
+### 9.34 Payload Codec 数据解析映射运维（T-55）
+
+**入口**：工作台「产品管理」→ 编辑产品 →「Payload Codec（JSON）」。留空表示按原始 Alink 解析；
+产品列表「数据解析」列显示 `Codec` / `Alink`。
+
+**示例**：
+
+```json
+{
+  "version": 1,
+  "fallbackToRaw": true,
+  "template": {
+    "method": "thing.event.property.post",
+    "params": {
+      "temperature": "$.sensors.temp",
+      "humidity": "$.sensors.hum"
+    }
+  }
+}
+```
+
+原始报文 `{"sensors":{"temp":26.5,"hum":61}}` 会被映射为
+`{"method":"thing.event.property.post","params":{"temperature":26.5,"humidity":61}}`，
+随后进入既有物模型解析；属性最新值 / 告警 / 规则 / 场景 / 历史与 Alink 上报完全一致。
+
+**规则与限制**：
+
+- 路径只读：`$`、`$.a.b`、`$[0]`、`$['a.b']`、`$.a[0].b`；不支持通配符、表达式与脚本；
+- 路径不存在时字段省略；`template.method` 必填；
+- `fallbackToRaw=true`（默认）映射失败回退原始载荷；false 时按 `unparsed` 丢弃；
+- Codec ≤16KB，模板深度 ≤10、节点 ≤500；配置非法保存产品返回 `400 + 6317`；
+- 缓存 TTL 复用 `THING_MODEL_CACHE_TTL_SECONDS`；产品更新后本副本立即失效，多副本收敛窗口 = TTL；
+- 关闭 `THING_MODEL_INTERPRET_ENABLED` 时 Codec 同样不执行。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 属性仍不出现 | 确认产品已保存 Codec、`template.method` 为 `thing.event.property.post`、路径与原始报文一致；查看 `thing_model_interpret_total{result="codec"}` 是否增长 |
+| 保存产品返回 6317 | 检查 JSON、`version` / `mode`、`template.method`、`$` 路径语法、大小 / 深度 |
+| 修改 Codec 后短时间未生效 | 多副本收敛窗口 = `THING_MODEL_CACHE_TTL_SECONDS`；确认产品更新已提交 |
+| 报文被当成 unparsed | 检查 `fallbackToRaw`；若为 false，映射失败会直接丢弃 |
+| 映射后字段类型不匹配 | Codec 只做结构映射，类型 / 范围仍由物模型 `dataType` 校验；检查 TSL 定义 |
+
+```sql
+SELECT id, product_key, product_name,
+       CASE WHEN payload_codec IS NULL THEN 'Alink' ELSE 'Codec' END AS parser
+FROM product WHERE deleted = 0 ORDER BY id;
+```
+
+**配置**：无新增环境变量；`V33__product_payload_codec.sql` 随应用启动由 Flyway 自动执行。
+
+### 9.35 开放 API 写操作运维（T-57）
+
+**端点**：`/api/external/v1` 下 12 个写端点：
+
+- 设备：`POST /devices`、`PUT|DELETE /devices/{deviceKey}`；
+- 规则：`POST|PUT|DELETE /rules`、`PUT /rules/{id}/enabled`；
+- 场景：`POST|PUT|DELETE /scenes`、`PUT /scenes/{id}/enabled`、`POST /scenes/{id}/run`。
+
+**scope 与边界**：
+
+- 所有写端点要求 `device:write`；读取仍可只发 `device:read`；
+- 设备写按 `deviceKey` 归属校验，非归属返回 `2003`；规则 / 场景由 `userId` 隔离，不存在 / 越权分别返回 `6218` / `403`、`6240` / `403`；
+- 创建设备返回一次性 `deviceSecret`，仅本次返回；重复创建按 `deviceKey` 唯一返回 `2001`；
+- 写操作同样受开放接口按 API Key 限流（`RATE_LIMIT_*`）与审计日志覆盖；
+- 未开放产品 / 物模型写、OTA 任务写、用户 / API Key 管理。
+
+**示例**：
+
+```bash
+curl -X POST "https://your-server/api/external/v1/devices" \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"productId":3,"deviceKey":"sensor-002","deviceName":"传感器-02","deviceType":"sensor","topic":"device/sensor-002/data"}'
+```
+
+更多 curl / JS / Python 示例与错误处理见 [`D6_开放API写操作与SDK示例.md`](D6_开放API写操作与SDK示例.md)。
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 403 | 密钥缺少 `device:write`，或访问他人资源 |
+| 2003 | 设备不属于该密钥所属用户 |
+| 2001 | `deviceKey` 在同产品内已存在；先查询确认 |
+| 6219 / 6220 / 6222 | 规则配置 / 动作类型 / 数量上限非法 |
+| 6241 / 6242 / 6244 / 6245 | 场景配置 / 动作 / 上限 / 触发源非法 |
+| 429 | 按 `Retry-After` 退避；写操作也计入 API Key 限流 |
+
+**配置**：无新增环境变量；写端点复用既有 `RATE_LIMIT_*` 与 `AUDIT_LOG_*`。
+
+### 9.36 多因素认证运维（T-58）
+
+**入口**：工作台「开发接入 → 安全设置」。绑定后用 authenticator（Google Authenticator / 1Password / Microsoft Authenticator 等）录入密钥或 otpauth URI，回填 6 位动态口令完成启用。
+
+**登录流程**：
+
+1. `POST /api/auth/login` 密码通过后，启用 MFA 的账号返回 `mfaRequired=true` 与 `mfaToken`；
+2. `POST /api/auth/mfa/verify` 携带 `mfaToken` + 动态口令，通过后返回完整登录响应；
+3. 未启用 MFA 的账号仍一步登录。
+
+**安全口径**：
+
+- TOTP 密钥只存 AES-256-GCM 密文（`sys_user.mfa_secret`），不明文落库、绑定只展示一次；
+- 加密密钥优先 `MFA_ENCRYPTION_KEY`，否则由 `JWT_SECRET` 派生；**轮换 `JWT_SECRET` 且未配置 `MFA_ENCRYPTION_KEY` 时，已绑定用户需重新绑定**；
+- 停用需再次输入动态口令；临时关闭 `MFA_ENABLED=false` 时 MFA 端点 404 且登录不要求二步，已绑定密钥保留。
+
+**配置**：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `MFA_ENABLED` | `true` | false 时端点 404、登录不要求二步 |
+| `MFA_TIME_STEP_SECONDS` | `30` | TOTP 步长 |
+| `MFA_ALLOWED_WINDOW` | `1` | 容忍 ±1 步时钟偏差 |
+| `MFA_DIGITS` | `6` | 口令位数 |
+| `MFA_SECRET_LENGTH` | `20` | 密钥字节数 |
+| `MFA_ISSUER` | `MQTT云平台` | authenticator 发行方 |
+| `MFA_ENCRYPTION_KEY` | 空 | 建议显式配置，避免受 JWT 轮换影响 |
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 登录只到密码步 | 账号未启用 MFA，或 `MFA_ENABLED=false` |
+| 口令总是错误 | 检查服务器时间与 authenticator 时间；可临时调大 `MFA_ALLOWED_WINDOW` |
+| 启用后无法登录 | 确认服务器时间与密钥录入无误；紧急时可 `MFA_ENABLED=false` 回退，再重新绑定 |
+| 重新开启后仍要二步 | 已绑定密钥保留，属预期 |
+| 6321 | 二步令牌过期（5 分钟）或非 MFA 令牌，重新登录 |
+
+`V34__user_mfa.sql` 随应用启动由 Flyway 自动执行。
+
+### 9.37 Kafka 数据桥接运维（T-56）
+
+**动作**：规则 / 场景新增 `FORWARD_KAFKA`，动作配置 `{ topic, key, payloadTemplate }`：
+
+- `topic` 为空回落 `BRIDGE_KAFKA_TOPIC`；
+- `key` 建议按 `${deviceKey}` 渲染，保证同设备分区有序；为空按 Kafka 粘性分区；
+- `payloadTemplate` 为空使用与 MQTT / HTTP 一致的默认载荷；非空渲染后必须是合法 JSON。
+
+**配置**：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `BRIDGE_KAFKA_ENABLED` | `false` | 关闭时不创建 Producer，动作直接失败 `6323` |
+| `BRIDGE_KAFKA_BOOTSTRAP_SERVERS` | 空 | `host:port` 逗号分隔，开启时必填 |
+| `BRIDGE_KAFKA_TOPIC` | 空 | 缺省 Topic |
+| `BRIDGE_KAFKA_CLIENT_ID` | `mqtt-cloud-bridge` | 客户端 ID 前缀 |
+| `BRIDGE_KAFKA_ACKS` | `all` | Kafka acks |
+| `BRIDGE_KAFKA_MAX_BLOCK_MS` | `5000` | 发送阻塞超时，超时按失败重试 |
+| `BRIDGE_KAFKA_SECURITY_PROTOCOL` | `PLAINTEXT` | PLAINTEXT / SASL_PLAINTEXT / SSL / SASL_SSL |
+| `BRIDGE_KAFKA_SASL_MECHANISM` | 空 | 如 PLAIN / SCRAM-SHA-256 |
+| `BRIDGE_KAFKA_SASL_USERNAME` / `PASSWORD` | 空 | SASL 账号 |
+
+**排障**：
+
+| 现象 | 排查 |
+|---|---|
+| 动作失败 `6323` | 确认 `BRIDGE_KAFKA_ENABLED=true`、Bootstrap / Topic 已配置；查看后端 WARN |
+| 连接超时 | 容器到 Kafka 网络连通性、端口与安全协议；`MAX_BLOCK_MS` 调大仅掩盖问题 |
+| 消息乱序 | 为动作配置固定 `key`（如设备标识），避免 `null` key 粘性分区 |
+| SASL 失败 | 机制与账号是否匹配（PLAIN / SCRAM），`SECURITY_PROTOCOL` 是否为 SASL_* |
+| 改配置不生效 | Producer 单例复用，需重启 backend |
+
+**依赖**：`kafka-clients` 由 Spring Boot BOM 托管版本；未引入 spring-kafka，无自动配置耦合。
+
 ---
 
 ## 10. 依赖版本与安全扫描

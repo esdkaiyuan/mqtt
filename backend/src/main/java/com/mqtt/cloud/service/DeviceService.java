@@ -54,6 +54,14 @@ public interface DeviceService extends IService<Device> {
     IPage<Device> getDevices(Long userId, DeviceQueryDTO dto);
 
     /**
+     * 按筛选条件取设备列表（不分页，供 CSV 导出台账使用）。
+     * <p>
+     * {@code limit} 由调用方收敛到导出上限；返回值最多 {@code limit} 条，
+     * 是否截断由调用方按「返回值条数 >= limit」判断。
+     */
+    java.util.List<Device> listForExport(DeviceQueryDTO dto, int limit);
+
+    /**
      * 按已解析的分组范围分页设备（T-48 共享分组用）。
      * <p>
      * {@code dto.ownerId} 为空时不追加 owner 条件，仅依赖调用方已校验的 {@code groupIds} 限定范围。
@@ -86,4 +94,12 @@ public interface DeviceService extends IService<Device> {
     void updateDeviceStatus(Long deviceId, String status, LocalDateTime eventTime);
 
     void updateDeviceStatusByKey(String deviceKey, String status);
+
+    /**
+     * 回写设备当前固件版本（T-54）。
+     * <p>
+     * 由 OTA 成功回传调用；版本为空时忽略。是否允许降级由调用方按
+     * {@code app.ota.allow-downgrade} 判定，本方法只负责落库。
+     */
+    void updateFirmwareVersion(Long deviceId, String firmwareVersion);
 }

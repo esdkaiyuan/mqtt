@@ -1,5 +1,6 @@
 package com.mqtt.cloud.service.impl;
 
+import com.mqtt.cloud.bridge.KafkaMessageForwarder;
 import com.mqtt.cloud.common.SceneConstants;
 import com.mqtt.cloud.config.RuleProperties;
 import com.mqtt.cloud.config.SceneProperties;
@@ -92,6 +93,7 @@ class SceneActionExecutorImplTest {
     private DeviceBatchService deviceBatchService;
     private RuleMqttForwarder mqttForwarder;
     private RuleHttpForwarder httpForwarder;
+    private KafkaMessageForwarder kafkaForwarder;
     private SceneExecutionFinalizer finalizer;
     private SceneProperties properties;
     private RuleProperties ruleProperties;
@@ -112,6 +114,7 @@ class SceneActionExecutorImplTest {
         deviceBatchService = mock(DeviceBatchService.class);
         mqttForwarder = mock(RuleMqttForwarder.class);
         httpForwarder = mock(RuleHttpForwarder.class);
+        kafkaForwarder = mock(KafkaMessageForwarder.class);
         finalizer = mock(SceneExecutionFinalizer.class);
         properties = new SceneProperties();
         ruleProperties = new RuleProperties();
@@ -119,8 +122,8 @@ class SceneActionExecutorImplTest {
         meterRegistry = new SimpleMeterRegistry();
         service = new SceneActionExecutorImpl(stepRunMapper, stepMapper, definitionMapper, executionMapper,
                 deviceMapper, propertyLatestMapper, commandService, thingModelService, deviceBatchService,
-                mqttForwarder, httpForwarder, finalizer, properties, ruleProperties, new ObjectMapper(),
-                sceneExecutor, meterRegistry);
+                mqttForwarder, httpForwarder, kafkaForwarder, finalizer, properties, ruleProperties,
+                new ObjectMapper(), sceneExecutor, meterRegistry);
     }
 
     // ---------- 抢占短路 ----------

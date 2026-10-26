@@ -102,7 +102,15 @@ const navGroups = [
       { path: '/workbench/hmi', title: '上位机', icon: 'chart' },
       { path: '/workbench/access/api-keys', title: 'API 密钥', icon: 'settings' },
       { path: '/workbench/access/webhooks', title: 'Webhook', icon: 'documentation' },
-      { path: '/workbench/access/notification-channels', title: '通知渠道', icon: 'message' }
+      { path: '/workbench/access/notification-channels', title: '通知渠道', icon: 'message' },
+      { path: '/workbench/settings/security', title: '安全设置', icon: 'shield' }
+    ]
+  },
+  {
+    key: 'system',
+    label: '系统管理',
+    items: [
+      { path: '/workbench/system/audit-logs', title: '审计日志', icon: 'shield', roles: ['ADMIN'] }
     ]
   }
 ]

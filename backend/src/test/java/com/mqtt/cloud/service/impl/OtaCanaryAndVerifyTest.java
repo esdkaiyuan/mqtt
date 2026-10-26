@@ -23,6 +23,7 @@ import com.mqtt.cloud.mapper.OtaFirmwareMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeBatchMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeRecordMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeTaskMapper;
+import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.DeviceBatchService;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.OtaProgressPayload;
@@ -105,7 +106,7 @@ class OtaCanaryAndVerifyTest {
                 deviceBatchService, deviceCommandService, productService, properties,
                 new tools.jackson.databind.ObjectMapper());
         progressService = new OtaProgressServiceImpl(recordMapper, taskMapper, batchMapper, firmwareMapper,
-                properties, new tools.jackson.databind.ObjectMapper());
+                mock(DeviceService.class), properties, new tools.jackson.databind.ObjectMapper());
         insertedRecords.clear();
         insertedBatches.clear();
     }

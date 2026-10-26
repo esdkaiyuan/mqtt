@@ -49,6 +49,8 @@ public final class SceneConstants {
     public static final String ACTION_FORWARD_MQTT = RuleConstants.ACTION_FORWARD_MQTT;
     /** 动作：转发 HTTP。 */
     public static final String ACTION_FORWARD_HTTP = RuleConstants.ACTION_FORWARD_HTTP;
+    /** 动作：转发 Kafka（T-56 数据桥接）。 */
+    public static final String ACTION_FORWARD_KAFKA = RuleConstants.ACTION_FORWARD_KAFKA;
 
     /** 全部动作类型。 */
     public static final Set<String> ACTIONS = RuleConstants.ACTIONS;
@@ -67,9 +69,10 @@ public final class SceneConstants {
     /** 全部流程步骤类型。 */
     public static final Set<String> FLOW_STEPS = Set.of(STEP_BRANCH, STEP_LOOP, STEP_PARALLEL, STEP_JOIN);
 
-    /** 全部步骤类型（四类动作 + 分支 / 循环 / 并行）。 */
+    /** 全部步骤类型（五类动作 + 分支 / 循环 / 并行）。 */
     public static final Set<String> STEP_TYPES = Set.of(
             ACTION_UPDATE_PROPERTY, ACTION_SEND_COMMAND, ACTION_FORWARD_MQTT, ACTION_FORWARD_HTTP,
+            ACTION_FORWARD_KAFKA,
             STEP_BRANCH, STEP_LOOP, STEP_PARALLEL, STEP_JOIN);
 
     /** 流程步骤使用的空目标类型（分支 / 循环 / 并行不执行动作）。 */
@@ -87,7 +90,8 @@ public final class SceneConstants {
     public static final int MAX_EXECUTION_STEPS = 200;
 
     /** 转发类动作（仅允许 {@code TRIGGER} 目标，单次出站）。 */
-    public static final Set<String> FORWARD_ACTIONS = Set.of(ACTION_FORWARD_MQTT, ACTION_FORWARD_HTTP);
+    public static final Set<String> FORWARD_ACTIONS =
+            Set.of(ACTION_FORWARD_MQTT, ACTION_FORWARD_HTTP, ACTION_FORWARD_KAFKA);
 
     // ---------- 步骤目标类型 ----------
 

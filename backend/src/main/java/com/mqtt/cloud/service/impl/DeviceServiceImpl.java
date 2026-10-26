@@ -260,6 +260,26 @@ public class DeviceServiceImpl extends ServiceImpl<DeviceMapper, Device> impleme
     }
 
     @Override
+    public java.util.List<Device> listForExport(DeviceQueryDTO dto, int limit) {
+        int size = limit <= 0 ? 10000 : Math.min(limit, 100000);
+        // searchCount=false：导出只关心数据行，不额外执行 COUNT(*) 拖慢大表
+        Page<Device> page = new Page<>(1, size, false);
+        return this.baseMapper.pageQuery(page, dto, dto.getOwnerId()).getRecords();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateFirmwareVersion(Long deviceId, String firmwareVersion) {
+        if (deviceId == null || firmwareVersion == null || firmwareVersion.isBlank()) {
+            return;
+        }
+        Device update = new Device();
+        update.setId(deviceId);
+        update.setFirmwareVersion(firmwareVersion.trim());
+        this.updateById(update);
+    }
+
+    @Override
     public Device getDeviceById(Long deviceId) {
         Device device = this.getById(deviceId);
         if (device == null || Boolean.TRUE.equals(device.getDeleted())) {

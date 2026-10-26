@@ -75,6 +75,9 @@ public class OtaUpgradeTask {
     @TableField("skipped_count")
     private Integer skippedCount;
 
+    /** 建任务时因设备当前固件版本高于目标版本而被跳过的台数（T-54）。 */
+    private Integer downgradeSkippedCount;
+
     /** 任务状态：RUNNING/SUCCESS/PARTIAL/FAILED（T-32 增 PAUSED/ABORTED） */
     @TableField("status")
     private String status;

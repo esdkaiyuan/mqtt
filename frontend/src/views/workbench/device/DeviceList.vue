@@ -2,6 +2,8 @@
   <div class="device-list-page page">
     <PageHeader title="设备管理" desc="管理接入平台的设备与其连接凭据">
       <template #actions>
+        <el-button v-if="canImport" @click="importVisible = true">导入</el-button>
+        <el-button @click="handleExport">导出</el-button>
         <el-button type="primary" @click="openCreateDialog">
           <svg-icon name="add" :size="16" />
           创建设备
@@ -161,6 +163,8 @@
     />
 
     <BatchResultDrawer v-model:visible="resultVisible" :result="result" />
+
+    <DeviceImportDialog v-model="importVisible" @imported="handleImported" />
   </div>
 </template>
 
@@ -178,15 +182,22 @@ import CredentialDialog from '@/components/device/CredentialDialog.vue'
 import BatchCommandDialog from '@/components/device/BatchCommandDialog.vue'
 import BatchAssignDialog from '@/components/device/BatchAssignDialog.vue'
 import BatchResultDrawer from '@/components/device/BatchResultDrawer.vue'
+import DeviceImportDialog from '@/components/device/DeviceImportDialog.vue'
 import { useDeviceList } from '@/composables/useDeviceList'
 import { NODE_TYPE_LABELS } from '@/composables/useDeviceTopology'
 import { useDeviceCrud } from '@/composables/useDeviceCrud'
 import { useDeviceGroupTreeQuery, useDeviceGroupListQuery, useTagListQuery } from '@/composables/useDeviceGroups'
 import { useDeviceBatch } from '@/composables/useDeviceBatch'
+import { useAuthStore } from '@/stores/auth'
+import { exportApi } from '@/api/export'
+import { downloadResponse } from '@/utils/download'
 
 const TREE_PROPS = { label: 'name', children: 'children' }
 
 const router = useRouter()
+const authStore = useAuthStore()
+const canImport = computed(() => authStore.hasRole(['ADMIN', 'OPERATOR']))
+const importVisible = ref(false)
 
 const {
   filters,
@@ -271,6 +282,29 @@ function viewGateway(gatewayId) {
 function clearParentFilter() {
   filters.parentId = null
   handleSearch()
+}
+
+async function handleExport() {
+  try {
+    const response = await exportApi.devices({
+      deviceName: filters.deviceName || undefined,
+      deviceType: filters.deviceType || undefined,
+      status: filters.status || undefined,
+      nodeType: filters.nodeType || undefined,
+      groupId: filters.groupId ?? undefined,
+      tagId: filters.tagId ?? undefined,
+      parentId: filters.parentId ?? undefined,
+      limit: 10000
+    })
+    downloadResponse(response, 'devices.csv')
+    ElMessage.success('导出已开始')
+  } catch {
+    // 失败原因由 axios 拦截器统一提示
+  }
+}
+
+function handleImported() {
+  loadDevices(1)
 }
 
 /* ---------- 批量操作 ---------- */

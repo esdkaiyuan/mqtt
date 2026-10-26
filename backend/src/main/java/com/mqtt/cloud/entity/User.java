@@ -44,6 +44,19 @@ public class User {
     @TableField("status")
     private String status;
 
+    /** 是否启用 TOTP MFA（T-58） */
+    @TableField("mfa_enabled")
+    private Integer mfaEnabled;
+
+    /** TOTP 密钥密文（AES-GCM，Base64）；绝不对外序列化 */
+    @JsonIgnore
+    @TableField(value = "mfa_secret", updateStrategy = FieldStrategy.ALWAYS)
+    private String mfaSecret;
+
+    /** MFA 启用时间 */
+    @TableField(value = "mfa_confirmed_at", updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDateTime mfaConfirmedAt;
+
     /** 最后登录时间 */
     @TableField("last_login")
     private LocalDateTime lastLogin;

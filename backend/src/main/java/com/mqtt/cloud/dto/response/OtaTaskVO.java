@@ -42,6 +42,9 @@ public class OtaTaskVO {
     /** 被终止跳过的设备数，不计入失败（T-32）。 */
     private Integer skippedCount;
 
+    /** 建任务时因当前固件版本高于目标版本而被跳过的台数（T-54）。 */
+    private Integer downgradeSkippedCount;
+
     /** 任务状态：RUNNING / PAUSED / ABORTED / SUCCESS / PARTIAL / FAILED。 */
     private String status;
 

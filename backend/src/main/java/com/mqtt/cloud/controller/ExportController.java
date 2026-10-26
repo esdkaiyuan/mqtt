@@ -2,10 +2,14 @@ package com.mqtt.cloud.controller;
 
 import com.mqtt.cloud.common.security.SecurityUtils;
 import com.mqtt.cloud.dto.request.AlertQuery;
+import com.mqtt.cloud.dto.request.AuditLogQueryDTO;
 import com.mqtt.cloud.dto.request.DeviceLogQueryDTO;
+import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.PropertyHistoryQueryDTO;
 import com.mqtt.cloud.entity.Device;
+import com.mqtt.cloud.service.DeviceGroupService;
 import com.mqtt.cloud.service.DeviceService;
+import com.mqtt.cloud.service.DeviceTagService;
 import com.mqtt.cloud.service.ExportService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -15,6 +19,7 @@ import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -47,6 +52,8 @@ public class ExportController {
 
     private final DeviceService deviceService;
     private final ExportService exportService;
+    private final DeviceGroupService deviceGroupService;
+    private final DeviceTagService deviceTagService;
 
     @Operation(summary = "导出设备日志", description = "按类型 / 关键字 / 时间窗导出统一日志时间线为 CSV；"
             + "结果含 UTF-8 BOM，Excel 直接打开不乱码；超出 limit 时响应头 X-Export-Truncated=true")
@@ -124,6 +131,34 @@ public class ExportController {
         query.setDeviceId(deviceId);
         query.setOpenOnly(openOnly);
         return toResponse(exportService.exportAlerts(userId, query, limit));
+    }
+
+    @Operation(summary = "导出设备台账", description = "按设备名称 / 类型 / 状态 / 分组 / 标签 / 拓扑角色导出设备清单为 CSV；"
+            + "不包含任何密钥；非 ADMIN 只能导出本人设备；超出 limit 时响应头 X-Export-Truncated=true")
+    @GetMapping("/devices/export")
+    public ResponseEntity<byte[]> exportDevices(DeviceQueryDTO dto,
+            @Parameter(description = "最大导出行数，默认 10000，上限 100000")
+                    @RequestParam(defaultValue = "10000") int limit) {
+        Long userId = SecurityUtils.requireUserId();
+        if (!SecurityUtils.isAdmin()) {
+            dto.setOwnerId(userId);
+        }
+        if (dto.getGroupId() != null) {
+            dto.setGroupIds(deviceGroupService.resolveFilterGroupIds(userId, dto.getGroupId()));
+        }
+        if (dto.getTagId() != null) {
+            deviceTagService.getOwned(userId, dto.getTagId());
+        }
+        return toResponse(exportService.exportDevices(dto, limit));
+    }
+
+    @Operation(summary = "导出审计日志", description = "按用户 / 操作 / 资源 / 结果与时间窗导出审计日志为 CSV；仅 ADMIN 可用")
+    @GetMapping("/audit-logs/export")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<byte[]> exportAuditLogs(AuditLogQueryDTO query,
+            @Parameter(description = "最大导出行数，默认 10000，上限 100000")
+                    @RequestParam(defaultValue = "10000") int limit) {
+        return toResponse(exportService.exportAuditLogs(query, limit));
     }
 
     // ================= 内部 =================

@@ -9,12 +9,15 @@ import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
+import com.mqtt.cloud.service.PayloadCodecDefinition;
+import com.mqtt.cloud.service.PayloadCodecService;
 import com.mqtt.cloud.service.PropertyHistoryService;
 import com.mqtt.cloud.service.RuleEvaluationService;
 import com.mqtt.cloud.service.SceneEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelInterpretService;
 import com.mqtt.cloud.service.ThingModelService;
+import com.mqtt.cloud.util.PayloadCodecTransformer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -47,6 +50,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
     static final String RESULT_UNMODELED = "unmodeled";
     static final String RESULT_UNKNOWN_IDENTIFIER = "unknown_identifier";
     static final String RESULT_ERROR = "error";
+    static final String RESULT_CODEC = "codec";
 
     private static final String MESSAGE_TYPE_DATA = "data";
     private static final String METHOD_PROPERTY_POST = "thing.event.property.post";
@@ -57,6 +61,7 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
     private static final String FIELD_VALUE = "value";
 
     private final ThingModelService thingModelService;
+    private final PayloadCodecService payloadCodecService;
     private final DevicePropertyLatestMapper propertyLatestMapper;
     private final DeviceEventRecordMapper eventRecordMapper;
     private final DeviceShadowService deviceShadowService;
@@ -105,6 +110,18 @@ public class ThingModelInterpretServiceImpl implements ThingModelInterpretServic
         if (root == null || !root.isObject()) {
             metrics.count(RESULT_UNPARSED);
             return;
+        }
+        // T-55：产品配置了 Payload Codec 时，先把非 Alink 报文映射为 Alink，
+        // 再走既有物模型解析链路；下游告警 / 规则 / 场景 / 历史完全无感知。
+        PayloadCodecDefinition codec = payloadCodecService.getForProduct(device.getProductId());
+        if (codec != null && codec.enabled()) {
+            JsonNode mapped = PayloadCodecTransformer.apply(root, codec, objectMapper);
+            if (mapped == null || !mapped.isObject()) {
+                metrics.count(RESULT_UNPARSED);
+                return;
+            }
+            metrics.count(RESULT_CODEC);
+            root = mapped;
         }
         String method = text(root, FIELD_METHOD);
         if (method == null) {

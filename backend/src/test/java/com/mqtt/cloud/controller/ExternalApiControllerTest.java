@@ -258,6 +258,56 @@ class ExternalApiControllerTest {
         verify(deviceDataService).getEvents(DEVICE_ID, 1L, 20L);
     }
 
+    // ================= 写操作（T-57） =================
+
+    @Test
+    void create_device_should_delegate_with_current_user_and_return_secret() {
+        authenticate();
+        com.mqtt.cloud.dto.response.DeviceCreatedDTO created =
+                new com.mqtt.cloud.dto.response.DeviceCreatedDTO();
+        created.setDeviceKey(DEVICE_KEY);
+        when(deviceService.createDevice(eq(USER_ID), any())).thenReturn(created);
+
+        var result = controller.createDevice(new com.mqtt.cloud.dto.request.CreateDeviceDTO());
+
+        assertThat(result.getData().getDeviceKey()).isEqualTo(DEVICE_KEY);
+        verify(deviceService).createDevice(eq(USER_ID), any(com.mqtt.cloud.dto.request.CreateDeviceDTO.class));
+    }
+
+    @Test
+    void update_device_should_reject_device_of_other_user() {
+        authenticate();
+        when(deviceService.getDeviceByKey(DEVICE_KEY)).thenReturn(device(OTHER_USER_ID));
+
+        assertThatThrownBy(() -> controller.updateDevice(
+                DEVICE_KEY, new com.mqtt.cloud.dto.request.UpdateDeviceDTO()))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo(ResultCode.DEVICE_NOT_OWNED.getCode());
+        verify(deviceService, never()).updateDevice(anyLong(), any());
+    }
+
+    @Test
+    void create_rule_should_delegate_with_current_user() {
+        authenticate();
+        when(ruleService.create(eq(USER_ID), any())).thenReturn(new com.mqtt.cloud.entity.RuleDefinition());
+
+        controller.createRule(new com.mqtt.cloud.dto.request.RuleRequest());
+
+        verify(ruleService).create(eq(USER_ID), any(com.mqtt.cloud.dto.request.RuleRequest.class));
+    }
+
+    @Test
+    void run_scene_should_delegate_with_current_user() {
+        authenticate();
+        when(sceneService.runManually(USER_ID, 5L)).thenReturn(77L);
+
+        var result = controller.runScene(5L);
+
+        assertThat(result.getData()).isEqualTo(77L);
+        verify(sceneService).runManually(USER_ID, 5L);
+    }
+
     // ================= helper =================
 
     private Device device(Long ownerId) {

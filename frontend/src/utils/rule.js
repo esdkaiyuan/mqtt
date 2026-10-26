@@ -14,7 +14,8 @@ export const ACTION_TYPE_LABELS = {
   UPDATE_PROPERTY: '更新云端属性',
   SEND_COMMAND: '下发命令',
   FORWARD_MQTT: '转发 MQTT',
-  FORWARD_HTTP: '转发 HTTP'
+  FORWARD_HTTP: '转发 HTTP',
+  FORWARD_KAFKA: '转发 Kafka'
 }
 
 export const EXECUTION_STATUS_LABELS = {
@@ -47,7 +48,8 @@ export const ACTION_TYPE_OPTIONS = [
   { value: 'UPDATE_PROPERTY', label: '更新云端属性' },
   { value: 'SEND_COMMAND', label: '下发命令' },
   { value: 'FORWARD_MQTT', label: '转发 MQTT' },
-  { value: 'FORWARD_HTTP', label: '转发 HTTP' }
+  { value: 'FORWARD_HTTP', label: '转发 HTTP' },
+  { value: 'FORWARD_KAFKA', label: '转发 Kafka' }
 ]
 
 export const OPERATOR_OPTIONS = [
@@ -93,6 +95,8 @@ export function formatActionSummary(rule) {
       return `MQTT → ${config.topic ?? '—'}`
     case 'FORWARD_HTTP':
       return `${(config.method || 'POST').toUpperCase()} ${config.url ?? '—'}`
+    case 'FORWARD_KAFKA':
+      return `Kafka → ${config.topic ?? '—'}${config.key ? `（key=${config.key}）` : ''}`
     default:
       return ACTION_TYPE_LABELS[rule.actionType] || rule.actionType || '—'
   }
@@ -140,6 +144,12 @@ export function buildRuleActionConfig(form) {
     }
     case 'FORWARD_MQTT': {
       const config = { topic: form.topic.trim(), qos: form.qos }
+      if (form.payloadTemplate.trim()) config.payloadTemplate = form.payloadTemplate
+      return config
+    }
+    case 'FORWARD_KAFKA': {
+      const config = { topic: form.topic.trim() }
+      if (form.key.trim()) config.key = form.key.trim()
       if (form.payloadTemplate.trim()) config.payloadTemplate = form.payloadTemplate
       return config
     }
@@ -196,6 +206,7 @@ export function emptyAction(actionType = 'UPDATE_PROPERTY') {
     commandType: 'property_set',
     commandParams: '',
     topic: '',
+    key: '',
     qos: 1,
     url: '',
     method: 'POST',
@@ -244,6 +255,9 @@ export function validateAction(action) {
       if (!/^https?:\/\//.test(String(action.url).trim())) {
         return 'URL 必须以 http:// 或 https:// 开头'
       }
+      return ''
+    case 'FORWARD_KAFKA':
+      if (!String(action.topic || '').trim()) return '请填写 Kafka Topic'
       return ''
     default:
       return ''

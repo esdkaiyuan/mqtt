@@ -1,13 +1,18 @@
 package com.mqtt.cloud.service;
 
 import com.mqtt.cloud.common.CsvWriter;
+import com.mqtt.cloud.dto.request.AuditLogQueryDTO;
 import com.mqtt.cloud.dto.request.DeviceLogQueryDTO;
+import com.mqtt.cloud.dto.request.DeviceQueryDTO;
 import com.mqtt.cloud.dto.request.PropertyHistoryQueryDTO;
 import com.mqtt.cloud.dto.response.DeviceLogItem;
 import com.mqtt.cloud.dto.response.OtaRecordVO;
 import com.mqtt.cloud.dto.response.PropertySeriesVO;
 import com.mqtt.cloud.entity.AlertRecord;
+import com.mqtt.cloud.entity.AuditLog;
+import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceCommandRecord;
+import com.mqtt.cloud.entity.Product;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -44,6 +49,10 @@ public class ExportService {
     private final PropertyHistoryService propertyHistoryService;
     private final DeviceCommandService deviceCommandService;
     private final AlertService alertService;
+    private final AuditLogService auditLogService;
+    private final DeviceService deviceService;
+    private final ProductService productService;
+    private final DeviceGroupTagAssembler deviceGroupTagAssembler;
 
     /** 导出结果：字节内容 + 文件名 + 是否因行数上限被截断。 */
     public record Export(byte[] content, String fileName, boolean truncated) {
@@ -161,7 +170,95 @@ public class ExportService {
         return finish("alerts", headers, rows, limit);
     }
 
+    // ================= 设备台账 =================
+
+    /**
+     * 导出设备台账（不含任何密钥）。
+     * <p>
+     * 与「导出全部设备凭据」（ADMIN、会重置密钥）严格区分：本接口只导出登记信息，
+     * 任何角色都可导出自己可见的设备范围，不会触碰凭据。
+     */
+    public Export exportDevices(DeviceQueryDTO query, int limit) {
+        List<Device> devices = deviceService.listForExport(query, clampLimit(limit));
+        deviceGroupTagAssembler.assemble(devices);
+        java.util.Map<Long, Product> products = productService.list().stream()
+                .collect(Collectors.toMap(Product::getId, product -> product, (a, b) -> a));
+
+        List<String> headers = List.of("设备ID", "设备标识", "设备名称", "产品标识", "产品名称",
+                "设备类型", "状态", "连接许可", "拓扑角色", "固件版本", "父网关ID", "分组", "标签",
+                "最近心跳", "创建时间", "描述");
+        List<List<String>> rows = devices.stream()
+                .map(device -> {
+                    Product product = products.get(device.getProductId());
+                    return List.of(
+                            String.valueOf(device.getId()),
+                            nullToEmpty(device.getDeviceKey()),
+                            nullToEmpty(device.getDeviceName()),
+                            product == null ? "" : nullToEmpty(product.getProductKey()),
+                            product == null ? "" : nullToEmpty(product.getProductName()),
+                            nullToEmpty(device.getDeviceType()),
+                            nullToEmpty(device.getStatus()),
+                            Integer.valueOf(1).equals(device.getEnabled()) ? "允许" : "禁止",
+                            nullToEmpty(device.getNodeType()),
+                            nullToEmpty(device.getFirmwareVersion()),
+                            device.getParentId() == null ? "" : String.valueOf(device.getParentId()),
+                            joinNames(device.getGroups()),
+                            joinNames(device.getTags()),
+                            CsvWriter.time(device.getLastSeen()),
+                            CsvWriter.time(device.getCreatedAt()),
+                            nullToEmpty(device.getDescription()));
+                })
+                .toList();
+        return finish("devices", headers, rows, limit);
+    }
+
+    // ================= 审计日志 =================
+
+    public Export exportAuditLogs(AuditLogQueryDTO query, int limit) {
+        List<AuditLog> logs = auditLogService.listForExport(query, clampLimit(limit));
+        List<String> headers = List.of("时间", "用户ID", "用户名", "角色", "来源", "方法", "路径",
+                "操作", "资源类型", "资源标识", "状态码", "结果", "错误摘要", "IP", "耗时(ms)");
+        List<List<String>> rows = logs.stream()
+                .map(log -> List.of(
+                        CsvWriter.time(log.getCreatedAt()),
+                        log.getUserId() == null ? "" : String.valueOf(log.getUserId()),
+                        nullToEmpty(log.getUsername()),
+                        nullToEmpty(log.getRole()),
+                        nullToEmpty(log.getSource()),
+                        nullToEmpty(log.getHttpMethod()),
+                        nullToEmpty(log.getPath()),
+                        nullToEmpty(log.getAction()),
+                        nullToEmpty(log.getResourceType()),
+                        nullToEmpty(log.getResourceId()),
+                        String.valueOf(log.getStatusCode()),
+                        Boolean.TRUE.equals(log.getSuccess()) ? "成功" : "失败",
+                        nullToEmpty(log.getErrorMessage()),
+                        nullToEmpty(log.getIp()),
+                        String.valueOf(log.getDurationMs())))
+                .toList();
+        return finish("audit-logs", headers, rows, limit);
+    }
+
     // ================= 内部 =================
+
+    /** 分组 / 标签摘要：导出一行一个设备，多个分组用逗号拼接。 */
+    private String joinNames(List<? extends Object> items) {
+        if (items == null || items.isEmpty()) {
+            return "";
+        }
+        return items.stream()
+                .map(item -> {
+                    if (item instanceof com.mqtt.cloud.entity.DeviceGroup group) {
+                        return group.getName();
+                    }
+                    if (item instanceof com.mqtt.cloud.entity.DeviceTag tag) {
+                        return tag.getName();
+                    }
+                    return null;
+                })
+                .filter(name -> name != null && !name.isBlank())
+                .collect(Collectors.joining(","));
+    }
 
     private Export finish(String prefix, List<String> headers, List<List<String>> rows, int limit) {
         boolean truncated = rows.size() >= clampLimit(limit);

@@ -45,6 +45,7 @@ describe('router/routes 分区与兼容', () => {
       'ApiKeyManagement',
       'WebhookManagement',
       'NotificationChannels',
+      'SecuritySettings',
       'HmiList',
       'HmiCreate',
       'HmiDetail',
@@ -57,11 +58,12 @@ describe('router/routes 分区与兼容', () => {
       'BoardDetail',
       'FirmwareList',
       'UpgradeTasks',
-      'UpgradeTaskDetail'
+      'UpgradeTaskDetail',
+      'AuditLogList'
     ])
 
     const groups = new Set(children.map((child) => child.meta?.group))
-    expect(groups).toEqual(new Set(['monitor', 'access', 'alert', 'fleet', 'automation']))
+    expect(groups).toEqual(new Set(['monitor', 'access', 'alert', 'fleet', 'automation', 'system']))
 
     // 设备详情 / 设备日志 / 调试 / 物模型 / 看板详情 / 上位机子页 / 升级详情不在导航中展示
     for (const name of ['DeviceDetail', 'DeviceLog', 'DeviceDebug', 'DevicePointTable',
@@ -153,6 +155,15 @@ describe('router/routes 分区与兼容', () => {
       expect(route.meta?.group).toBe(group)
       expect(route.meta?.hidden).toBeFalsy()
     }
+  })
+
+  it('审计日志路由归入系统管理并仅 ADMIN 可见', () => {
+    const audit = byPath('/workbench').children.find((child) => child.name === 'AuditLogList')
+    expect(audit, '缺少审计日志路由 AuditLogList').toBeTruthy()
+    expect(audit.path).toBe('system/audit-logs')
+    expect(audit.meta?.group).toBe('system')
+    expect(audit.meta?.roles).toEqual(['ADMIN'])
+    expect(audit.meta?.hidden).toBeFalsy()
   })
 
   it('文档站章节齐全且默认跳快速开始', () => {

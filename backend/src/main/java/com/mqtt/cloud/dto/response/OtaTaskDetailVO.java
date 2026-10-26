@@ -64,6 +64,9 @@ public class OtaTaskDetailVO {
     /** 因设备已在其他升级任务中而被互斥剔除的台数（T-32 / G-11-4）。 */
     private Integer conflictSkippedCount;
 
+    /** 因设备当前固件版本高于目标版本而被降级拦截的台数（T-54）。 */
+    private Integer downgradeSkippedCount;
+
     /** 批次列表（T-32 灰度时间线）；存量任务可能为空列表，前端据此隐藏灰度面板。 */
     private java.util.List<OtaBatchVO> batches;
 

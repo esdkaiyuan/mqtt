@@ -67,6 +67,18 @@
       <el-form-item label="载荷格式">
         <el-input v-model="form.payloadFormat" placeholder="默认 JSON" />
       </el-form-item>
+      <el-form-item label="Payload Codec（JSON）">
+        <el-input
+          v-model="form.payloadCodec"
+          type="textarea"
+          :rows="6"
+          :placeholder="PAYLOAD_CODEC_PLACEHOLDER"
+        />
+        <p class="form-hint">
+          非 Alink 报文到 Alink 的声明式映射；留空表示按原始 Alink 解析。
+          字符串以 $ 开头表示路径（如 $.sensors.temp），仅支持读路径，不执行脚本。
+        </p>
+      </el-form-item>
       <el-form-item label="产品描述">
         <el-input
           v-model="form.description"
@@ -105,6 +117,7 @@ const EMPTY_FORM = {
   description: '',
   topicPrefix: '',
   payloadFormat: '',
+  payloadCodec: '',
   authMode: 'SECRET',
   protocolType: 'MQTT',
   driverId: '',
@@ -112,6 +125,18 @@ const EMPTY_FORM = {
 }
 
 const DRIVER_CONFIG_PLACEHOLDER = '{"host":"192.168.10.20","port":502,"unitId":1}'
+
+const PAYLOAD_CODEC_PLACEHOLDER = `{
+  "version": 1,
+  "fallbackToRaw": true,
+  "template": {
+    "method": "thing.event.property.post",
+    "params": {
+      "temperature": "$.sensors.temp",
+      "humidity": "$.sensors.hum"
+    }
+  }
+}`
 
 const PROTOCOL_OPTIONS = [
   { value: 'MQTT', label: 'MQTT 直连' },
@@ -146,6 +171,7 @@ watch(visible, (open) => {
       description: props.product.description || '',
       topicPrefix: props.product.topicPrefix || '',
       payloadFormat: props.product.payloadFormat || '',
+      payloadCodec: props.product.payloadCodec || '',
       authMode: props.product.authMode || 'SECRET',
       protocolType: props.product.protocolType || 'MQTT',
       driverId: props.product.driverId || '',
@@ -177,6 +203,19 @@ function handleSubmit() {
     return
   }
   const payload = { ...form, driverId: form.driverId.trim(), driverConfig: form.driverConfig.trim() }
+  if (payload.payloadCodec && payload.payloadCodec.trim()) {
+    let codec
+    try {
+      codec = JSON.parse(payload.payloadCodec)
+    } catch {
+      ElMessage.warning('Payload Codec 不是合法 JSON')
+      return
+    }
+    if (!codec || typeof codec !== 'object' || !codec.template || typeof codec.template !== 'object') {
+      ElMessage.warning('Payload Codec 缺少 template 对象')
+      return
+    }
+  }
   if (isDriverProtocol.value && payload.driverConfig) {
     let config
     try {

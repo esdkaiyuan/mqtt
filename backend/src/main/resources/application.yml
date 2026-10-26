@@ -112,10 +112,33 @@ app:
     key-prefix: "mqtt:ratelimit:apikey:"
     # Redis 不可用时是否放行（true=可用性优先）
     fail-open: ${RATE_LIMIT_FAIL_OPEN:true}
+  # 审计日志（T-53）：记录管理端 / 开放 API 的写操作，仅追加不修改。
+  audit-log:
+    # 总开关；false 时停止写入，历史记录仍可查询
+    enabled: ${AUDIT_LOG_ENABLED:true}
+    # 保留天数；<=0 表示不清理
+    retention-days: ${AUDIT_LOG_RETENTION_DAYS:180}
+    # 清理巡检间隔（毫秒）；<=0 时不注册
+    sweep-interval-ms: ${AUDIT_LOG_SWEEP_INTERVAL_MS:3600000}
+    # 单批删除行数，避免大事务锁表
+    purge-batch-size: ${AUDIT_LOG_PURGE_BATCH_SIZE:1000}
   jwt:
     secret: ${JWT_SECRET:}
     expiration: ${JWT_EXPIRATION:604800000}
     refresh-expiration: ${JWT_REFRESH:2592000000}
+  # 多因素认证（T-58）：TOTP 动态口令；false 时 MFA 端点 404 且登录不要求二步验证
+  mfa:
+    enabled: ${MFA_ENABLED:true}
+    # TOTP 时间步长（秒）与允许的前后窗口；二步临时令牌有效期固定 5 分钟
+    time-step-seconds: ${MFA_TIME_STEP_SECONDS:30}
+    allowed-window: ${MFA_ALLOWED_WINDOW:1}
+    # 口令位数与密钥长度（字节）
+    digits: ${MFA_DIGITS:6}
+    secret-length: ${MFA_SECRET_LENGTH:20}
+    # authenticator 中的发行方名
+    issuer: ${MFA_ISSUER:MQTT云平台}
+    # 密钥加密密钥；留空由 JWT_SECRET 派生（轮换 JWT_SECRET 需重新绑定 MFA）
+    encryption-key: ${MFA_ENCRYPTION_KEY:}
   device:
     status-check-interval: 60000
     status-timeout: 300000
@@ -207,6 +230,12 @@ app:
       key-prefix: ${COMMAND_QUOTA_KEY_PREFIX:mqtt:quota:command:}
       # Redis 不可用时是否放行：true=可用性优先（降级放行），false=严格限流
       fail-open: ${COMMAND_QUOTA_FAIL_OPEN:true}
+  # 设备 CSV 导入（T-53）
+  device-import:
+    # 单次导入文件大小上限（字节）
+    max-file-bytes: ${DEVICE_IMPORT_MAX_FILE_BYTES:2097152}
+    # 单次导入最大数据行数（不含表头）
+    max-rows: ${DEVICE_IMPORT_MAX_ROWS:1000}
   # 设备影子与离线补发（T-16）
   shadow:
     # 上线补发总开关；置 false 时离线期望值仍写 desired，但不再自动补发
@@ -282,6 +311,25 @@ app:
       qos: ${RULE_MQTT_QOS:1}
       keepalive: ${RULE_MQTT_KEEPALIVE:60}
       connect-timeout: ${RULE_MQTT_CONNECT_TIMEOUT:10}
+  # 数据桥接（T-56）：规则 / 场景 FORWARD_KAFKA 动作出站到第三方 Kafka。
+  # 默认关闭——未显式开启时不创建 Producer，动作直接失败。
+  bridge:
+    kafka:
+      enabled: ${BRIDGE_KAFKA_ENABLED:false}
+      # Kafka 地址，host:port 逗号分隔；enabled=true 时必填
+      bootstrap-servers: ${BRIDGE_KAFKA_BOOTSTRAP_SERVERS:}
+      # 缺省 Topic；动作未配置 topic 时使用
+      topic: ${BRIDGE_KAFKA_TOPIC:}
+      client-id: ${BRIDGE_KAFKA_CLIENT_ID:mqtt-cloud-bridge}
+      acks: ${BRIDGE_KAFKA_ACKS:all}
+      # 发送阻塞超时（毫秒），超时按失败处理并走动作重试
+      max-block-ms: ${BRIDGE_KAFKA_MAX_BLOCK_MS:5000}
+      # 安全协议：PLAINTEXT / SASL_PLAINTEXT / SSL / SASL_SSL
+      security-protocol: ${BRIDGE_KAFKA_SECURITY_PROTOCOL:PLAINTEXT}
+      # SASL 机制（如 PLAIN / SCRAM-SHA-256）与账号
+      sasl-mechanism: ${BRIDGE_KAFKA_SASL_MECHANISM:}
+      sasl-username: ${BRIDGE_KAFKA_SASL_USERNAME:}
+      sasl-password: ${BRIDGE_KAFKA_SASL_PASSWORD:}
   # 设备日志时间线（统一聚合 message / command / event / status）
   device-log:
     # 单页最大条数上限
@@ -392,6 +440,8 @@ app:
     default-batch-size: ${OTA_DEFAULT_BATCH_SIZE:10}
     # 固件完整性校验是否强制（T-32）；false=设备未回传 md5 时仍放行成功，true=判失败
     verify-required: ${OTA_VERIFY_REQUIRED:false}
+    # 是否允许固件降级（T-54）；false=建任务跳过当前版本高于目标版本的设备
+    allow-downgrade: ${OTA_ALLOW_DOWNGRADE:false}
 
   # 自动化 / 场景联动（T-23）
   scene:
@@ -438,6 +488,18 @@ app:
     max-payload-bytes: ${HTTP_INGEST_MAX_PAYLOAD_BYTES:65536}
     # Basic 认证失败时 WWW-Authenticate 头的 realm 值
     realm: ${HTTP_INGEST_REALM:mqtt-cloud-device}
+    # T-53：设备级限流（固定 60 秒窗口）；默认关闭，未显式开启不会打断正常设备
+    rate-limit-enabled: ${HTTP_INGEST_RATE_LIMIT_ENABLED:false}
+    # 单设备 60 秒内最大上报次数
+    rate-limit-per-minute: ${HTTP_INGEST_RATE_LIMIT_PER_MINUTE:600}
+    # Redis 不可用时是否放行（true=可用性优先）
+    rate-limit-fail-open: ${HTTP_INGEST_RATE_LIMIT_FAIL_OPEN:true}
+    # 限流 Redis 键前缀
+    rate-limit-key-prefix: ${HTTP_INGEST_RATE_LIMIT_KEY_PREFIX:mqtt:ratelimit:ingest:}
+    # 幂等键 TTL（秒）：设备携带 Idempotency-Key 时，同一设备 + 同一键在此窗口内只入队一次
+    idempotency-ttl-seconds: ${HTTP_INGEST_IDEMPOTENCY_TTL_SECONDS:300}
+    # 幂等 Redis 键前缀
+    idempotency-key-prefix: ${HTTP_INGEST_IDEMPOTENCY_KEY_PREFIX:mqtt:ingest:idem:}
 
   # ── 认证方式扩展（T-25） ──
   auth-extension:

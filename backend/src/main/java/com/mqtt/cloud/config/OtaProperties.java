@@ -69,6 +69,15 @@ public class OtaProperties {
      */
     private boolean verifyRequired = false;
 
+    /**
+     * 是否允许固件降级（T-54），默认 false。
+     * <p>
+     * false 时建任务会跳过「设备当前 {@code firmware_version} 高于目标版本」的设备，
+     * 并在创建响应 / 任务详情中回传 {@code downgradeSkippedCount}；
+     * true 时不做版本比较，按原行为全量下发（现场需要回滚固件时打开）。
+     */
+    private boolean allowDowngrade = false;
+
     /** 补投 / 超时巡检间隔（毫秒），默认 60s。 */
     private long dispatchIntervalMs = 60000L;
 

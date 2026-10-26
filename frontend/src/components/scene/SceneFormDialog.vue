@@ -350,6 +350,13 @@ function toEditorStep(step) {
         payloadTemplate: config.payloadTemplate || ''
       }
       break
+    case 'FORWARD_KAFKA':
+      actionConfig = {
+        topic: config.topic || '',
+        key: config.key || '',
+        payloadTemplate: config.payloadTemplate || ''
+      }
+      break
     case 'FORWARD_HTTP':
       actionConfig = {
         url: config.url || '',
@@ -532,6 +539,9 @@ function validateStepActionConfig(step, index) {
         return `${label}：Topic 不允许包含通配符 # / +`
       }
       break
+    case 'FORWARD_KAFKA':
+      if (!String(config.topic || '').trim()) return `${label}：请填写 Kafka Topic`
+      break
     case 'FORWARD_HTTP':
       if (!String(config.url || '').trim()) return `${label}：请填写目标 URL`
       if (!/^https?:\/\//.test(String(config.url).trim())) {
@@ -643,6 +653,12 @@ function buildStepActionConfig(step) {
     }
     case 'FORWARD_MQTT': {
       const result = { topic: String(config.topic).trim(), qos: config.qos ?? 1 }
+      if (String(config.payloadTemplate || '').trim()) result.payloadTemplate = config.payloadTemplate
+      return result
+    }
+    case 'FORWARD_KAFKA': {
+      const result = { topic: String(config.topic).trim() }
+      if (String(config.key || '').trim()) result.key = String(config.key).trim()
       if (String(config.payloadTemplate || '').trim()) result.payloadTemplate = config.payloadTemplate
       return result
     }

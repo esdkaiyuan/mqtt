@@ -61,16 +61,17 @@
         <li><strong>分页：</strong>统一使用 <code>page</code> / <code>size</code>（默认 20、上限 100）；告警列表兼容旧版 <code>pageNum</code> / <code>pageSize</code>。返回 <code>records / total / current / size</code>。</li>
         <li><strong>时间：</strong>多数字段为 ISO-8601 本地时间（如 <code>2026-10-22T10:00:00</code>）；属性时序的桶起点 <code>time</code> 为 <code>yyyy-MM-dd HH:mm:ss</code>，时区由服务端配置决定。</li>
         <li><strong>数据范围：</strong>开放 API 严格限定为密钥所属用户；访问他人设备返回 <code>2003</code>，越权资源返回 <code>403</code>。</li>
-        <li><strong>读写边界：</strong>除命令下发与影子 desired 写入外，其余开放端点为只读；管理端完整功能以 Swagger 为准。</li>
+        <li><strong>读写边界：</strong>设备 / 规则 / 场景写端点（T-57）与命令 / 影子写均需要 <code>device:write</code>；其余开放端点为只读。管理端完整功能以 Swagger 为准。</li>
       </ul>
       <p>
         管理端接口（<code>/api/**</code>）的完整参数与模型以本地 Swagger 为准：
         <code>http://localhost/api/swagger-ui.html</code>（经 Nginx 网关访问）。
       </p>
 
-      <DocCallout type="note" title="开放 API 默认只读">
-        除 <code>POST .../command</code> 与 <code>PUT .../shadow/desired</code> 外，本文档列出的开放端点为只读。
-        所有请求只允许访问 API Key 所属用户名下的设备；跨账号访问返回 <code>2003</code>。
+      <DocCallout type="note" title="写操作需要 device:write">
+        除 <code>POST .../command</code>、<code>PUT .../shadow/desired</code> 与 T-57 新增的
+        设备 / 规则 / 场景写端点外，其余开放端点为只读。所有请求只允许访问 API Key 所属用户名下的设备；
+        跨账号访问返回 <code>2003</code>。写操作示例见仓库 <code>docs/D6_开放API写操作与SDK示例.md</code>。
       </DocCallout>
 
       <div class="api-switcher" role="tablist" aria-label="API 分组">

@@ -40,5 +40,12 @@ public class ProductRequest {
 
     private String payloadFormat;
 
+    /**
+     * Payload Codec（T-55）：非 Alink 报文到 Alink 的声明式映射模板，可空。
+     * <p>
+     * 更新时 {@code null} 表示保持原值，空串表示清空。服务层负责校验与规范化。
+     */
+    private String payloadCodec;
+
     private String metadataSchema;
 }

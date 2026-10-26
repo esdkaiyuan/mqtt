@@ -228,6 +228,20 @@
         </div>
       </template>
 
+      <template v-else-if="form.actionType === 'FORWARD_KAFKA'">
+        <el-form-item label="Kafka Topic" required>
+          <el-input v-model="form.topic" maxlength="255" placeholder="如：factory.line1.alert" />
+        </el-form-item>
+        <div class="form-row">
+          <el-form-item label="分区 Key（可选）">
+            <el-input v-model="form.key" placeholder="默认按设备标识分区" />
+          </el-form-item>
+          <el-form-item label="载荷模板（可选）">
+            <el-input v-model="form.payloadTemplate" placeholder="支持 ${value} 等占位符" />
+          </el-form-item>
+        </div>
+      </template>
+
       <template v-else>
         <el-form-item label="目标 URL" required>
           <el-input v-model="form.url" maxlength="512" placeholder="https://erp.example.com/hook" />
@@ -278,6 +292,12 @@
             v-else-if="action.actionType === 'FORWARD_MQTT'"
             v-model="action.topic"
             placeholder="factory/line1"
+            class="extra-item__value"
+          />
+          <el-input
+            v-else-if="action.actionType === 'FORWARD_KAFKA'"
+            v-model="action.topic"
+            placeholder="factory.line1.alert"
             class="extra-item__value"
           />
           <el-input
@@ -502,6 +522,7 @@ function emptyForm() {
     commandType: 'property_set',
     commandParams: '',
     topic: '',
+    key: '',
     qos: 1,
     url: '',
     method: 'POST',
@@ -580,6 +601,10 @@ function fillForm(rule) {
     form.topic = config.topic || ''
     form.qos = config.qos ?? 1
     form.payloadTemplate = config.payloadTemplate || ''
+  } else if (rule.actionType === 'FORWARD_KAFKA') {
+    form.topic = config.topic || ''
+    form.key = config.key || ''
+    form.payloadTemplate = config.payloadTemplate || ''
   } else if (rule.actionType === 'FORWARD_HTTP') {
     form.url = config.url || ''
     form.method = config.method || 'POST'
@@ -626,6 +651,9 @@ function validateForm() {
     case 'FORWARD_MQTT':
       if (!form.topic.trim()) return '请填写目标 Topic'
       if (form.topic.includes('#') || form.topic.includes('+')) return 'Topic 不允许包含通配符 # / +'
+      break
+    case 'FORWARD_KAFKA':
+      if (!form.topic.trim()) return '请填写 Kafka Topic'
       break
     case 'FORWARD_HTTP':
       if (!form.url.trim()) return '请填写目标 URL'

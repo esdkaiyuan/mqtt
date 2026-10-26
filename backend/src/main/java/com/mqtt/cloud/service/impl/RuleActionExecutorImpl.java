@@ -1,5 +1,6 @@
 package com.mqtt.cloud.service.impl;
 
+import com.mqtt.cloud.bridge.KafkaMessageForwarder;
 import com.mqtt.cloud.common.RuleConstants;
 import com.mqtt.cloud.config.RuleProperties;
 import com.mqtt.cloud.entity.Device;
@@ -58,6 +59,7 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
     private final ThingModelService thingModelService;
     private final RuleMqttForwarder mqttForwarder;
     private final RuleHttpForwarder httpForwarder;
+    private final KafkaMessageForwarder kafkaForwarder;
     private final RuleProperties properties;
     private final ObjectMapper objectMapper;
 
@@ -69,6 +71,7 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
                                   ThingModelService thingModelService,
                                   RuleMqttForwarder mqttForwarder,
                                   RuleHttpForwarder httpForwarder,
+                                  KafkaMessageForwarder kafkaForwarder,
                                   RuleProperties properties,
                                   ObjectMapper objectMapper) {
         this.executionMapper = executionMapper;
@@ -79,6 +82,7 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
         this.thingModelService = thingModelService;
         this.mqttForwarder = mqttForwarder;
         this.httpForwarder = httpForwarder;
+        this.kafkaForwarder = kafkaForwarder;
         this.properties = properties;
         this.objectMapper = objectMapper;
     }
@@ -150,6 +154,7 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
             case RuleConstants.ACTION_SEND_COMMAND -> sendCommand(device, config, values);
             case RuleConstants.ACTION_FORWARD_MQTT -> forwardMqtt(execution, config, values);
             case RuleConstants.ACTION_FORWARD_HTTP -> forwardHttp(execution, rule, config, values);
+            case RuleConstants.ACTION_FORWARD_KAFKA -> forwardKafka(execution, config, values);
             default -> throw new ActionFailure("不支持的动作类型 " + actionType);
         }
     }
@@ -214,6 +219,22 @@ public class RuleActionExecutorImpl implements RuleActionExecutor {
             mqttForwarder.publish(topic, payload, qos);
         } catch (Exception e) {
             throw new ActionFailure("MQTT 转发失败：" + describe(e));
+        }
+    }
+
+    /** 转发 Kafka：渲染 Topic / Key / 载荷后出站到第三方 Kafka（T-56 数据桥接）。 */
+    private void forwardKafka(RuleExecution execution, JsonNode config, Map<String, String> values) {
+        String topic = RuleTemplateRenderer.render(text(config, "topic"), values);
+        if (topic != null && topic.length() > RuleConstants.MAX_TOPIC_LENGTH) {
+            throw new ActionFailure("Kafka Topic 长度不能超过 " + RuleConstants.MAX_TOPIC_LENGTH);
+        }
+        String key = RuleTemplateRenderer.render(text(config, "key"), values);
+        String payload = renderPayload(text(config, "payloadTemplate"), execution, values);
+        updateForwardPayload(execution.getId(), payload);
+        try {
+            kafkaForwarder.publish(topic, key, payload);
+        } catch (Exception e) {
+            throw new ActionFailure("Kafka 转发失败：" + describe(e));
         }
     }
 

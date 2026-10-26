@@ -28,4 +28,24 @@ public class HttpIngestProperties {
 
     /** Basic 认证失败时 WWW-Authenticate 头的 realm 值 */
     private String realm = "mqtt-cloud-device";
+
+    // ---- T-53 · HTTP 上报限流与幂等 ----
+
+    /** 设备级限流开关；默认关闭，避免未配置环境被 429 打断 */
+    private boolean rateLimitEnabled = false;
+
+    /** 单设备 60 秒窗口内最大上报次数 */
+    private int rateLimitPerMinute = 600;
+
+    /** Redis 故障时是否放行（true=可用性优先） */
+    private boolean rateLimitFailOpen = true;
+
+    /** 限流 Redis 键前缀 */
+    private String rateLimitKeyPrefix = "mqtt:ratelimit:ingest:";
+
+    /** 幂等键 TTL（秒），默认 5 分钟，覆盖设备弱网重试窗口 */
+    private int idempotencyTtlSeconds = 300;
+
+    /** 幂等 Redis 键前缀 */
+    private String idempotencyKeyPrefix = "mqtt:ingest:idem:";
 }

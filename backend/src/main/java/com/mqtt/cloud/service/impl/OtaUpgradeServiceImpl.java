@@ -29,6 +29,7 @@ import com.mqtt.cloud.service.DeviceBatchService;
 import com.mqtt.cloud.service.DeviceCommandService;
 import com.mqtt.cloud.service.OtaUpgradeService;
 import com.mqtt.cloud.service.ProductService;
+import com.mqtt.cloud.util.FirmwareVersionComparator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -131,7 +132,9 @@ public class OtaUpgradeServiceImpl implements OtaUpgradeService {
         }
 
         // G-11-4 设备级互斥：剔除已在其他升级任务中的设备
-        List<Device> available = excludeConflictingDevices(matched);
+        List<Device> versionEligible = filterVersionDowngrades(matched, firmware.getVersion());
+        int downgradeSkipped = matched.size() - versionEligible.size();
+        List<Device> available = excludeConflictingDevices(versionEligible);
 
         int maxDevices = properties.getTaskMaxDevices();
         if (maxDevices > 0 && available.size() > maxDevices) {
@@ -149,6 +152,7 @@ public class OtaUpgradeServiceImpl implements OtaUpgradeService {
         task.setSuccessCount(0);
         task.setFailedCount(0);
         task.setSkippedCount(0);
+        task.setDowngradeSkippedCount(downgradeSkipped);
         task.setStatus(OtaStatusValue.TASK_RUNNING);
         task.setBatchMode(canary.batchMode());
         task.setBatchSize(canary.batchSize());
@@ -169,7 +173,8 @@ public class OtaUpgradeServiceImpl implements OtaUpgradeService {
         refreshAfterDispatch(task.getId(), batches);
 
         OtaTaskDetailVO vo = detail(userId, task.getId());
-        vo.setConflictSkippedCount(matched.size() - available.size());
+        vo.setConflictSkippedCount(versionEligible.size() - available.size());
+        vo.setDowngradeSkippedCount(downgradeSkipped);
         return vo;
     }
 
@@ -203,6 +208,7 @@ public class OtaUpgradeServiceImpl implements OtaUpgradeService {
         vo.setSuccessCount(task.getSuccessCount());
         vo.setFailedCount(task.getFailedCount());
         vo.setSkippedCount(task.getSkippedCount());
+        vo.setDowngradeSkippedCount(task.getDowngradeSkippedCount());
         vo.setStatus(task.getStatus());
         vo.setBatchMode(task.getBatchMode());
         vo.setBatchSize(task.getBatchSize());
@@ -759,6 +765,38 @@ public class OtaUpgradeServiceImpl implements OtaUpgradeService {
      * <p>
      * 剔除后可能一台不剩，此时报 {@code 6293} 而非 {@code 6237}：前者能让运维一眼看出是互斥而非配置错。
      */
+    /**
+     * 降级拦截（T-54）：设备当前固件版本高于目标版本时跳过。
+     * <p>
+     * 只比较平台已知的 {@code firmware_version}；未知（NULL）的设备放行——
+     * 不能用「猜一个当前版本」的方式阻止升级，否则老设备会被永久卡住。
+     * {@code allow-downgrade=true} 时整段跳过（现场回滚固件）。
+     */
+    private List<Device> filterVersionDowngrades(List<Device> matched, String targetVersion) {
+        if (properties.isAllowDowngrade() || targetVersion == null || targetVersion.isBlank()) {
+            return matched;
+        }
+        List<Device> eligible = matched.stream()
+                .filter(device -> {
+                    String current = device.getFirmwareVersion();
+                    if (current == null || current.isBlank()) {
+                        return true;
+                    }
+                    if (FirmwareVersionComparator.compare(current, targetVersion) > 0) {
+                        log.info("OTA 降级拦截：deviceKey={}, current={}, target={}",
+                                device.getDeviceKey(), current, targetVersion);
+                        return false;
+                    }
+                    return true;
+                })
+                .toList();
+        if (eligible.isEmpty() && !matched.isEmpty()) {
+            throw new BusinessException(ResultCode.OTA_TASK_INVALID,
+                    "目标设备当前固件版本均高于目标版本，已按降级策略拦截（可设置 OTA_ALLOW_DOWNGRADE=true 放开）");
+        }
+        return eligible;
+    }
+
     private List<Device> excludeConflictingDevices(List<Device> matched) {
         if (matched.isEmpty()) {
             return matched;
@@ -816,6 +854,7 @@ public class OtaUpgradeServiceImpl implements OtaUpgradeService {
         vo.setSuccessCount(task.getSuccessCount());
         vo.setFailedCount(task.getFailedCount());
         vo.setSkippedCount(task.getSkippedCount());
+        vo.setDowngradeSkippedCount(task.getDowngradeSkippedCount());
         vo.setStatus(task.getStatus());
         vo.setBatchMode(task.getBatchMode());
         vo.setBatchTotal(task.getBatchTotal());

@@ -11,8 +11,10 @@ import com.mqtt.cloud.mapper.OtaFirmwareMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeBatchMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeRecordMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeTaskMapper;
+import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.OtaProgressPayload;
 import com.mqtt.cloud.service.OtaProgressService;
+import com.mqtt.cloud.util.FirmwareVersionComparator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -85,6 +87,7 @@ public class OtaProgressServiceImpl implements OtaProgressService {
     private final OtaUpgradeTaskMapper taskMapper;
     private final OtaUpgradeBatchMapper batchMapper;
     private final OtaFirmwareMapper firmwareMapper;
+    private final DeviceService deviceService;
     private final OtaProperties properties;
     private final ObjectMapper objectMapper;
 
@@ -121,6 +124,10 @@ public class OtaProgressServiceImpl implements OtaProgressService {
         }
         OtaUpgradeRecord record = recordMapper.selectLatestActiveByDevice(device.getId());
         if (record == null) {
+            // T-54：手工升级没有任务记录，但 success 回传仍可更新设备当前版本
+            if (OtaStatusValue.DEVICE_SUCCESS.equals(payload.status())) {
+                recordFirmwareVersion(device, payload.version());
+            }
             log.debug("OTA 进度无归属记录（可能为手工升级）: deviceKey={}, version={}",
                     device.getDeviceKey(), payload.version());
             return;
@@ -164,8 +171,41 @@ public class OtaProgressServiceImpl implements OtaProgressService {
         boolean terminal = OtaStatusValue.TERMINAL_STATUSES.contains(nextStatus);
         writeProgress(record, nextStatus, resolveProgress(record.getProgress(), payload.progress()),
                 payload.message(), verification);
+        // T-54：升级成功才回写设备当前版本；失败 / 校验不一致不更新
+        if (OtaStatusValue.RECORD_SUCCESS.equals(nextStatus)) {
+            recordFirmwareVersion(device, payload.version());
+        }
         if (terminal) {
             refreshCounters(record);
+        }
+    }
+
+    /**
+     * 回写设备当前固件版本（T-54）。
+     * <p>
+     * 防回退：默认不允许降级时，设备上报的版本低于平台记录值一律忽略——
+     * 这能挡住乱序到达的旧「success」把设备版本改回旧值。显式打开
+     * {@code app.ota.allow-downgrade} 后按设备真实回传更新。
+     * <p>
+     * 回写失败只记 WARN：版本展示是最终一致的尽力视图，不能因此让进度落库失败。
+     */
+    private void recordFirmwareVersion(Device device, String version) {
+        if (device == null || device.getId() == null || version == null || version.isBlank()) {
+            return;
+        }
+        String current = device.getFirmwareVersion();
+        if (!properties.isAllowDowngrade()
+                && current != null && !current.isBlank()
+                && FirmwareVersionComparator.compare(version, current) < 0) {
+            log.warn("设备上报固件版本低于平台记录，忽略回写: deviceKey={}, current={}, reported={}",
+                    device.getDeviceKey(), current, version);
+            return;
+        }
+        try {
+            deviceService.updateFirmwareVersion(device.getId(), version.trim());
+        } catch (Exception e) {
+            log.warn("设备固件版本回写失败: deviceKey={}, version={}, err={}",
+                    device.getDeviceKey(), version, e.getMessage());
         }
     }
 

@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -48,7 +49,7 @@ class HttpIngestControllerTest {
     @DisplayName("data 上报：200，返回体含 deviceKey/messageType/topic/accepted/receivedAt")
     void ingest_data_returnsAccepted() throws Exception {
         LocalDateTime receivedAt = LocalDateTime.now();
-        given(httpIngestService.ingest("dev001", "data", "{\"a\":1}"))
+        given(httpIngestService.ingest("dev001", "data", "{\"a\":1}", null))
                 .willReturn(new HttpIngestService.IngestAccepted(
                         "dev001", "data", "device/dev001/data", receivedAt, true));
 
@@ -63,13 +64,13 @@ class HttpIngestControllerTest {
                 .andExpect(jsonPath("$.data.accepted").value(true))
                 .andExpect(jsonPath("$.data.receivedAt").exists());
 
-        verify(httpIngestService).ingest("dev001", "data", "{\"a\":1}");
+        verify(httpIngestService).ingest("dev001", "data", "{\"a\":1}", null);
     }
 
     @Test
     @DisplayName("空 body：200，并把 null 透传为空串")
     void ingest_emptyBody_passesEmptyString() throws Exception {
-        given(httpIngestService.ingest("dev001", "heartbeat", ""))
+        given(httpIngestService.ingest("dev001", "heartbeat", "", null))
                 .willReturn(new HttpIngestService.IngestAccepted(
                         "dev001", "heartbeat", "device/dev001/heartbeat", LocalDateTime.now(), true));
 
@@ -78,13 +79,13 @@ class HttpIngestControllerTest {
                 .andExpect(jsonPath("$.code").value(200))
                 .andExpect(jsonPath("$.data.messageType").value("heartbeat"));
 
-        verify(httpIngestService).ingest("dev001", "heartbeat", "");
+        verify(httpIngestService).ingest("dev001", "heartbeat", "", null);
     }
 
     @Test
     @DisplayName("非白名单 messageType：400 + code=6247")
     void ingest_unsupportedType_maps400And6247() throws Exception {
-        given(httpIngestService.ingest("dev001", "foo", "x"))
+        given(httpIngestService.ingest("dev001", "foo", "x", null))
                 .willThrow(new BusinessException(ResultCode.INGEST_MESSAGE_TYPE_UNSUPPORTED));
 
         mockMvc.perform(post("/ingest/dev001/foo")
@@ -97,7 +98,7 @@ class HttpIngestControllerTest {
     @Test
     @DisplayName("载荷超限：413 + code=6248")
     void ingest_payloadTooLarge_maps413And6248() throws Exception {
-        given(httpIngestService.ingest("dev001", "data", "big"))
+        given(httpIngestService.ingest("dev001", "data", "big", null))
                 .willThrow(new BusinessException(ResultCode.INGEST_PAYLOAD_TOO_LARGE));
 
         mockMvc.perform(post("/ingest/dev001/data")
@@ -105,5 +106,23 @@ class HttpIngestControllerTest {
                         .content("big"))
                 .andExpect(status().isPayloadTooLarge())
                 .andExpect(jsonPath("$.code").value(6248));
+    }
+
+    @Test
+    @DisplayName("幂等重复：200 + accepted=false + X-Ingest-Duplicate=true")
+    void ingest_duplicateIdempotency_returnsAcceptedFalseAndHeader() throws Exception {
+        LocalDateTime firstAt = LocalDateTime.now().minusSeconds(5);
+        given(httpIngestService.ingest("dev001", "data", "x", "req-1"))
+                .willReturn(new HttpIngestService.IngestAccepted(
+                        "dev001", "data", "device/dev001/data", firstAt, false));
+
+        mockMvc.perform(post("/ingest/dev001/data")
+                        .header("Idempotency-Key", "req-1")
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("x"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("X-Ingest-Duplicate", "true"))
+                .andExpect(jsonPath("$.data.accepted").value(false))
+                .andExpect(jsonPath("$.data.receivedAt").exists());
     }
 }

@@ -5,6 +5,7 @@ import com.mqtt.cloud.config.HttpIngestProperties;
 import com.mqtt.cloud.ingest.IngestPipeline;
 import com.mqtt.cloud.ingest.IngestProperties;
 import com.mqtt.cloud.ingest.IngestRecord;
+import com.mqtt.cloud.service.HttpIngestGuard;
 import com.mqtt.cloud.service.HttpIngestService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,9 @@ import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -36,6 +40,7 @@ class HttpIngestServiceImplTest {
     private IngestPipeline ingestPipeline;
     private IngestProperties ingestProperties;
     private HttpIngestProperties httpIngestProperties;
+    private HttpIngestGuard httpIngestGuard;
     private HttpIngestServiceImpl service;
 
     @BeforeEach
@@ -43,7 +48,11 @@ class HttpIngestServiceImplTest {
         ingestPipeline = mock(IngestPipeline.class);
         ingestProperties = new IngestProperties();
         httpIngestProperties = new HttpIngestProperties();
-        service = new HttpIngestServiceImpl(ingestPipeline, ingestProperties, httpIngestProperties);
+        httpIngestGuard = mock(HttpIngestGuard.class);
+        given(httpIngestGuard.check(anyString(), any()))
+                .willAnswer(invocation -> new HttpIngestGuard.GuardResult(false, LocalDateTime.now()));
+        service = new HttpIngestServiceImpl(ingestPipeline, ingestProperties, httpIngestProperties,
+                httpIngestGuard);
     }
 
     /** 捕获唯一一次 {@code submit} 的入参；同时隐式断言「恰好调用一次」。 */
@@ -139,5 +148,19 @@ class HttpIngestServiceImplTest {
         service.ingest("dev001", "data", "value");
 
         verifyNoInteractions(ingestPipeline);
+    }
+
+    @Test
+    void ingest_duplicate_idempotency_key_should_not_submit_and_return_not_accepted() {
+        LocalDateTime firstAt = LocalDateTime.now().minusSeconds(10);
+        given(httpIngestGuard.check("dev001", "req-1"))
+                .willReturn(new HttpIngestGuard.GuardResult(true, firstAt));
+
+        HttpIngestService.IngestAccepted accepted =
+                service.ingest("dev001", "data", "{\"t\":25}", "req-1");
+
+        verifyNoInteractions(ingestPipeline);
+        assertThat(accepted.accepted()).isFalse();
+        assertThat(accepted.receivedAt()).isEqualTo(firstAt);
     }
 }

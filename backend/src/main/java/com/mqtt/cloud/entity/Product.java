@@ -50,6 +50,20 @@ public class Product {
     @TableField("payload_format")
     private String payloadFormat;
 
+    /**
+     * Payload Codec（T-55）：把非 Alink 原始报文映射成 Alink JSON 的声明式模板。
+     * <p>
+     * NULL 表示按原始 Alink 解析，存量产品行为不变。配置为 JSON：
+     * <pre>
+     * {"version":1,"fallbackToRaw":true,"template":{
+     *   "method":"thing.event.property.post",
+     *   "params":{"temperature":"$.sensors.temp"}
+     * }}
+     * </pre>
+     */
+    @TableField(value = "payload_codec", updateStrategy = FieldStrategy.ALWAYS)
+    private String payloadCodec;
+
     @TableField("metadata_schema")
     private String metadataSchema;
 

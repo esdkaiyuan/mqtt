@@ -10,6 +10,7 @@ import com.mqtt.cloud.mapper.ProductMapper;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.EmqxClientKicker;
+import com.mqtt.cloud.service.PayloadCodecService;
 import com.mqtt.cloud.service.TopicPrefixResolver;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +48,9 @@ class ProductServiceImplTest {
 
     @Mock
     private EmqxClientKicker emqxClientKicker;
+
+    @Mock
+    private PayloadCodecService payloadCodecService;
 
     /** 模板校验属纯函数逻辑，用真实实例而非 mock，避免断言退化为复制桩返回值。 */
     @Spy
@@ -93,6 +97,25 @@ class ProductServiceImplTest {
         assertThat(created.getAuthMode()).isEqualTo("SECRET");
         assertThat(created.getProtocolType()).isEqualTo("MQTT");
         assertThat(created.getStatus()).isEqualTo("ENABLED");
+    }
+
+    @Test
+    void create_should_normalize_payload_codec() {
+        when(productMapper.selectCount(any())).thenReturn(0L);
+        when(payloadCodecService.validateAndNormalize("{\"template\":{}}"))
+                .thenReturn("{\"version\":1,\"template\":{}}");
+        when(productMapper.insert(any(Product.class))).thenAnswer(inv -> {
+            Product p = inv.getArgument(0);
+            p.setId(1L);
+            return 1;
+        });
+        ProductRequest req = request("codec-product");
+        req.setPayloadCodec("{\"template\":{}}");
+
+        Product created = productService.create(req);
+
+        assertThat(created.getPayloadCodec()).isEqualTo("{\"version\":1,\"template\":{}}");
+        verify(payloadCodecService).validateAndNormalize("{\"template\":{}}");
     }
 
     @Test

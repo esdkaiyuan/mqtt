@@ -41,4 +41,18 @@ describe('exportApi', () => {
       params: { severity: 'CRITICAL' }
     })
   })
+
+  it('设备台账与审计日志导出路径（T-53）', () => {
+    exportApi.devices({ status: 'ONLINE', limit: 10000 })
+    exportApi.auditLogs({ action: 'DELETE', limit: 10000 })
+
+    expect(get).toHaveBeenNthCalledWith(1, '/devices/export', {
+      ...DOWNLOAD,
+      params: { status: 'ONLINE', limit: 10000 }
+    })
+    expect(get).toHaveBeenNthCalledWith(2, '/audit-logs/export', {
+      ...DOWNLOAD,
+      params: { action: 'DELETE', limit: 10000 }
+    })
+  })
 })

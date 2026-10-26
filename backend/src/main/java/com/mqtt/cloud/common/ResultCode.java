@@ -208,7 +208,37 @@ public enum ResultCode {
     // ── T-30 · 死信处置闭环 ──
     DEAD_LETTER_NOT_FOUND(5002, "死信记录不存在", HttpStatus.NOT_FOUND),
     DEAD_LETTER_ALREADY_DISPOSED(5003, "死信已被处置（已重放或已丢弃）", HttpStatus.CONFLICT),
-    DEAD_LETTER_REPLAY_FAILED(5004, "死信重放入队失败", HttpStatus.SERVICE_UNAVAILABLE);
+    DEAD_LETTER_REPLAY_FAILED(5004, "死信重放入队失败", HttpStatus.SERVICE_UNAVAILABLE),
+
+    // ── T-53 · 平台治理与规模化补强 ──
+    /** 审计日志查询时间范围非法（格式错误或 start 晚于 end）。 */
+    AUDIT_LOG_QUERY_INVALID(6313, "审计日志查询条件非法（时间格式错误或起始晚于结束）", HttpStatus.BAD_REQUEST),
+    /** HTTP 上报按设备固定窗口限流。 */
+    INGEST_RATE_LIMIT_EXCEEDED(6314, "HTTP 上报超出设备频率限制", HttpStatus.TOO_MANY_REQUESTS),
+    /** 幂等键仅允许 1~128 个可见 ASCII 字符。 */
+    INGEST_IDEMPOTENCY_KEY_INVALID(6315, "幂等键非法（长度 1~128，仅允许可见 ASCII）", HttpStatus.BAD_REQUEST),
+    /** 设备导入文件格式 / 表头 / 行数 / 大小不合法。 */
+    DEVICE_IMPORT_INVALID(6316, "设备导入文件非法（格式、表头、行数或大小超限）", HttpStatus.BAD_REQUEST),
+
+    // ── T-55 · Payload Codec ──
+    /** Payload Codec 不是合法模板（JSON、版本、mode、template、路径或大小超限）。 */
+    PAYLOAD_CODEC_INVALID(6317, "Payload Codec 配置非法（JSON、template 或路径表达式不合法）", HttpStatus.BAD_REQUEST),
+
+    // ── T-58 · TOTP MFA ──
+    /** 用户已启用 MFA，不能重复发起绑定。 */
+    MFA_ALREADY_ENABLED(6318, "已启用多因素认证，无需重复绑定", HttpStatus.BAD_REQUEST),
+    /** 尚未完成 MFA 绑定（没有待确认密钥）。 */
+    MFA_NOT_ENROLLED(6319, "尚未完成多因素认证绑定", HttpStatus.BAD_REQUEST),
+    /** 动态口令错误或已过期。 */
+    MFA_CODE_INVALID(6320, "动态口令错误或已过期", HttpStatus.BAD_REQUEST),
+    /** MFA 临时令牌非法 / 过期 / 非 MFA 用途。 */
+    MFA_TOKEN_INVALID(6321, "多因素认证会话无效，请重新登录", HttpStatus.UNAUTHORIZED),
+    /** MFA 功能整体关闭。 */
+    MFA_DISABLED(6322, "多因素认证功能已关闭", HttpStatus.NOT_FOUND),
+
+    // ── T-56 · 数据桥接 ──
+    /** Kafka 数据桥接未启用 / 配置缺失 / 发送失败。 */
+    DATA_BRIDGE_FAILED(6323, "数据桥接未启用、配置缺失或发送失败", HttpStatus.BAD_GATEWAY);
 
     private final Integer code;
     private final String message;

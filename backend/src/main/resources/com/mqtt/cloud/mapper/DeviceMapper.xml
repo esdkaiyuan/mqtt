@@ -5,7 +5,7 @@
 
     <sql id="baseColumns">
         id, device_name, device_key, device_type, topic, description,
-        owner_id, status, last_seen, metadata, created_at, updated_at
+        owner_id, status, last_seen, metadata, firmware_version, created_at, updated_at
     </sql>
 
     <select id="findByDeviceKey" resultType="com.mqtt.cloud.entity.Device">
@@ -14,7 +14,7 @@
              T-26：授权元数据（AuthMeta）另需 node_type/parent_id 判定委托收发，一并显式列出。 -->
         SELECT id, product_id, device_name, device_key, device_type, topic, description,
                owner_id, status, last_seen, enabled, device_secret_hash, secret_updated_at,
-               node_type, parent_id,
+               node_type, parent_id, firmware_version,
                metadata, created_at, updated_at, deleted
         FROM device
         WHERE device_key = #{deviceKey}
@@ -23,7 +23,7 @@
 
     <select id="findByDeviceKeys" resultType="com.mqtt.cloud.entity.Device">
         SELECT id, product_id, device_name, device_key, device_type, topic, description,
-               owner_id, status, last_seen, enabled, metadata, created_at, updated_at, deleted
+               owner_id, status, last_seen, enabled, metadata, firmware_version, created_at, updated_at, deleted
         FROM device
         WHERE deleted = 0
           AND device_key IN
@@ -122,7 +122,7 @@
     <select id="pageQuery" resultType="com.mqtt.cloud.entity.Device">
         SELECT d.id, d.device_name, d.device_key, d.device_type, d.topic,
                d.description, d.owner_id, d.status, d.last_seen, d.metadata,
-               d.node_type, d.parent_id,
+               d.node_type, d.parent_id, d.firmware_version,
                d.created_at, d.updated_at,
                u.username AS owner_username
         FROM device d
@@ -174,7 +174,7 @@
     <select id="findActiveById" resultType="com.mqtt.cloud.entity.Device">
         SELECT id, product_id, device_name, device_key, device_type, topic, description,
                owner_id, status, last_seen, enabled, node_type, parent_id,
-               metadata, created_at, updated_at, deleted
+               firmware_version, metadata, created_at, updated_at, deleted
         FROM device
         WHERE id = #{id}
           AND deleted = 0
@@ -185,7 +185,7 @@
     <select id="findByParentId" resultType="com.mqtt.cloud.entity.Device">
         SELECT d.id, d.product_id, d.device_name, d.device_key, d.device_type, d.topic,
                d.description, d.owner_id, d.status, d.last_seen,
-               d.node_type, d.parent_id,
+               d.node_type, d.parent_id, d.firmware_version,
                d.metadata, d.created_at, d.updated_at
         FROM device d
         WHERE d.deleted = 0

@@ -15,14 +15,18 @@
 | 能力 | 说明 |
 |---|---|
 | 设备接入 | 产品模板、物模型 TSL、一机一密、X.509 / JWT、HTTP 上报、多级网关代理 |
+| 数据解析 | Alink JSON 解析 + **产品级 Payload Codec**（声明式映射非 Alink 报文，不执行脚本） |
 | 命令与影子 | 物模型校验、同步 / 异步命令、离线补发、desired / reported / delta、多设备影子聚合 |
 | 数据查询 | 属性最新值、事件、属性时序分桶、消息历史、设备统一日志、SSE 实时推送、CSV 导出 |
 | 组织与权限 | 分组树、标签、批量操作、分组成员共享（VIEW / OPERATE）、ADMIN / OPERATOR / VIEWER |
-| 规则与告警 | 多条件多动作规则、四档作用域；阈值 / 离线 / 事件告警、窗口聚合、抑制、升级、分派、多渠道通知 |
-| 场景联动 | 属性 / 事件 / 定时 / 上下线 / 影子变更触发；分支、循环、并行汇合；表单与画布双视图；版本回滚 |
-| OTA | 固件包、按产品 / 分组 / 标签 / 设备下发、灰度分批、暂停 / 恢复 / 终止、MD5 完整性校验 |
+| 规则与告警 | 多条件多动作规则、四档作用域、MQTT / HTTP / **Kafka** 数据桥接；阈值 / 离线 / 事件告警、窗口聚合、抑制、升级、分派、多渠道通知 |
+| 场景联动 | 属性 / 事件 / 定时 / 上下线 / 影子变更触发；分支、循环、并行汇合；MQTT / HTTP / **Kafka** 转发；表单与画布双视图；版本回滚 |
+| OTA | 固件包、按产品 / 分组 / 标签 / 设备下发、灰度分批、暂停 / 恢复 / 终止、MD5 完整性校验、固件版本跟踪与降级拦截 |
 | 可视化 | 可保存看板、公开只读大屏与轮播、设备属性趋势、快速上位机（HMI）Web 组态 |
 | 运维调试 | 设备调试中心、模拟上行、设备端 / 上位机端属性代码、平台侧 Modbus TCP 主站（多从站 / 64 位整型） |
+| 平台治理 | 审计日志（写操作留痕 / CSV 导出 / 保留清理）、设备台账 CSV 导入导出、HTTP 上报设备级限流与幂等去重 |
+| 账号安全 | TOTP 多因素认证（authenticator 动态口令，二步登录；密钥加密存储，可全局开关） |
+| 开放与集成 | 开放 API（读 + 设备 / 规则 / 场景写 + 命令 / 影子）、Webhook、SDK 示例（curl / JS / Python） |
 
 ## 快速开始
 
@@ -46,7 +50,7 @@ cp .env.example .env
 bash scripts/deploy.sh
 ```
 
-前后端均在容器内构建，本机无需 Maven / Node。首次启动会由 Flyway 自动执行 `V1`~`V30` 迁移。
+前后端均在容器内构建，本机无需 Maven / Node。首次启动会由 Flyway 自动执行 `V1`~`V34` 迁移。
 `JWT_SECRET` 为必填项：Docker 部署必须写入 `.env`（`deploy.sh` 留空时会自动生成），本机直接启动后端也必须通过环境变量设置至少 32 字节的密钥。
 
 ### 访问入口
@@ -149,11 +153,17 @@ curl -X GET "https://your-server/api/external/v1/devices" \
 - 命令与影子：`POST /devices/{deviceKey}/command`、`GET .../commands`、`GET .../shadow`、`PUT .../shadow/desired`
 - 属性 / 事件 / 时序：`GET .../properties`、`.../events`、`.../properties/history`
 - 消息 / 日志：`GET .../messages`、`.../logs`
+- 组织与执行：`GET /device-groups`、`/device-groups/tree`、`/device-tags`、`/devices/{deviceKey}/points`、`/rules/executions`、`/scenes/executions`
+- 看板：`GET /dashboards`、`/dashboards/{id}`
 - 规则 / 告警：`GET /rules`、`/alerts`、`/alerts/{id}`、`/alerts/unread-count`、`/alerts/rules`
 - OTA：`GET /ota/firmwares`、`/ota/tasks`、`/ota/tasks/{id}`、`/ota/tasks/{id}/records`
 - 场景：`GET /scenes`
 - 统计：`GET /stats`
-- HTTP 上报（设备凭据，非 API Key）：`POST /api/ingest/{deviceKey}/{messageType}`
+- HTTP 上报（设备凭据，非 API Key）：`POST /api/ingest/{deviceKey}/{messageType}`；可选 `Idempotency-Key` 请求头做弱网重试去重，重复请求返回 `accepted=false` 与 `X-Ingest-Duplicate: true`
+
+管理端另有设备台账导入导出（`POST /api/devices/import`、`GET /api/devices/import-template`、`GET /api/devices/export`）与审计日志（`GET /api/audit-logs`、`GET /api/audit-logs/export`，仅 ADMIN）。
+
+开放 API 写端点（均需 `device:write`）：`POST /devices`、`PUT|DELETE /devices/{deviceKey}`、`POST|PUT|DELETE /rules`、`PUT /rules/{id}/enabled`、`POST|PUT|DELETE /scenes`、`PUT /scenes/{id}/enabled`、`POST /scenes/{id}/run`。curl / JS / Python 最小示例见 [D6](docs/D6_开放API写操作与SDK示例.md)。
 
 完整路径、参数与响应示例见站内文档「开放 API → REST API 参考」（`/docs/api/rest`）。
 功能使用说明见 `/docs/features/devices`、`/docs/features/automation`、`/docs/features/operations`、`/docs/features/access`。
@@ -188,6 +198,14 @@ MQTT自建站点/
 - [设备接入（ESP32）](docs/ESP32_接入手册.md)
 - [总督促文档](docs/总督促文档.md)
 - [平台功能链路路线图](docs/平台功能链路路线图.md)
+- [平台能力对标与差距分析](docs/平台能力对标_主流MQTT平台差距分析.md)
+- [T-53 · 平台治理与规模化补强](docs/T-53_平台治理与规模化补强_实施计划.md)
+- [T-54 · OTA 固件版本跟踪与降级拦截](docs/T-54_OTA固件版本跟踪与降级拦截_实施计划.md)
+- [T-55 · 数据解析与 Payload Codec](docs/T-55_数据解析与PayloadCodec_实施计划.md)
+- [T-57 · 开放 API 写操作与 SDK 示例](docs/T-57_开放API写操作与SDK示例_实施计划.md)
+- [T-58 · 安全基座：TOTP 多因素认证](docs/T-58_安全基座TOTP多因素认证_实施计划.md)
+- [T-56 · 数据桥接：规则 / 场景转发到 Kafka](docs/T-56_数据桥接Kafka转发_实施计划.md)
+- [D6 · 开放 API 写操作与 SDK 示例](docs/D6_开放API写操作与SDK示例.md)
 - [头部平台对标与剩余缺口](docs/头部平台对标_尚未补齐功能项清单.md)
 
 ## 开发与测试

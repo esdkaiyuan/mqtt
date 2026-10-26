@@ -119,6 +119,14 @@
             <version>1.2.5</version>
         </dependency>
 
+        <!-- Kafka 数据桥接（T-56）：规则 / 场景 FORWARD_KAFKA 动作出站到第三方 Kafka。
+             只依赖 kafka-clients（版本由 Spring Boot BOM 托管），不引入 spring-kafka 自动配置，
+             避免桥接配置与平台自身 Bean 产生隐式耦合。 -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+        </dependency>
+
         <!-- Modbus 主站（T-31 路线B）。仅 Modbus TCP，排除串口依赖：
              jSerialComm 是原生库（含各平台 dll/so），打进容器只会增大体积与攻击面。 -->
         <dependency>

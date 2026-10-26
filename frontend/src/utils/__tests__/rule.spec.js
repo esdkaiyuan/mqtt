@@ -85,7 +85,8 @@ describe('utils/rule', () => {
       'UPDATE_PROPERTY',
       'SEND_COMMAND',
       'FORWARD_MQTT',
-      'FORWARD_HTTP'
+      'FORWARD_HTTP',
+      'FORWARD_KAFKA'
     ])
     expect(EXECUTION_STATUS_LABELS.FAILED).toBe('失败')
   })

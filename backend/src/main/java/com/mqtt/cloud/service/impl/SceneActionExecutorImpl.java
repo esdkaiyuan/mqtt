@@ -1,5 +1,7 @@
 package com.mqtt.cloud.service.impl;
 
+import com.mqtt.cloud.bridge.KafkaMessageForwarder;
+import com.mqtt.cloud.common.RuleConstants;
 import com.mqtt.cloud.common.SceneConstants;
 import com.mqtt.cloud.common.exception.BusinessException;
 import com.mqtt.cloud.config.RuleProperties;
@@ -78,6 +80,7 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
     private final DeviceBatchService deviceBatchService;
     private final RuleMqttForwarder mqttForwarder;
     private final RuleHttpForwarder httpForwarder;
+    private final KafkaMessageForwarder kafkaForwarder;
     private final SceneExecutionFinalizer finalizer;
     private final SceneProperties properties;
     private final RuleProperties ruleProperties;
@@ -96,6 +99,7 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
                                    DeviceBatchService deviceBatchService,
                                    RuleMqttForwarder mqttForwarder,
                                    RuleHttpForwarder httpForwarder,
+                                   KafkaMessageForwarder kafkaForwarder,
                                    SceneExecutionFinalizer finalizer,
                                    SceneProperties properties,
                                    RuleProperties ruleProperties,
@@ -113,6 +117,7 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
         this.deviceBatchService = deviceBatchService;
         this.mqttForwarder = mqttForwarder;
         this.httpForwarder = httpForwarder;
+        this.kafkaForwarder = kafkaForwarder;
         this.finalizer = finalizer;
         this.properties = properties;
         this.ruleProperties = ruleProperties;
@@ -208,6 +213,7 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
             switch (actionType) {
                 case SceneConstants.ACTION_FORWARD_MQTT -> forwardMqtt(run, config, values);
                 case SceneConstants.ACTION_FORWARD_HTTP -> forwardHttp(run, scene, config, values);
+                case SceneConstants.ACTION_FORWARD_KAFKA -> forwardKafka(run, config, values);
                 default -> throw new ActionFailure("不支持的动作类型 " + actionType);
             }
             return StepOutcome.advance();
@@ -522,6 +528,22 @@ public class SceneActionExecutorImpl implements SceneActionExecutor {
             mqttForwarder.publish(topic, payload, qos);
         } catch (Exception e) {
             throw new ActionFailure("MQTT 转发失败：" + describe(e));
+        }
+    }
+
+    /** 转发 Kafka：渲染 Topic / Key / 载荷后出站到第三方 Kafka（T-56 数据桥接）。 */
+    private void forwardKafka(SceneStepRun run, JsonNode config, Map<String, String> values) {
+        String topic = RuleTemplateRenderer.render(text(config, "topic"), values);
+        if (topic != null && topic.length() > RuleConstants.MAX_TOPIC_LENGTH) {
+            throw new ActionFailure("Kafka Topic 长度不能超过 " + RuleConstants.MAX_TOPIC_LENGTH);
+        }
+        String key = RuleTemplateRenderer.render(text(config, "key"), values);
+        String payload = renderPayload(text(config, "payloadTemplate"), run, values);
+        updateForwardPayload(run.getId(), payload);
+        try {
+            kafkaForwarder.publish(topic, key, payload);
+        } catch (Exception e) {
+            throw new ActionFailure("Kafka 转发失败：" + describe(e));
         }
     }
 

@@ -9,11 +9,14 @@ import com.mqtt.cloud.mapper.DeviceEventRecordMapper;
 import com.mqtt.cloud.mapper.DevicePropertyLatestMapper;
 import com.mqtt.cloud.service.AlertEvaluationService;
 import com.mqtt.cloud.service.DeviceShadowService;
+import com.mqtt.cloud.service.PayloadCodecDefinition;
+import com.mqtt.cloud.service.PayloadCodecService;
 import com.mqtt.cloud.service.PropertyHistoryService;
 import com.mqtt.cloud.service.RuleEvaluationService;
 import com.mqtt.cloud.service.SceneEvaluationService;
 import com.mqtt.cloud.service.ThingModelDefinition;
 import com.mqtt.cloud.service.ThingModelService;
+import com.mqtt.cloud.util.PayloadCodecValidator;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,6 +57,7 @@ class ThingModelInterpretServiceImplTest {
     private static final String METRIC = "thing_model_interpret";
 
     private ThingModelService thingModelService;
+    private PayloadCodecService payloadCodecService;
     private DevicePropertyLatestMapper propertyLatestMapper;
     private DeviceEventRecordMapper eventRecordMapper;
     private DeviceShadowService deviceShadowService;
@@ -68,6 +72,9 @@ class ThingModelInterpretServiceImplTest {
     @BeforeEach
     void setUp() {
         thingModelService = mock(ThingModelService.class);
+        payloadCodecService = mock(PayloadCodecService.class);
+        when(payloadCodecService.getForProduct(any()))
+                .thenReturn(PayloadCodecDefinition.EMPTY);
         propertyLatestMapper = mock(DevicePropertyLatestMapper.class);
         eventRecordMapper = mock(DeviceEventRecordMapper.class);
         deviceShadowService = mock(DeviceShadowService.class);
@@ -77,7 +84,8 @@ class ThingModelInterpretServiceImplTest {
         propertyHistoryService = mock(PropertyHistoryService.class);
         properties = new ThingModelProperties();
         registry = new SimpleMeterRegistry();
-        service = new ThingModelInterpretServiceImpl(thingModelService, propertyLatestMapper,
+        service = new ThingModelInterpretServiceImpl(thingModelService, payloadCodecService,
+                propertyLatestMapper,
                 eventRecordMapper, deviceShadowService, alertEvaluationService, ruleEvaluationService,
                 sceneEvaluationService, propertyHistoryService, new ThingModelInterpretMetrics(registry),
                 properties, new ObjectMapper());
@@ -149,6 +157,23 @@ class ThingModelInterpretServiceImplTest {
         service.interpret(List.of(dataEvent("{\"method\":\"thing.event.property.post\",\"params\":{\"temperature\":25.50}}")));
 
         verify(propertyLatestMapper).upsertIfNewer(DEVICE_ID, "temperature", "double", "25.5", RECEIVED_AT);
+        assertThat(count("property")).isEqualTo(1);
+    }
+
+    @Test
+    void interpret_should_apply_payload_codec_before_aling_parse() {
+        when(thingModelService.getForProduct(PRODUCT_ID)).thenReturn(modelWithTemperature());
+        PayloadCodecDefinition codec = PayloadCodecValidator.parseDefinition(
+                "{\"template\":{\"method\":\"thing.event.property.post\","
+                        + "\"params\":{\"temperature\":\"$.sensors.temp\"}}}",
+                new ObjectMapper(), true);
+        when(payloadCodecService.getForProduct(PRODUCT_ID)).thenReturn(codec);
+
+        service.interpret(List.of(dataEvent("{\"sensors\":{\"temp\":25.5}}")));
+
+        verify(propertyLatestMapper).upsertIfNewer(
+                DEVICE_ID, "temperature", "double", "25.5", RECEIVED_AT);
+        assertThat(count("codec")).isEqualTo(1);
         assertThat(count("property")).isEqualTo(1);
     }
 

@@ -11,7 +11,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 物模型解析指标：{@code thing_model_interpret_total{result=...}}。
  * <p>
  * result 取值见 T-14 设计文档 §7.4：property / event / unparsed / unmodeled /
- * unknown_identifier / error。计数器按 result 缓存，避免热路径重复构建。
+ * unknown_identifier / error；T-55 新增 codec（Payload Codec 映射成功）。
+ * 计数器按 result 缓存，避免热路径重复构建。
  */
 @Component
 public class ThingModelInterpretMetrics {

@@ -17,7 +17,13 @@ export const exportApi = {
   commands: (deviceKey, params) =>
     api.get(`/devices/${deviceKey}/commands/export`, { ...DOWNLOAD, params }),
 
-  alerts: (params) => api.get('/alerts/export', { ...DOWNLOAD, params })
+  alerts: (params) => api.get('/alerts/export', { ...DOWNLOAD, params }),
+
+  /** 设备台账导出（T-53）：不含密钥，按列表筛选条件导出。 */
+  devices: (params) => api.get('/devices/export', { ...DOWNLOAD, params }),
+
+  /** 审计日志导出（T-53）：仅 ADMIN。 */
+  auditLogs: (params) => api.get('/audit-logs/export', { ...DOWNLOAD, params })
 }
 
 export default exportApi

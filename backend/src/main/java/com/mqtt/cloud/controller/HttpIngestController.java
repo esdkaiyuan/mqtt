@@ -6,6 +6,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,6 +33,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/ingest")
 public class HttpIngestController {
 
+    private static final String IDEMPOTENCY_HEADER = "Idempotency-Key";
+    private static final String DUPLICATE_HEADER = "X-Ingest-Duplicate";
+
     private final HttpIngestService httpIngestService;
 
     public HttpIngestController(HttpIngestService httpIngestService) {
@@ -38,12 +43,22 @@ public class HttpIngestController {
     }
 
     @Operation(summary = "设备上报", description = "messageType 白名单 data / heartbeat / lwt；"
-            + "凭据非法返回 401 + 6246，类型不支持返回 400 + 6247，载荷超限返回 413 + 6248")
+            + "凭据非法返回 401 + 6246，类型不支持返回 400 + 6247，载荷超限返回 413 + 6248，"
+            + "超出设备频率返回 429 + 6314。可选请求头 Idempotency-Key 用于弱网重试去重："
+            + "重复请求返回 200、accepted=false 且响应头 X-Ingest-Duplicate=true")
     @PostMapping("/{deviceKey}/{messageType}")
     public Result<HttpIngestService.IngestAccepted> ingest(
             @Parameter(description = "设备 Key", required = true) @PathVariable String deviceKey,
             @Parameter(description = "消息类型：data / heartbeat / lwt", required = true) @PathVariable String messageType,
-            @RequestBody(required = false) String payload) {
-        return Result.success(httpIngestService.ingest(deviceKey, messageType, payload == null ? "" : payload));
+            @RequestBody(required = false) String payload,
+            HttpServletRequest request,
+            HttpServletResponse response) {
+        HttpIngestService.IngestAccepted accepted = httpIngestService.ingest(
+                deviceKey, messageType, payload == null ? "" : payload,
+                request.getHeader(IDEMPOTENCY_HEADER));
+        if (!accepted.accepted()) {
+            response.setHeader(DUPLICATE_HEADER, "true");
+        }
+        return Result.success(accepted);
     }
 }

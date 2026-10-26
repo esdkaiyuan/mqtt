@@ -173,6 +173,59 @@ class OtaUpgradeServiceImplTest {
     }
 
     @Test
+    void createTask_should_skip_devices_whose_firmware_version_is_higher_than_target() throws Exception {
+        OtaFirmware firmware = firmware(FIRMWARE_ID, USER_ID, PRODUCT_ID);
+        BatchTargetRequest target = target();
+        OtaTaskCreateRequest request = request("防降级升级", FIRMWARE_ID, target);
+
+        Device newer = device(DEVICE_ID_1, PRODUCT_ID);
+        newer.setFirmwareVersion("2.0.0");
+        Device older = device(DEVICE_ID_2, PRODUCT_ID);
+        older.setFirmwareVersion("0.9.0");
+
+        when(firmwareMapper.selectById(FIRMWARE_ID)).thenReturn(firmware);
+        when(deviceBatchService.resolveTarget(USER_ID, target)).thenReturn(List.of(newer, older));
+        when(taskMapper.insert(any(OtaUpgradeTask.class))).thenAnswer(invocation -> {
+            OtaUpgradeTask task = invocation.getArgument(0);
+            task.setId(TASK_ID);
+            return 1;
+        });
+        when(recordMapper.insert(any(OtaUpgradeRecord.class))).thenAnswer(invocation -> {
+            OtaUpgradeRecord record = invocation.getArgument(0);
+            record.setId((long) (inserted.size() + 1));
+            inserted.add(record);
+            return 1;
+        });
+        when(taskMapper.selectById(TASK_ID)).thenAnswer(invocation -> task());
+        when(recordMapper.selectList(any())).thenAnswer(invocation -> new ArrayList<>(inserted));
+        when(deviceCommandService.invoke(any())).thenAnswer(invocation -> command("cmd"));
+        when(firmwareMapper.selectBatchIds(any())).thenReturn(List.of(firmware));
+        when(productService.list()).thenReturn(List.of(product(PRODUCT_ID, "温湿度传感器")));
+        when(taskMapper.refreshCounters(TASK_ID)).thenReturn(1);
+
+        OtaTaskDetailVO vo = service.createTask(USER_ID, request);
+
+        assertThat(inserted).hasSize(1);
+        assertThat(inserted.get(0).getDeviceId()).isEqualTo(DEVICE_ID_2);
+        assertThat(vo.getDowngradeSkippedCount()).isEqualTo(1);
+        assertThat(vo.getConflictSkippedCount()).isZero();
+    }
+
+    @Test
+    void createTask_should_reject_when_all_devices_would_be_downgraded() {
+        BatchTargetRequest target = target();
+        Device newer = device(DEVICE_ID_1, PRODUCT_ID);
+        newer.setFirmwareVersion("2.0.0");
+
+        when(firmwareMapper.selectById(FIRMWARE_ID)).thenReturn(firmware(FIRMWARE_ID, USER_ID, PRODUCT_ID));
+        when(deviceBatchService.resolveTarget(USER_ID, target)).thenReturn(List.of(newer));
+
+        assertCode(() -> service.createTask(USER_ID, request("防降级升级", FIRMWARE_ID, target)),
+                ResultCode.OTA_TASK_INVALID);
+        verify(taskMapper, never()).insert(any(OtaUpgradeTask.class));
+    }
+
+    @Test
     void createTask_should_reject_when_no_device_matches_firmware_product() {
         BatchTargetRequest target = target();
         when(firmwareMapper.selectById(FIRMWARE_ID)).thenReturn(firmware(FIRMWARE_ID, USER_ID, OTHER_PRODUCT_ID));

@@ -14,6 +14,7 @@ import com.mqtt.cloud.mapper.OtaFirmwareMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeBatchMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeRecordMapper;
 import com.mqtt.cloud.mapper.OtaUpgradeTaskMapper;
+import com.mqtt.cloud.service.DeviceService;
 import com.mqtt.cloud.service.OtaProgressPayload;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,6 +54,7 @@ class OtaProgressServiceImplTest {
     private OtaUpgradeTaskMapper taskMapper;
     private OtaUpgradeBatchMapper batchMapper;
     private OtaFirmwareMapper firmwareMapper;
+    private DeviceService deviceService;
     private OtaProperties properties;
     private ObjectMapper objectMapper;
     private OtaProgressServiceImpl service;
@@ -64,10 +66,11 @@ class OtaProgressServiceImplTest {
         taskMapper = mock(OtaUpgradeTaskMapper.class);
         batchMapper = mock(OtaUpgradeBatchMapper.class);
         firmwareMapper = mock(OtaFirmwareMapper.class);
+        deviceService = mock(DeviceService.class);
         properties = new OtaProperties();
         objectMapper = new ObjectMapper();
         service = new OtaProgressServiceImpl(recordMapper, taskMapper, batchMapper, firmwareMapper,
-                properties, objectMapper);
+                deviceService, properties, objectMapper);
     }
 
     // ---------- 事件分发 ----------
@@ -145,6 +148,31 @@ class OtaProgressServiceImplTest {
         // success 恒为 100，即使设备漏报进度
         assertThat(params.values()).contains(OtaStatusValue.RECORD_SUCCESS, 100);
         verify(taskMapper).refreshCounters(TASK_ID);
+        // T-54：成功回写设备当前固件版本
+        verify(deviceService).updateFirmwareVersion(DEVICE_ID_1, VERSION);
+    }
+
+    @Test
+    void handle_should_update_firmware_version_for_manual_upgrade_success() {
+        Device device = device(DEVICE_ID_1);
+        when(recordMapper.selectLatestActiveByDevice(DEVICE_ID_1)).thenReturn(null);
+
+        service.handle(List.of(event(device, "ota", payload("success", null))));
+
+        verify(recordMapper, never()).update(any(), any());
+        verify(deviceService).updateFirmwareVersion(DEVICE_ID_1, VERSION);
+    }
+
+    @Test
+    void handle_should_ignore_lower_reported_version_when_downgrade_disabled() {
+        Device device = device(DEVICE_ID_1);
+        device.setFirmwareVersion("2.0.0");
+        when(recordMapper.selectLatestActiveByDevice(DEVICE_ID_1))
+                .thenReturn(record(RECORD_ID, TASK_ID, DEVICE_ID_1, OtaStatusValue.RECORD_FLASHING, 90, VERSION));
+
+        service.handle(List.of(event(device, "ota", payload("success", null))));
+
+        verify(deviceService, never()).updateFirmwareVersion(anyLong(), any());
     }
 
     @Test

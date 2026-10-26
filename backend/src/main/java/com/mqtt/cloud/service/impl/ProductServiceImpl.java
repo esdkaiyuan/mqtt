@@ -14,6 +14,7 @@ import com.mqtt.cloud.mapper.ProductMapper;
 import com.mqtt.cloud.service.DeviceAuthCacheService;
 import com.mqtt.cloud.service.DeviceSecretService;
 import com.mqtt.cloud.service.EmqxClientKicker;
+import com.mqtt.cloud.service.PayloadCodecService;
 import com.mqtt.cloud.service.ProductService;
 import com.mqtt.cloud.service.TopicPrefixResolver;
 import lombok.RequiredArgsConstructor;
@@ -55,6 +56,8 @@ public class ProductServiceImpl implements ProductService {
 
     private final TopicPrefixResolver topicPrefixResolver;
 
+    private final PayloadCodecService payloadCodecService;
+
     @Override
     @Transactional
     public Product create(ProductRequest request) {
@@ -76,6 +79,7 @@ public class ProductServiceImpl implements ProductService {
         product.setTopicPrefix(topicPrefix);
         product.setPayloadFormat(StringUtils.hasText(request.getPayloadFormat())
                 ? request.getPayloadFormat() : DEFAULT_PAYLOAD_FORMAT);
+        product.setPayloadCodec(payloadCodecService.validateAndNormalize(request.getPayloadCodec()));
         product.setMetadataSchema(request.getMetadataSchema());
         applyProtocol(product, request, true);
         product.setStatus(STATUS_ENABLED);
@@ -119,9 +123,14 @@ public class ProductServiceImpl implements ProductService {
         if (StringUtils.hasText(request.getPayloadFormat())) {
             existing.setPayloadFormat(request.getPayloadFormat());
         }
+        if (request.getPayloadCodec() != null) {
+            // null=保持原值，空串=清空；与 driverConfig 的「未加载不修改」语义保持一致
+            existing.setPayloadCodec(payloadCodecService.validateAndNormalize(request.getPayloadCodec()));
+        }
         existing.setMetadataSchema(request.getMetadataSchema());
         applyProtocol(existing, request, false);
         productMapper.updateById(existing);
+        AfterCommit.run(() -> payloadCodecService.evict(id));
         // 产品标识变更会改变用户名与缓存键，旧键下的元数据不再可达，主动清理
         if (!previousKey.equals(existing.getProductKey())) {
             authCacheService.evictProduct(previousKey);
@@ -221,6 +230,7 @@ public class ProductServiceImpl implements ProductService {
             throw new BusinessException(ResultCode.PRODUCT_HAS_DEVICES);
         }
         productMapper.deleteById(id);
+        payloadCodecService.evict(id);
         // 产品停用/删除后其下设备不应再通过认证；停用走状态变更时同样需要失效
         authCacheService.evictProduct(product.getProductKey());
     }

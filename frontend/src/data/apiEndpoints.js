@@ -45,7 +45,8 @@ export const endpointGroups = [
       "deviceType": "sensor",
       "topic": "device/sensor-temp-001/data",
       "status": "ONLINE",
-      "lastSeen": "2026-10-22T10:00:00"
+      "lastSeen": "2026-10-22T10:00:00",
+      "firmwareVersion": "1.2.3"
     }
   ]
 }`
@@ -63,6 +64,7 @@ export const endpointGroups = [
     "deviceName": "温度传感器-01",
     "deviceType": "sensor",
     "status": "ONLINE",
+    "firmwareVersion": "1.2.3",
     "description": "客厅温度传感器",
     "metadata": {"unit": "°C", "min": -20, "max": 80}
   }
@@ -349,6 +351,220 @@ export const endpointGroups = [
     ]
   },
   {
+    key: 'organization',
+    title: '设备组织（只读）',
+    endpoints: [
+      ep(
+        'GET',
+        '/external/v1/device-groups',
+        '只读返回密钥所属用户的扁平分组列表；不包含共享分组，避免越出账号数据边界。',
+        `curl -X GET "${BASE}/device-groups" \\\n  ${KEY_HEADER}`,
+        `{
+  "code": 200,
+  "data": [
+    {
+      "id": 1,
+      "parentId": null,
+      "name": "一号车间",
+      "sortOrder": 0,
+      "description": "产线设备",
+      "deviceCount": 12,
+      "createdAt": "2026-10-20T09:00:00"
+    }
+  ]
+}`
+      ),
+      ep(
+        'GET',
+        '/external/v1/device-groups/tree',
+        '只读返回分组树，children 递归嵌套。',
+        `curl -X GET "${BASE}/device-groups/tree" \\\n  ${KEY_HEADER}`,
+        `{
+  "code": 200,
+  "data": [
+    {
+      "id": 1,
+      "name": "一号车间",
+      "deviceCount": 12,
+      "children": [
+        { "id": 2, "parentId": 1, "name": "A 线", "deviceCount": 5 }
+      ]
+    }
+  ]
+}`
+      ),
+      ep(
+        'GET',
+        '/external/v1/device-tags',
+        '只读返回密钥所属用户的设备标签。',
+        `curl -X GET "${BASE}/device-tags" \\\n  ${KEY_HEADER}`,
+        `{
+  "code": 200,
+  "data": [
+    { "id": 1, "name": "重点设备", "color": "#E6A23C", "createdAt": "2026-10-20T09:00:00" }
+  ]
+}`
+      ),
+      ep(
+        'GET',
+        '/external/v1/devices/{deviceKey}/points',
+        '只读返回设备点位配置（不触发采集）；query：executor=EDGE|PLATFORM。',
+        `curl -X GET "${BASE}/devices/sensor-temp-001/points?executor=PLATFORM" \\\n  ${KEY_HEADER}`,
+        `{
+  "code": 200,
+  "data": [
+    {
+      "id": 1,
+      "pointKey": "temperature",
+      "address": "40001",
+      "dataType": "int16",
+      "scale": 0.1,
+      "unit": "℃",
+      "executor": "PLATFORM",
+      "lastRunStatus": "OK"
+    }
+  ]
+}`
+      )
+    ]
+  },
+  {
+    key: 'executions',
+    title: '执行记录与看板（只读）',
+    endpoints: [
+      ep(
+        'GET',
+        '/external/v1/rules/executions',
+        '按规则 / 设备 / 状态分页查询消息规则执行记录。query：ruleId、deviceId、status、page、size。',
+        `curl -X GET "${BASE}/rules/executions?status=FAILED&page=1&size=20" \\\n  ${KEY_HEADER}`,
+        pageResponse
+      ),
+      ep(
+        'GET',
+        '/external/v1/scenes/executions',
+        '按场景 / 设备 / 状态分页查询场景执行记录。query：sceneId、deviceId、status、page、size。',
+        `curl -X GET "${BASE}/scenes/executions?status=FAILED&page=1&size=20" \\\n  ${KEY_HEADER}`,
+        pageResponse
+      ),
+      ep(
+        'GET',
+        '/external/v1/scenes/executions/{id}',
+        '返回单次场景执行详情与逐步步骤明细；不存在 6243 / 越权 403。',
+        `curl -X GET "${BASE}/scenes/executions/88" \\\n  ${KEY_HEADER}`
+      ),
+      ep(
+        'GET',
+        '/external/v1/dashboards',
+        '只读返回本人看板摘要（不含 config 明细）。',
+        `curl -X GET "${BASE}/dashboards" \\\n  ${KEY_HEADER}`,
+        `{
+  "code": 200,
+  "data": [
+    { "id": 3, "name": "产线总览", "panelCount": 4, "updatedAt": "2026-10-22T10:00:00" }
+  ]
+}`
+      ),
+      ep(
+        'GET',
+        '/external/v1/dashboards/{id}',
+        '返回看板名称与面板配置；不存在或非本人 6228。',
+        `curl -X GET "${BASE}/dashboards/3" \\\n  ${KEY_HEADER}`
+      )
+    ]
+  },
+  {
+    key: 'writes',
+    title: '写操作（设备 / 规则 / 场景）',
+    endpoints: [
+      ep(
+        'POST',
+        '/external/v1/devices',
+        '为密钥所属用户创建设备；deviceKey 同产品内唯一。响应含一次性明文密钥，仅本次返回。',
+        `curl -X POST "${BASE}/devices" \\\n  ${KEY_HEADER} \\\n  -H "Content-Type: application/json" \\\n  -d '{"productId":3,"deviceKey":"sensor-002","deviceName":"传感器-02","deviceType":"sensor","topic":"device/sensor-002/data"}'`,
+        `{
+  "code": 200,
+  "data": {
+    "id": 12,
+    "deviceKey": "sensor-002",
+    "productKey": "env-sensor",
+    "username": "env-sensor.sensor-002",
+    "deviceSecret": "one-time-secret"
+  }
+}`
+      ),
+      ep(
+        'PUT',
+        '/external/v1/devices/{deviceKey}',
+        '更新设备名称 / 类型 / Topic / 描述；非归属设备返回 2003。',
+        `curl -X PUT "${BASE}/devices/sensor-002" \\\n  ${KEY_HEADER} \\\n  -H "Content-Type: application/json" \\\n  -d '{"deviceName":"传感器-02-A"}'`
+      ),
+      ep(
+        'DELETE',
+        '/external/v1/devices/{deviceKey}',
+        '逻辑删除设备；非归属设备返回 2003。',
+        `curl -X DELETE "${BASE}/devices/sensor-002" \\\n  ${KEY_HEADER}`
+      ),
+      ep(
+        'POST',
+        '/external/v1/rules',
+        '创建消息规则；校验口径与控制台一致（非法 6219 / 动作 6220 / 越权设备 2003 / 超限 6222）。',
+        `curl -X POST "${BASE}/rules" \\\n  ${KEY_HEADER} \\\n  -H "Content-Type: application/json" \\\n  -d @rule.json`
+      ),
+      ep(
+        'PUT',
+        '/external/v1/rules/{id}',
+        '整体更新消息规则；不存在 6218 / 越权 403。',
+        `curl -X PUT "${BASE}/rules/9" \\\n  ${KEY_HEADER} \\\n  -H "Content-Type: application/json" \\\n  -d @rule.json`
+      ),
+      ep(
+        'DELETE',
+        '/external/v1/rules/{id}',
+        '逻辑删除消息规则；执行记录保留。',
+        `curl -X DELETE "${BASE}/rules/9" \\\n  ${KEY_HEADER}`
+      ),
+      ep(
+        'PUT',
+        '/external/v1/rules/{id}/enabled',
+        '启用 / 停用消息规则。query：enabled=true|false。',
+        `curl -X PUT "${BASE}/rules/9/enabled?enabled=false" \\\n  ${KEY_HEADER}`
+      ),
+      ep(
+        'POST',
+        '/external/v1/scenes',
+        '创建场景联动；校验口径与控制台一致（非法 6241 / 动作 6242 / 触发源 6245 / 超限 6244 / 越权设备 2003）。',
+        `curl -X POST "${BASE}/scenes" \\\n  ${KEY_HEADER} \\\n  -H "Content-Type: application/json" \\\n  -d @scene.json`
+      ),
+      ep(
+        'PUT',
+        '/external/v1/scenes/{id}',
+        '整体更新场景（步骤流整体替换）；不存在 6240 / 越权 403。',
+        `curl -X PUT "${BASE}/scenes/12" \\\n  ${KEY_HEADER} \\\n  -H "Content-Type: application/json" \\\n  -d @scene.json`
+      ),
+      ep(
+        'DELETE',
+        '/external/v1/scenes/{id}',
+        '逻辑删除场景；执行记录保留。',
+        `curl -X DELETE "${BASE}/scenes/12" \\\n  ${KEY_HEADER}`
+      ),
+      ep(
+        'PUT',
+        '/external/v1/scenes/{id}/enabled',
+        '启用 / 停用场景。query：enabled=true|false。',
+        `curl -X PUT "${BASE}/scenes/12/enabled?enabled=true" \\\n  ${KEY_HEADER}`
+      ),
+      ep(
+        'POST',
+        '/external/v1/scenes/{id}/run',
+        '手动执行一次场景；返回执行记录 ID。',
+        `curl -X POST "${BASE}/scenes/12/run" \\\n  ${KEY_HEADER}`,
+        `{
+  "code": 200,
+  "data": 88
+}`
+      )
+    ]
+  },
+  {
     key: 'stats',
     title: '统计与 HTTP 上报',
     endpoints: [
@@ -370,7 +586,7 @@ export const endpointGroups = [
       ep(
         'POST',
         '/ingest/{deviceKey}/{messageType}',
-        '设备 HTTP 上报。HTTP Basic 鉴权，用户名 {productKey}.{deviceKey}、密码 device_secret；messageType=data|heartbeat|lwt。与 MQTT 上报同分片、同顺序，属性最新值等价。',
+        '设备 HTTP 上报。HTTP Basic 鉴权，用户名 {productKey}.{deviceKey}、密码 device_secret；messageType=data|heartbeat|lwt。与 MQTT 上报同分片、同顺序，属性最新值等价。可选请求头 Idempotency-Key 用于弱网重试去重；超出设备频率返回 429 + 6314。',
         `curl -X POST "https://your-server/api/ingest/sensor-temp-001/data" \\\n  -u "esp32-fall-detect.sensor-temp-001:<device_secret>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"method":"thing.event.property.post","params":{"temperature":26.5}}'`,
         `{
   "code": 200,
@@ -396,6 +612,9 @@ const GROUP_SUMMARIES = {
   '规则与告警（只读）': '读取规则与告警记录；规则与告警的写操作仍由控制台完成。',
   'OTA（只读）': '读取固件包、升级任务、批次与逐台记录；上传 / 下发 / 推进仍在控制台。',
   '场景（只读）': '读取场景定义与配置，用于外部展示或同步。',
+  '设备组织（只读）': '读取分组、标签与点位表，用于外部系统对齐设备组织与采集配置。',
+  '执行记录与看板（只读）': '读取规则 / 场景执行记录与看板配置，用于外部监控与报表。',
+  '写操作（设备 / 规则 / 场景）': '开放 API 的写入口，全部需要 device:write scope；设备写按 deviceKey 归属校验，规则 / 场景由 userId 隔离。',
   '统计与 HTTP 上报': '账号级统计与设备 HTTP 上报入口；上报使用设备凭据而非 API Key。'
 }
 
@@ -539,14 +758,109 @@ const ENDPOINT_META = {
       p('size', 'query', 'number', false, '每页条数，上限 100')
     ]
   },
-  'GET /external/v1/stats': { params: [] },
+  'GET /external/v1/device-groups': { params: [] },
+  'GET /external/v1/device-groups/tree': { params: [] },
+  'GET /external/v1/device-tags': { params: [] },
+  'GET /external/v1/devices/{deviceKey}/points': {
+    params: [
+      p('deviceKey', 'path', 'string', true, '设备唯一标识'),
+      p('executor', 'query', 'string', false, 'EDGE / PLATFORM')
+    ]
+  },
+  'GET /external/v1/rules/executions': {
+    params: [
+      p('ruleId', 'query', 'number', false, '规则 ID'),
+      p('deviceId', 'query', 'number', false, '设备 ID'),
+      p('status', 'query', 'string', false, 'PENDING / SUCCESS / FAILED'),
+      p('page', 'query', 'number', false, '页码，从 1 起'),
+      p('size', 'query', 'number', false, '每页条数，上限 100')
+    ]
+  },
+  'GET /external/v1/scenes/executions': {
+    params: [
+      p('sceneId', 'query', 'number', false, '场景 ID'),
+      p('deviceId', 'query', 'number', false, '触发设备 ID'),
+      p('status', 'query', 'string', false, 'PENDING / RUNNING / SUCCESS / FAILED / PARTIAL'),
+      p('page', 'query', 'number', false, '页码，从 1 起'),
+      p('size', 'query', 'number', false, '每页条数，上限 100')
+    ]
+  },
+  'GET /external/v1/scenes/executions/{id}': {
+    params: [p('id', 'path', 'number', true, '执行记录 ID')]
+  },
+  'GET /external/v1/dashboards': { params: [] },
+  'GET /external/v1/dashboards/{id}': {
+    params: [p('id', 'path', 'number', true, '看板 ID')]
+  },
+    'GET /external/v1/stats': { params: [] },
+  'POST /external/v1/devices': {
+    params: [
+      p('productId', 'body', 'number', true, '产品 ID'),
+      p('deviceKey', 'body', 'string', true, '设备唯一标识（同产品内唯一）'),
+      p('deviceName', 'body', 'string', true, '设备名称'),
+      p('deviceType', 'body', 'string', true, '设备类型'),
+      p('topic', 'body', 'string', true, 'MQTT Topic'),
+      p('description', 'body', 'string', false, '设备描述')
+    ]
+  },
+  'PUT /external/v1/devices/{deviceKey}': {
+    params: [
+      p('deviceKey', 'path', 'string', true, '设备唯一标识'),
+      p('deviceName', 'body', 'string', false, '设备名称'),
+      p('deviceType', 'body', 'string', false, '设备类型'),
+      p('topic', 'body', 'string', false, 'MQTT Topic'),
+      p('description', 'body', 'string', false, '设备描述')
+    ]
+  },
+  'DELETE /external/v1/devices/{deviceKey}': {
+    params: [p('deviceKey', 'path', 'string', true, '设备唯一标识')]
+  },
+  'POST /external/v1/rules': {
+    params: [p('body', 'body', 'object', true, 'RuleRequest，与控制台创建接口同结构')]
+  },
+  'PUT /external/v1/rules/{id}': {
+    params: [
+      p('id', 'path', 'number', true, '规则 ID'),
+      p('body', 'body', 'object', true, 'RuleRequest 全量覆盖')
+    ]
+  },
+  'DELETE /external/v1/rules/{id}': {
+    params: [p('id', 'path', 'number', true, '规则 ID')]
+  },
+  'PUT /external/v1/rules/{id}/enabled': {
+    params: [
+      p('id', 'path', 'number', true, '规则 ID'),
+      p('enabled', 'query', 'boolean', true, '启用状态')
+    ]
+  },
+  'POST /external/v1/scenes': {
+    params: [p('body', 'body', 'object', true, 'SceneRequest，与控制台创建接口同结构')]
+  },
+  'PUT /external/v1/scenes/{id}': {
+    params: [
+      p('id', 'path', 'number', true, '场景 ID'),
+      p('body', 'body', 'object', true, 'SceneRequest 全量覆盖')
+    ]
+  },
+  'DELETE /external/v1/scenes/{id}': {
+    params: [p('id', 'path', 'number', true, '场景 ID')]
+  },
+  'PUT /external/v1/scenes/{id}/enabled': {
+    params: [
+      p('id', 'path', 'number', true, '场景 ID'),
+      p('enabled', 'query', 'boolean', true, '启用状态')
+    ]
+  },
+  'POST /external/v1/scenes/{id}/run': {
+    params: [p('id', 'path', 'number', true, '场景 ID')]
+  },
   'POST /ingest/{deviceKey}/{messageType}': {
     params: [
       p('deviceKey', 'path', 'string', true, '设备唯一标识'),
       p('messageType', 'path', 'string', true, 'data / heartbeat / lwt')
     ],
     auth: 'HTTP Basic',
-    note: '用户名 {productKey}.{deviceKey}，密码 device_secret；请求体为设备原始载荷。'
+    note: '用户名 {productKey}.{deviceKey}，密码 device_secret；请求体为设备原始载荷。可选 Idempotency-Key；重复请求返回 accepted=false 且响应头 X-Ingest-Duplicate=true。'
   }
 }
 
@@ -616,7 +930,12 @@ export const errorCodes = [
   { code: 6309, message: '分组成员不存在', desc: '成员 ID 不属于该分组' },
   { code: 6310, message: '无权访问分组或设备', desc: '共享成员无权访问该分组 / 设备' },
   { code: 6311, message: 'Modbus 从站地址非法', desc: '点位 unitId 需在 0~247，留空继承驱动配置' },
-  { code: 6312, message: '场景版本不存在', desc: '版本 ID 不存在或不属于该场景' }
+  { code: 6312, message: '场景版本不存在', desc: '版本 ID 不存在或不属于该场景' },
+  { code: 6313, message: '审计日志查询条件非法', desc: '时间格式错误或起始时间晚于结束时间' },
+  { code: 6314, message: 'HTTP 上报超出频率限制', desc: '设备级固定窗口限流，响应带 429' },
+  { code: 6315, message: '幂等键非法', desc: 'Idempotency-Key 长度需 1~128，仅允许可见 ASCII' },
+  { code: 6316, message: '设备导入文件非法', desc: 'CSV 格式 / 表头 / 行数 / 大小不合法' },
+  { code: 6317, message: 'Payload Codec 配置非法', desc: 'JSON / template / 路径表达式 / 大小不合法，或 version / mode 不支持' }
 ]
 
 export const webhookEvents = [

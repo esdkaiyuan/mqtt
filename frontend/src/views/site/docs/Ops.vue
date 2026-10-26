@@ -45,6 +45,17 @@
       <h3>定时巡检</h3>
       <CodeBlock language="bash" :code="cronSample" />
       <p>Windows 可用计划任务调用 <code>scripts/r5-trigger-check.ps1</code>。</p>
+
+      <h2>审计与接入治理</h2>
+      <ul>
+        <li><code>AUDIT_LOG_ENABLED</code>：审计日志总开关；<code>AUDIT_LOG_RETENTION_DAYS</code> 设置保留天数（默认 180，0 不清理）。</li>
+        <li><code>AUDIT_LOG_SWEEP_INTERVAL_MS</code> / <code>AUDIT_LOG_PURGE_BATCH_SIZE</code>：清理巡检间隔与单批删除行数。</li>
+        <li><code>HTTP_INGEST_RATE_LIMIT_ENABLED</code>：HTTP 上报设备级限流（默认关闭）；<code>HTTP_INGEST_RATE_LIMIT_PER_MINUTE</code> 默认 600。</li>
+        <li><code>HTTP_INGEST_IDEMPOTENCY_TTL_SECONDS</code>：设备携带 <code>Idempotency-Key</code> 时同一键的有效期（默认 300 秒）。</li>
+        <li><code>DEVICE_IMPORT_MAX_FILE_BYTES</code> / <code>DEVICE_IMPORT_MAX_ROWS</code>：设备 CSV 导入的文件大小与行数上限。</li>
+        <li><code>OTA_ALLOW_DOWNGRADE</code>：是否允许固件降级（默认 <code>false</code>，建任务跳过当前版本更高的设备）。</li>
+        <li><code>BRIDGE_KAFKA_*</code>：Kafka 数据桥接开关与连接参数（默认关闭，规则 / 场景 <code>FORWARD_KAFKA</code> 使用）。</li>
+      </ul>
     </template>
 
     <!-- 常见问题 -->

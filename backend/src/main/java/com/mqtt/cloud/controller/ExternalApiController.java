@@ -16,25 +16,48 @@ import com.mqtt.cloud.entity.Device;
 import com.mqtt.cloud.entity.DeviceCommandRecord;
 import com.mqtt.cloud.filter.UserPrincipal;
 import com.mqtt.cloud.dto.request.DeviceLogQueryDTO;
+import com.mqtt.cloud.dto.request.CreateDeviceDTO;
+import com.mqtt.cloud.dto.request.ExecutionQueryDTO;
 import com.mqtt.cloud.dto.request.HistoryQueryDTO;
 import com.mqtt.cloud.dto.request.PropertyHistoryQueryDTO;
 import com.mqtt.cloud.dto.request.RuleQueryDTO;
+import com.mqtt.cloud.dto.request.RuleRequest;
+import com.mqtt.cloud.dto.request.SceneExecutionQuery;
+import com.mqtt.cloud.dto.request.SceneRequest;
+import com.mqtt.cloud.dto.request.UpdateDeviceDTO;
+import com.mqtt.cloud.dto.response.DashboardDetailVO;
+import com.mqtt.cloud.dto.response.DashboardSummaryVO;
+import com.mqtt.cloud.dto.response.DeviceCreatedDTO;
 import com.mqtt.cloud.dto.response.DeviceLogItem;
 import com.mqtt.cloud.dto.response.OtaBatchVO;
 import com.mqtt.cloud.dto.response.OtaRecordVO;
 import com.mqtt.cloud.dto.response.OtaTaskDetailVO;
+import com.mqtt.cloud.dto.response.PointTableDTO;
 import com.mqtt.cloud.dto.response.PropertySeriesVO;
+import com.mqtt.cloud.entity.DeviceGroup;
+import com.mqtt.cloud.entity.DeviceTag;
 import com.mqtt.cloud.entity.HistoryRecord;
 import com.mqtt.cloud.entity.OtaFirmware;
+import com.mqtt.cloud.entity.RuleExecution;
+import com.mqtt.cloud.entity.RuleDefinition;
+import com.mqtt.cloud.entity.SceneExecution;
+import com.mqtt.cloud.entity.SceneDefinition;
+import com.mqtt.cloud.dto.response.SceneExecutionDetail;
 import com.mqtt.cloud.service.AlertRuleService;
 import com.mqtt.cloud.service.AlertService;
+import com.mqtt.cloud.service.DashboardService;
 import com.mqtt.cloud.service.DeviceDataService;
+import com.mqtt.cloud.service.DeviceGroupService;
 import com.mqtt.cloud.service.DeviceLogService;
+import com.mqtt.cloud.service.DevicePointTableService;
+import com.mqtt.cloud.service.DeviceTagService;
 import com.mqtt.cloud.service.HistoryService;
 import com.mqtt.cloud.service.OtaFirmwareService;
 import com.mqtt.cloud.service.OtaUpgradeService;
 import com.mqtt.cloud.service.PropertyHistoryService;
+import com.mqtt.cloud.service.RuleExecutionService;
 import com.mqtt.cloud.service.RuleService;
+import com.mqtt.cloud.service.SceneExecutionService;
 import com.mqtt.cloud.service.SceneService;
 import com.mqtt.cloud.service.ApiKeyService;
 import com.mqtt.cloud.service.DeviceCommandService;
@@ -89,6 +112,14 @@ public class ExternalApiController {
     private final OtaFirmwareService otaFirmwareService;
     private final OtaUpgradeService otaUpgradeService;
     private final SceneService sceneService;
+
+    // ---- T-53 · 开放 API 批次二：分组 / 标签 / 执行记录 / 看板 / 点位表（全部只读） ----
+    private final DeviceGroupService deviceGroupService;
+    private final DeviceTagService deviceTagService;
+    private final RuleExecutionService ruleExecutionService;
+    private final SceneExecutionService sceneExecutionService;
+    private final DashboardService dashboardService;
+    private final DevicePointTableService devicePointTableService;
 
     @Operation(summary = "外部-查询设备列表", description = "返回密钥所属用户的名下设备列表；传入 deviceKey 时精确返回单个设备")
     @GetMapping("/devices")
@@ -350,6 +381,7 @@ public class ExternalApiController {
             vo.setSuccessCount(task.getSuccessCount());
             vo.setFailedCount(task.getFailedCount());
             vo.setSkippedCount(task.getSkippedCount());
+            vo.setDowngradeSkippedCount(task.getDowngradeSkippedCount());
             vo.setStatus(task.getStatus());
             vo.setBatchMode(task.getBatchMode());
             vo.setBatchTotal(task.getBatchTotal());
@@ -452,6 +484,210 @@ public class ExternalApiController {
         return Result.success(alertRuleService.list(currentUserId(), sourceType, enabled));
     }
 
+    // ================= T-53 · 开放 API 批次二（全部只读） =================
+    //
+    // 与 T-35 同一约定：复用既有服务、严格只读、归属隔离由服务层 userId 校验承担。
+    // 本批补的是「控制台有、开放侧没有」的查询能力，不新增任何写操作。
+
+    @Operation(summary = "外部-查询设备分组列表", description = "只读返回密钥所属用户的扁平分组列表；"
+            + "不包含共享分组，避免 API Key 越出账号数据边界")
+    @GetMapping("/device-groups")
+    public Result<List<Map<String, Object>>> listDeviceGroups() {
+        return Result.success(deviceGroupService.list(currentUserId(), false).stream()
+                .map(this::toGroupMap)
+                .toList());
+    }
+
+    @Operation(summary = "外部-查询设备分组树", description = "只读返回密钥所属用户的分组树（children 嵌套）")
+    @GetMapping("/device-groups/tree")
+    public Result<List<Map<String, Object>>> getDeviceGroupTree() {
+        return Result.success(deviceGroupService.tree(currentUserId(), false).stream()
+                .map(this::toGroupMap)
+                .toList());
+    }
+
+    @Operation(summary = "外部-查询设备标签列表", description = "只读返回密钥所属用户的标签（id / name / color）")
+    @GetMapping("/device-tags")
+    public Result<List<Map<String, Object>>> listDeviceTags() {
+        return Result.success(deviceTagService.list(currentUserId()).stream()
+                .map(this::toTagMap)
+                .toList());
+    }
+
+    @Operation(summary = "外部-查询规则执行记录", description = "按规则 / 设备 / 状态分页查询本人消息规则执行记录；"
+            + "不提供重试等写操作")
+    @GetMapping("/rules/executions")
+    public Result<IPage<RuleExecution>> listRuleExecutions(
+            @Parameter(description = "规则 ID") @RequestParam(required = false) Long ruleId,
+            @Parameter(description = "设备 ID") @RequestParam(required = false) Long deviceId,
+            @Parameter(description = "状态：PENDING / SUCCESS / FAILED") @RequestParam(required = false) String status,
+            @Parameter(description = "页码，从 1 起") @RequestParam(defaultValue = "1") long page,
+            @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
+        ExecutionQueryDTO query = new ExecutionQueryDTO();
+        query.setRuleId(ruleId);
+        query.setDeviceId(deviceId);
+        query.setStatus(status);
+        query.setPageNum((int) Math.max(page, 1));
+        query.setPageSize((int) Math.min(Math.max(size, 1), 100));
+        return Result.success(ruleExecutionService.page(currentUserId(), query));
+    }
+
+    @Operation(summary = "外部-查询场景执行记录", description = "按场景 / 设备 / 状态分页查询本人场景执行记录；"
+            + "不提供重试 / 手动触发等写操作")
+    @GetMapping("/scenes/executions")
+    public Result<IPage<SceneExecution>> listSceneExecutions(
+            @Parameter(description = "场景 ID") @RequestParam(required = false) Long sceneId,
+            @Parameter(description = "触发设备 ID") @RequestParam(required = false) Long deviceId,
+            @Parameter(description = "状态：PENDING / RUNNING / SUCCESS / FAILED / PARTIAL")
+                    @RequestParam(required = false) String status,
+            @Parameter(description = "页码，从 1 起") @RequestParam(defaultValue = "1") long page,
+            @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
+        SceneExecutionQuery query = new SceneExecutionQuery();
+        query.setSceneId(sceneId);
+        query.setDeviceId(deviceId);
+        query.setStatus(status);
+        query.setPageNum((int) Math.max(page, 1));
+        query.setPageSize((int) Math.min(Math.max(size, 1), 100));
+        return Result.success(sceneExecutionService.page(currentUserId(), query));
+    }
+
+    @Operation(summary = "外部-查询场景执行详情", description = "返回执行记录与逐步步骤明细；不存在 6243 / 越权 403")
+    @GetMapping("/scenes/executions/{id}")
+    public Result<SceneExecutionDetail> getSceneExecution(
+            @Parameter(description = "执行记录 ID", required = true) @PathVariable Long id) {
+        return Result.success(sceneExecutionService.getDetail(currentUserId(), id));
+    }
+
+    @Operation(summary = "外部-查询看板列表", description = "只读返回本人看板摘要（不含 config 明细）")
+    @GetMapping("/dashboards")
+    public Result<List<DashboardSummaryVO>> listDashboards() {
+        return Result.success(dashboardService.list(currentUserId()));
+    }
+
+    @Operation(summary = "外部-查询看板详情", description = "返回看板名称与面板配置；不存在或非本人 6228")
+    @GetMapping("/dashboards/{id}")
+    public Result<DashboardDetailVO> getDashboard(
+            @Parameter(description = "看板 ID", required = true) @PathVariable Long id) {
+        return Result.success(dashboardService.detail(currentUserId(), id));
+    }
+
+    @Operation(summary = "外部-查询设备点位表", description = "只读返回设备点位配置（不触发采集）；"
+            + "可按 executor=EDGE/PLATFORM 过滤；非本人设备 2003")
+    @GetMapping("/devices/{deviceKey}/points")
+    public Result<List<PointTableDTO>> listPoints(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @Parameter(description = "执行方过滤：EDGE / PLATFORM") @RequestParam(required = false) String executor) {
+        Long userId = currentUserId();
+        Device device = requireOwnedDevice(deviceKey, userId);
+        return Result.success(devicePointTableService.listPoints(userId, device.getId(), executor));
+    }
+
+    // ================= T-57 · 开放 API 写操作 =================
+    //
+    // 设计约定（勿破坏）：
+    //   1. 全部复用既有服务与既有校验，控制器只做「API Key → userId」与归属校验；
+    //   2. 设备写操作按 deviceKey 定位并校验归属，规则 / 场景写操作由服务层按 userId 隔离；
+    //   3. 所有写端点都需要 device:write scope（ApiKeyScopeService 对非 GET 统一要求）；
+    //   4. 创建设备返回的一次性密钥只出现一次，需调用方妥善保存。
+
+    @Operation(summary = "外部-创建设备", description = "为密钥所属用户创建设备并返回一次性明文密钥；"
+            + "deviceKey 同产品内重复返回 2001")
+    @PostMapping("/devices")
+    public Result<DeviceCreatedDTO> createDevice(@Valid @RequestBody CreateDeviceDTO request) {
+        return Result.success(deviceService.createDevice(currentUserId(), request));
+    }
+
+    @Operation(summary = "外部-更新设备", description = "更新设备名称 / 类型 / Topic / 描述；"
+            + "非归属设备返回 2003")
+    @PutMapping("/devices/{deviceKey}")
+    public Result<Device> updateDevice(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey,
+            @Valid @RequestBody UpdateDeviceDTO request) {
+        Device device = requireOwnedDevice(deviceKey, currentUserId());
+        return Result.success(deviceService.updateDevice(device.getId(), request));
+    }
+
+    @Operation(summary = "外部-删除设备", description = "逻辑删除设备；非归属设备返回 2003")
+    @DeleteMapping("/devices/{deviceKey}")
+    public Result<Void> deleteDevice(
+            @Parameter(description = "设备唯一标识", required = true) @PathVariable String deviceKey) {
+        Device device = requireOwnedDevice(deviceKey, currentUserId());
+        deviceService.deleteDevice(device.getId());
+        return Result.success();
+    }
+
+    @Operation(summary = "外部-创建消息规则", description = "创建消息规则；校验口径与控制台一致"
+            + "（非法 6219 / 动作 6220 / 越权设备 2003 / 超限 6222）")
+    @PostMapping("/rules")
+    public Result<RuleDefinition> createRule(@Valid @RequestBody RuleRequest request) {
+        return Result.success(ruleService.create(currentUserId(), request));
+    }
+
+    @Operation(summary = "外部-更新消息规则", description = "整体更新消息规则；不存在 6218 / 越权 403")
+    @PutMapping("/rules/{id}")
+    public Result<RuleDefinition> updateRule(
+            @Parameter(description = "规则 ID", required = true) @PathVariable Long id,
+            @Valid @RequestBody RuleRequest request) {
+        return Result.success(ruleService.update(currentUserId(), id, request));
+    }
+
+    @Operation(summary = "外部-删除消息规则", description = "逻辑删除消息规则，执行记录保留")
+    @DeleteMapping("/rules/{id}")
+    public Result<Void> deleteRule(
+            @Parameter(description = "规则 ID", required = true) @PathVariable Long id) {
+        ruleService.delete(currentUserId(), id);
+        return Result.success();
+    }
+
+    @Operation(summary = "外部-启停消息规则", description = "启用 / 停用消息规则；query：enabled=true|false")
+    @PutMapping("/rules/{id}/enabled")
+    public Result<Void> setRuleEnabled(
+            @Parameter(description = "规则 ID", required = true) @PathVariable Long id,
+            @Parameter(description = "启用状态", required = true) @RequestParam boolean enabled) {
+        ruleService.setEnabled(currentUserId(), id, enabled);
+        return Result.success();
+    }
+
+    @Operation(summary = "外部-创建场景", description = "创建场景联动；校验口径与控制台一致"
+            + "（非法 6241 / 动作 6242 / 触发源 6245 / 超限 6244 / 越权设备 2003）")
+    @PostMapping("/scenes")
+    public Result<SceneDefinition> createScene(@Valid @RequestBody SceneRequest request) {
+        return Result.success(sceneService.createScene(currentUserId(), request));
+    }
+
+    @Operation(summary = "外部-更新场景", description = "整体更新场景（步骤流整体替换）；不存在 6240 / 越权 403")
+    @PutMapping("/scenes/{id}")
+    public Result<SceneDefinition> updateScene(
+            @Parameter(description = "场景 ID", required = true) @PathVariable Long id,
+            @Valid @RequestBody SceneRequest request) {
+        return Result.success(sceneService.updateScene(currentUserId(), id, request));
+    }
+
+    @Operation(summary = "外部-删除场景", description = "逻辑删除场景，执行记录保留")
+    @DeleteMapping("/scenes/{id}")
+    public Result<Void> deleteScene(
+            @Parameter(description = "场景 ID", required = true) @PathVariable Long id) {
+        sceneService.deleteScene(currentUserId(), id);
+        return Result.success();
+    }
+
+    @Operation(summary = "外部-启停场景", description = "启用 / 停用场景；query：enabled=true|false")
+    @PutMapping("/scenes/{id}/enabled")
+    public Result<Void> setSceneEnabled(
+            @Parameter(description = "场景 ID", required = true) @PathVariable Long id,
+            @Parameter(description = "启用状态", required = true) @RequestParam boolean enabled) {
+        sceneService.setEnabled(currentUserId(), id, enabled);
+        return Result.success();
+    }
+
+    @Operation(summary = "外部-手动执行场景", description = "手动触发一次场景；返回执行记录 ID；"
+            + "场景不存在 / 越权返回 6240 / 403")
+    @PostMapping("/scenes/{id}/run")
+    public Result<Long> runScene(
+            @Parameter(description = "场景 ID", required = true) @PathVariable Long id) {
+        return Result.success(sceneService.runManually(currentUserId(), id));
+    }
+
     private Long currentUserId() {
         return SecurityUtils.requireUserId();
     }
@@ -515,6 +751,32 @@ public class ExternalApiController {
         return map;
     }
 
+    /** 分组投影：不暴露 userId / deleted 等内部字段；tree 场景递归 children。 */
+    private Map<String, Object> toGroupMap(DeviceGroup group) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", group.getId());
+        map.put("parentId", group.getParentId());
+        map.put("name", group.getName());
+        map.put("sortOrder", group.getSortOrder());
+        map.put("description", group.getDescription());
+        map.put("deviceCount", group.getDeviceCount());
+        map.put("createdAt", group.getCreatedAt());
+        if (group.getChildren() != null && !group.getChildren().isEmpty()) {
+            map.put("children", group.getChildren().stream().map(this::toGroupMap).toList());
+        }
+        return map;
+    }
+
+    /** 标签投影：只暴露展示所需字段。 */
+    private Map<String, Object> toTagMap(DeviceTag tag) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", tag.getId());
+        map.put("name", tag.getName());
+        map.put("color", tag.getColor());
+        map.put("createdAt", tag.getCreatedAt());
+        return map;
+    }
+
     private Map<String, Object> toDeviceMap(Device device) {
         Map<String, Object> map = new HashMap<>();
         map.put("id", device.getId());
@@ -524,6 +786,7 @@ public class ExternalApiController {
         map.put("topic", device.getTopic());
         map.put("status", device.getStatus());
         map.put("lastSeen", device.getLastSeen());
+        map.put("firmwareVersion", device.getFirmwareVersion());
         return map;
     }
 }

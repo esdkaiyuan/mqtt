@@ -7,6 +7,7 @@ import com.mqtt.cloud.config.HttpIngestProperties;
 import com.mqtt.cloud.ingest.IngestPipeline;
 import com.mqtt.cloud.ingest.IngestProperties;
 import com.mqtt.cloud.ingest.IngestRecord;
+import com.mqtt.cloud.service.HttpIngestGuard;
 import com.mqtt.cloud.service.HttpIngestService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,9 +40,16 @@ public class HttpIngestServiceImpl implements HttpIngestService {
     private final IngestPipeline ingestPipeline;
     private final IngestProperties ingestProperties;
     private final HttpIngestProperties httpIngestProperties;
+    private final HttpIngestGuard httpIngestGuard;
 
     @Override
     public IngestAccepted ingest(String deviceKey, String messageType, String payload) {
+        return ingest(deviceKey, messageType, payload, null);
+    }
+
+    @Override
+    public IngestAccepted ingest(String deviceKey, String messageType, String payload,
+                                 String idempotencyKey) {
         if (!MESSAGE_TYPES.contains(messageType)) {
             throw new BusinessException(ResultCode.INGEST_MESSAGE_TYPE_UNSUPPORTED);
         }
@@ -50,7 +58,16 @@ public class HttpIngestServiceImpl implements HttpIngestService {
             throw new BusinessException(ResultCode.INGEST_PAYLOAD_TOO_LARGE);
         }
 
-        LocalDateTime receivedAt = LocalDateTime.now();
+        // T-53：限流与幂等放在参数校验之后、入队之前 ——
+        // 非法报文不占配额，也不会写入幂等键（设备改好报文重试不应被误判为重复）
+        HttpIngestGuard.GuardResult guard = httpIngestGuard.check(deviceKey, idempotencyKey);
+        if (guard.duplicate()) {
+            log.info("HTTP 上报幂等命中，跳过入队 deviceKey={} messageType={}", deviceKey, messageType);
+            return new IngestAccepted(deviceKey, messageType,
+                    "device/" + deviceKey + "/" + messageType, guard.firstAcceptedAt(), false);
+        }
+
+        LocalDateTime receivedAt = guard.firstAcceptedAt();
         String topic = "device/" + deviceKey + "/" + messageType;
 
         if (!ingestProperties.isEnabled()) {
